@@ -1,0 +1,11 @@
+[package]
+name = "schema_registry_converter"
+version = "0.1.0"
+authors = ["gklijs <g.klijs@gmail.com>"]
+
+[dependencies]
+avro-rs = "^0.6"
+byteorder = "1.2.6"
+curl = "0.4.14"
+rdkafka = "0.17.0"
+serde_json = "^1.0.27"
