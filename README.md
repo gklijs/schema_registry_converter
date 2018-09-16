@@ -4,6 +4,11 @@ This library is provides a way of using the Confluent Schema Registry in a way t
 Consuming/decoding and producing/encoding is supported. Encoding supposes the schema's needed are already available in the schema registry.
 Feel free to open een issue/pr to add functionality to add the schema from this crate.
 
+# Relation to related libraries
+
+The avro part of the conversion is handled by avro-rs as such I don't include tests for every possible schema.
+While I used rdkafka in combination to successfully consume from and produce to kafka this crate has no direct reference to it. It does show in some of the examples. All this crate does is convert [u8] <-> avro_rs::types::Value. 
+
 # License
 
 This project is licensed under either of

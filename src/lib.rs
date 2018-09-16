@@ -1,14 +1,12 @@
 extern crate avro_rs;
 extern crate byteorder;
 extern crate core;
-extern crate rdkafka;
 
 mod schema_registry;
 
 use avro_rs::types::{Record, Value};
 use avro_rs::{from_avro_datum, to_avro_datum, Schema};
 use byteorder::{BigEndian, ByteOrder, ReadBytesExt};
-use rdkafka::message::{BorrowedMessage, Message};
 use schema_registry::{get_schema_by_id, get_schema_by_subject, get_subject};
 use std::collections::hash_map::RandomState;
 use std::collections::HashMap;
@@ -34,21 +32,14 @@ impl Decoder {
             Err(_) => false,
         });
     }
-    pub fn decode_key<'a>(&'a mut self, msg: &BorrowedMessage) -> Result<Value, String> {
-        match msg.key() {
+    pub fn decode(&mut self, bytes: Option<&[u8]>) -> Result<Value, String> {
+        match bytes {
             None => Ok(Value::Null),
             Some(p) if p[0] == 0 => self.deserialize(p),
             Some(p) => Ok(Value::Bytes(p.to_vec())),
         }
     }
-    pub fn decode_value<'a>(&'a mut self, msg: &BorrowedMessage) -> Result<Value, String> {
-        match msg.payload() {
-            None => Ok(Value::Null),
-            Some(p) if p[0] == 0 => self.deserialize(p),
-            Some(p) => Ok(Value::Bytes(p.to_vec())),
-        }
-    }
-    pub fn deserialize<'a>(&'a mut self, bytes: &'a [u8]) -> Result<Value, String> {
+    fn deserialize<'a>(&'a mut self, bytes: &'a [u8]) -> Result<Value, String> {
         let mut buf = &bytes[1..5];
         let id = match buf.read_u32::<BigEndian>() {
             Ok(v) => v,

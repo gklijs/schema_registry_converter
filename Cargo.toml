@@ -18,8 +18,5 @@ version = ">= 1.0"
 [dependencies.curl]
 version = ">= 0.4"
 
-[dependencies.rdkafka]
-version = ">= 0.17"
-
 [dependencies.serde_json]
 version = ">=0.8.0, <2.0"
