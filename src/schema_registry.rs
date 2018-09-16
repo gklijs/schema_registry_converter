@@ -8,20 +8,20 @@ use self::serde_json::Value as JsonValue;
 use std::error::Error;
 use std::str;
 
-pub fn get_schema_by_id(id: u32, registry: &str) -> Result<Schema, String> {
-    let url = registry.to_owned() + "/schemas/ids/" + &id.to_string();
+pub fn get_schema_by_id(id: u32, schema_registry_url: &str) -> Result<Schema, String> {
+    let url = schema_registry_url.to_owned() + "/schemas/ids/" + &id.to_string();
     schema_from_url(&url, Option::from(id)).and_then(|t| Ok(t.0))
 }
 
 pub fn get_schema_by_subject(
-    registry: &str,
+    schema_registry_url: &str,
     topic: Option<&str>,
     record_name: Option<&str>,
     is_key: bool,
 ) -> Result<(Schema, u32), String> {
     match get_subject(topic, record_name, is_key) {
         Ok(v) => {
-            let url = registry.to_owned() + "/subjects/" + &v + "/versions/latest";
+            let url = schema_registry_url.to_owned() + "/subjects/" + &v + "/versions/latest";
             schema_from_url(&url, None)
         }
         Err(e) => Err(e),

@@ -95,12 +95,10 @@ impl Encoder {
             Ok(v) => v,
             Err(e) => return Err(e),
         };
-        let schema = &self.schema_registry_url;
-        let schema_and_id = match self
-            .cache
-            .entry(subject)
-            .or_insert_with(|| get_schema_by_subject(schema, topic, record_name, is_key))
-        {
+        let schema_registry_url = &self.schema_registry_url;
+        let schema_and_id = match self.cache.entry(subject).or_insert_with(|| {
+            get_schema_by_subject(schema_registry_url, topic, record_name, is_key)
+        }) {
             Ok(v) => v,
             Err(e) => return Err(e.to_owned()),
         };
