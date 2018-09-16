@@ -74,20 +74,6 @@ impl Decoder {
 }
 
 #[derive(Debug)]
-pub enum SubjectNameStrategy {
-    RecordNameStrategy,
-    TopicNameStrategy,
-    TopicRecordNameStrategy,
-}
-
-#[derive(Debug)]
-pub enum NeedsEncoding {
-    Key,
-    Value,
-    KeyAndValue,
-}
-
-#[derive(Debug)]
 pub struct Encoder {
     schema_registry_url: String,
     cache: &'static mut HashMap<String, Result<(Schema, u32), String>, RandomState>,
