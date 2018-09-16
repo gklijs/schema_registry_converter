@@ -8,14 +8,45 @@ use self::serde_json::Value as JsonValue;
 use std::error::Error;
 use std::str;
 
-pub fn get_schema(id: u32, registry: &str) -> Result<Schema, String> {
+pub fn get_schema_by_id(id: u32, registry: &str) -> Result<Schema, String> {
     let url = registry.to_owned() + "/schemas/ids/" + &id.to_string();
     schema_from_url(&url, Option::from(id)).and_then(|t| Ok(t.0))
 }
 
-pub fn get_latest_schema(topic: &str, registry: &str) -> Result<(Schema, u32), String> {
-    let url = registry.to_owned() + "/subjects/" + topic + "-value/versions/latest";
-    schema_from_url(&url, None)
+pub fn get_schema_by_subject(
+    registry: &str,
+    topic: Option<&str>,
+    record_name: Option<&str>,
+    is_key: bool,
+) -> Result<(Schema, u32), String> {
+    match get_subject(topic, record_name, is_key) {
+        Ok(v) => {
+            let url = registry.to_owned() + "/subjects/" + &v + "/versions/latest";
+            schema_from_url(&url, None)
+        }
+        Err(e) => Err(e),
+    }
+}
+
+pub fn get_subject(
+    topic: Option<&str>,
+    record_name: Option<&str>,
+    is_key: bool,
+) -> Result<String, String> {
+    match topic {
+        None => match record_name {
+            None => Err("Either topic or record_name should have a value".to_owned()),
+            Some(rn) => Ok(rn.to_owned()),
+        },
+        Some(t) => match record_name {
+            None => if is_key {
+                Ok(t.to_owned() + "-key")
+            } else {
+                Ok(t.to_owned() + "-value")
+            },
+            Some(rn) => Ok(t.to_owned() + "-" + rn),
+        },
+    }
 }
 
 fn schema_from_url(url: &str, id: Option<u32>) -> Result<(Schema, u32), String> {
