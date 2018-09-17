@@ -8,6 +8,13 @@ use self::serde_json::Value as JsonValue;
 use std::error::Error;
 use std::str;
 
+#[derive(Debug)]
+pub enum SubjectNameStrategy<'a> {
+    RecordNameStrategy(&'a str),
+    TopicNameStrategy(&'a str, bool),
+    TopicRecordNameStrategy(&'a str, &'a str),
+}
+
 pub fn get_schema_by_id(id: u32, schema_registry_url: &str) -> Result<Schema, String> {
     let url = schema_registry_url.to_owned() + "/schemas/ids/" + &id.to_string();
     schema_from_url(&url, Option::from(id)).and_then(|t| Ok(t.0))
@@ -15,37 +22,26 @@ pub fn get_schema_by_id(id: u32, schema_registry_url: &str) -> Result<Schema, St
 
 pub fn get_schema_by_subject(
     schema_registry_url: &str,
-    topic: Option<&str>,
-    record_name: Option<&str>,
-    is_key: bool,
+    subject_name_strategy: &SubjectNameStrategy,
 ) -> Result<(Schema, u32), String> {
-    match get_subject(topic, record_name, is_key) {
-        Ok(v) => {
-            let url = schema_registry_url.to_owned() + "/subjects/" + &v + "/versions/latest";
-            schema_from_url(&url, None)
-        }
-        Err(e) => Err(e),
-    }
+    let url = schema_registry_url.to_owned()
+        + "/subjects/"
+        + &get_subject(subject_name_strategy)
+        + "/versions/latest";
+    schema_from_url(&url, None)
 }
 
-pub fn get_subject(
-    topic: Option<&str>,
-    record_name: Option<&str>,
-    is_key: bool,
-) -> Result<String, String> {
-    match topic {
-        None => match record_name {
-            None => Err("Either topic or record_name should have a value".to_owned()),
-            Some(rn) => Ok(rn.to_owned()),
-        },
-        Some(t) => match record_name {
-            None => if is_key {
-                Ok(t.to_owned() + "-key")
+pub fn get_subject(subject_name_strategy: &SubjectNameStrategy) -> String {
+    match subject_name_strategy {
+        SubjectNameStrategy::RecordNameStrategy(rn) => String::from(*rn),
+        SubjectNameStrategy::TopicNameStrategy(t, is_key) => {
+            if *is_key {
+                String::from(*t) + "-key"
             } else {
-                Ok(t.to_owned() + "-value")
-            },
-            Some(rn) => Ok(t.to_owned() + "-" + rn),
-        },
+                String::from(*t) + "-value"
+            }
+        }
+        SubjectNameStrategy::TopicRecordNameStrategy(t, rn) => String::from(*t) + "-" + rn,
     }
 }
 

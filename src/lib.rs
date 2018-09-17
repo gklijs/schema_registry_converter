@@ -2,12 +2,12 @@ extern crate avro_rs;
 extern crate byteorder;
 extern crate core;
 
-mod schema_registry;
+pub mod schema_registry;
 
 use avro_rs::types::{Record, Value};
 use avro_rs::{from_avro_datum, to_avro_datum, Schema};
 use byteorder::{BigEndian, ByteOrder, ReadBytesExt};
-use schema_registry::{get_schema_by_id, get_schema_by_subject, get_subject};
+use schema_registry::{get_schema_by_id, get_schema_by_subject, get_subject, SubjectNameStrategy};
 use std::collections::hash_map::RandomState;
 use std::collections::HashMap;
 use std::io::Cursor;
@@ -87,18 +87,14 @@ impl Encoder {
     pub fn encode(
         &mut self,
         values: Vec<(&'static str, Value)>,
-        topic: Option<&str>,
-        record_name: Option<&str>,
-        is_key: bool,
+        subject_name_strategy: SubjectNameStrategy,
     ) -> Result<Vec<u8>, String> {
-        let subject = match get_subject(topic, record_name, is_key) {
-            Ok(v) => v,
-            Err(e) => return Err(e),
-        };
         let schema_registry_url = &self.schema_registry_url;
-        let schema_and_id = match self.cache.entry(subject).or_insert_with(|| {
-            get_schema_by_subject(schema_registry_url, topic, record_name, is_key)
-        }) {
+        let schema_and_id = match self
+            .cache
+            .entry(get_subject(&subject_name_strategy).to_owned())
+            .or_insert_with(|| get_schema_by_subject(schema_registry_url, &subject_name_strategy))
+        {
             Ok(v) => v,
             Err(e) => return Err(e.to_owned()),
         };
