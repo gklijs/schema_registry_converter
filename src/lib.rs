@@ -87,12 +87,12 @@ impl Encoder {
     pub fn encode(
         &mut self,
         values: Vec<(&'static str, Value)>,
-        subject_name_strategy: SubjectNameStrategy,
+        subject_name_strategy: &SubjectNameStrategy,
     ) -> Result<Vec<u8>, String> {
         let schema_registry_url = &self.schema_registry_url;
         let schema_and_id = match self
             .cache
-            .entry(get_subject(&subject_name_strategy).to_owned())
+            .entry(get_subject(subject_name_strategy))
             .or_insert_with(|| get_schema_by_subject(schema_registry_url, &subject_name_strategy))
         {
             Ok(v) => v,
