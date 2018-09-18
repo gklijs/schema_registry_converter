@@ -32,22 +32,16 @@ use std::io::Cursor;
 ///  # use schema_registry_converter::Decoder;
 ///  # use avro_rs::types::Value;
 ///
-/// let _m = mock("GET", "/schemas/ids/7")
+/// let _m = mock("GET", "/schemas/ids/1")
 ///     .with_status(200)
 ///     .with_header("content-type", "application/vnd.schemaregistry.v1+json")
 ///     .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
 ///     .create();
 ///
-/// let _m = mock("GET", "/schemas/ids/101")
-///     .with_status(404)
-///     .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-///     .with_body(r#"{"error_code":40403,"message":"Schema not found"}"#)
-///     .create();
-///
 /// let mut decoder = Decoder::new(SERVER_ADDRESS);
-/// let heartbeat = decoder.decode(Some(&[0,0,0,0,7,6]));
+/// let heartbeat = decoder.decode(Some(&[0,0,0,0,1,6]));
 ///
-///  assert_eq!(heartbeat, Ok(Value::Record(vec!(("beat".to_string(), Value::Long(3))))))
+/// assert_eq!(heartbeat, Ok(Value::Record(vec!(("beat".to_string(), Value::Long(3))))))
 /// ```
 #[derive(Debug)]
 pub struct Decoder {
@@ -71,6 +65,39 @@ impl Decoder {
     /// Remove al the errors from the cache, you might need to/want to run this when a recoverable
     /// error is met. Errors are also cashed to prevent trying to get schema's that either don't
     /// exist or can't be parsed.
+    ///
+    /// ```
+    ///  # extern crate mockito;
+    ///  # extern crate schema_registry_converter;
+    ///  # extern crate avro_rs;
+    ///  # use mockito::{mock, SERVER_ADDRESS};
+    ///  # use schema_registry_converter::Decoder;
+    ///  # use avro_rs::types::Value;
+    ///
+    /// let mut decoder = Decoder::new(SERVER_ADDRESS);
+    /// let bytes = [0,0,0,0,2,6];
+    ///
+    /// let _m = mock("GET", "/schemas/ids/2")
+    ///     .with_status(404)
+    ///     .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+    ///     .with_body(r#"{"error_code":40403,"message":"Schema not found"}"#)
+    ///     .create();
+    /// let heartbeat = decoder.decode(Some(&bytes));
+    /// assert_eq!(heartbeat, Err("Did not get a 200 response code from 127.0.0.1:1234/schemas/ids/2 but 404 instead".to_owned()));
+    /// let _m = mock("GET", "/schemas/ids/2")
+    ///     .with_status(200)
+    ///     .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+    ///     .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
+    ///     .create();
+    ///
+    /// let heartbeat = decoder.decode(Some(&bytes));
+    /// assert_eq!(heartbeat, Err("Did not get a 200 response code from 127.0.0.1:1234/schemas/ids/2 but 404 instead".to_owned()));
+    ///
+    /// decoder.remove_errors_from_cache();
+    ///
+    /// let heartbeat = decoder.decode(Some(&bytes));
+    /// assert_eq!(heartbeat, Ok(Value::Record(vec!(("beat".to_string(), Value::Long(3))))))
+    /// ```
     pub fn remove_errors_from_cache(&mut self) {
         self.cache.retain(|_, v| match v {
             Ok(_) => true,
@@ -145,6 +172,40 @@ impl Decoder {
 /// For both the key and the payload/key it's possible to use the schema registry, this struct supports
 /// both. But only using the SubjectNameStrategy::TopicNameStrategy it has to be made explicit
 /// whether it's actual used as key or value.
+///
+/// ```
+///  # extern crate mockito;
+///  # extern crate schema_registry_converter;
+///  # extern crate avro_rs;
+///  # use mockito::{mock, SERVER_ADDRESS};
+///  # use schema_registry_converter::Encoder;
+///  # use schema_registry_converter::schema_registry::SubjectNameStrategy;
+///  # use avro_rs::types::Value;
+///
+/// let _m = mock("GET", "/subjects/heartbeat-value/versions/latest")
+///     .with_status(200)
+///     .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+///     .with_body(r#"{"subject":"heartbeat-value","version":1,"id":3,"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
+///     .create();
+///
+/// let _m = mock("GET", "/subjects/heartbeat-key/versions/latest")
+///     .with_status(200)
+///     .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+///     .with_body(r#"{"subject":"heartbeat-value","version":1,"id":4,"schema":"{\"type\":\"record\",\"name\":\"Name\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"name\",\"type\":\"string\",\"avro.java.string\":\"String\"}]}"}"#)
+///     .create();
+///
+/// let mut encoder = Encoder::new(SERVER_ADDRESS);
+///
+/// let key_strategy = SubjectNameStrategy::TopicNameStrategy("heartbeat", true);
+/// let bytes = encoder.encode(vec!(("name", Value::String("Some name".to_owned()))), &key_strategy);
+///
+/// assert_eq!(bytes, Ok(vec!(0, 0, 0, 0, 4, 18, 83, 111, 109, 101, 32, 110, 97, 109, 101)));
+///
+/// let value_strategy = SubjectNameStrategy::TopicNameStrategy("heartbeat", false);
+/// let bytes = encoder.encode(vec!(("beat", Value::Long(3))), &value_strategy);
+///
+/// assert_eq!(bytes, Ok(vec!(0,0,0,0,3,6)))
+/// ```
 #[derive(Debug)]
 pub struct Encoder {
     schema_registry_url: String,
@@ -152,6 +213,13 @@ pub struct Encoder {
 }
 
 impl Encoder {
+    /// Creates a new encoder which will use the supplied url to fetch the schema's. The schema's
+    /// need to be retrieved together with the id, in order for a consumer to decode the bytes.
+    /// For the encoding several strategies are available in the java client, all three of them are
+    /// supported. The schema's does have to be present in the schema registry already. This is
+    /// unlike the Java client with wich it's possible to update/upload the schema when it's not
+    /// present yet. While it may be added to this library, it's also not hard to do it separately.
+    /// New schema's can set by doing a post at /subjects/{subject}/versions.
     pub fn new(schema_registry_url: &str) -> Encoder {
         let new_cache = Box::new(HashMap::new());
         Encoder {
@@ -162,12 +230,75 @@ impl Encoder {
     /// Remove al the errors from the cache, you might need to/want to run this when a recoverable
     /// error is met. Errors are also cashed to prevent trying to get schema's that either don't
     /// exist or can't be parsed.
+    ///
+    /// ```
+    ///  # extern crate mockito;
+    ///  # extern crate schema_registry_converter;
+    ///  # extern crate avro_rs;
+    ///  # use mockito::{mock, SERVER_ADDRESS};
+    ///  # use schema_registry_converter::Encoder;
+    ///  # use schema_registry_converter::schema_registry::SubjectNameStrategy;
+    ///  # use avro_rs::types::Value;
+    ///
+    /// let mut encoder = Encoder::new(SERVER_ADDRESS);
+    /// let strategy = SubjectNameStrategy::RecordNameStrategy("nl.openweb.data.Heartbeat");
+    ///
+    /// let _m = mock("GET", "/subjects/nl.openweb.data.Heartbeat/versions/latest")
+    ///     .with_status(404)
+    ///     .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+    ///     .with_body(r#"{"error_code":40403,"message":"Schema not found"}"#)
+    ///     .create();
+    ///
+    /// let bytes = encoder.encode(vec!(("beat", Value::Long(3))), &strategy);
+    /// assert_eq!(bytes, Err("Did not get a 200 response code from 127.0.0.1:1234/subjects/nl.openweb.data.Heartbeat/versions/latest but 404 instead".to_owned()));
+    ///
+    /// let _m = mock("GET", "/subjects/nl.openweb.data.Heartbeat/versions/latest")
+    ///     .with_status(200)
+    ///     .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+    ///     .with_body(r#"{"subject":"heartbeat-value","version":1,"id":4,"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
+    ///     .create();
+    ///
+    /// let bytes = encoder.encode(vec!(("beat", Value::Long(3))), &strategy);
+    /// assert_eq!(bytes, Err("Did not get a 200 response code from 127.0.0.1:1234/subjects/nl.openweb.data.Heartbeat/versions/latest but 404 instead".to_owned()));
+    ///
+    /// encoder.remove_errors_from_cache();
+    ///
+    /// let bytes = encoder.encode(vec!(("beat", Value::Long(3))), &strategy);
+    /// assert_eq!(bytes, Ok(vec!(0,0,0,0,4,6)))
+    /// ```
     pub fn remove_errors_from_cache(&mut self) {
         self.cache.retain(|_, v| match v {
             Ok(_) => true,
             Err(_) => false,
         });
     }
+    /// Encodes a vector of values to bytes. The corrects values of the 'keys' depend on the schema
+    /// being fetched at runtime. For example you might agree on a schema with a consuming party and
+    /// /or upload a schema to the schema registry before starting the program. In the future an
+    /// 'encode with schema' might be added which makes it easier to make sure the schema will
+    /// become available in the correct way.
+    ///
+    /// ```
+    ///  # extern crate mockito;
+    ///  # extern crate schema_registry_converter;
+    ///  # extern crate avro_rs;
+    ///  # use mockito::{mock, SERVER_ADDRESS};
+    ///  # use schema_registry_converter::Encoder;
+    ///  # use schema_registry_converter::schema_registry::SubjectNameStrategy;
+    ///  # use avro_rs::types::Value;
+    ///
+    /// let _m = mock("GET", "/subjects/heartbeat-nl.openweb.data.Heartbeat/versions/latest")
+    ///     .with_status(200)
+    ///     .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+    ///     .with_body(r#"{"subject":"heartbeat-value","version":1,"id":3,"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
+    ///     .create();
+    ///
+    /// let mut encoder = Encoder::new(SERVER_ADDRESS);
+    /// let strategy = SubjectNameStrategy::TopicRecordNameStrategy("heartbeat", "nl.openweb.data.Heartbeat");
+    /// let bytes = encoder.encode(vec!(("beat", Value::Long(3))), &strategy);
+    ///
+    /// assert_eq!(bytes, Ok(vec!(0,0,0,0,3,6)))
+    /// ```
     pub fn encode(
         &mut self,
         values: Vec<(&'static str, Value)>,
@@ -186,6 +317,8 @@ impl Encoder {
     }
 }
 
+/// Using the schema with a vector of values the values will be correctly deserialized according to
+/// the avro specification.
 fn to_bytes(
     schema: &Schema,
     id: u32,

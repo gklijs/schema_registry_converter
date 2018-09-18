@@ -7,7 +7,12 @@ Feel free to open een issue/pr to add functionality to add the schema from this 
 # Relation to related libraries
 
 The avro part of the conversion is handled by avro-rs as such I don't include tests for every possible schema.
-While I used rdkafka in combination to successfully consume from and produce to kafka this crate has no direct reference to it. It does show in some of the examples. All this crate does is convert [u8] <-> avro_rs::types::Value. 
+While I used rdkafka in combination to successfully consume from and produce to kafka this crate has no direct reference to it. It does show in some of the examples. All this crate does is convert [u8] <-> avro_rs::types::Value.
+
+# Tests
+
+Do to mockito, used for mocking the schema registry responses, being run in a seperate thead, tests have to be run using ` --test-threads=1` for example like
+`cargo +stable test --color=always -- --nocapture --test-threads=1`
 
 # License
 
