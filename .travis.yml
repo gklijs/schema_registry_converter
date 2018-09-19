@@ -9,5 +9,5 @@ matrix:
   fast_finish: true
 cache: cargo
 script:
-  - cargo build --verbose -- --test-threads=1
+  - cargo build --verbose
   - cargo test --verbose -- --test-threads=1

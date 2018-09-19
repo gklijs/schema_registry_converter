@@ -31,6 +31,7 @@ use schema_registry::{get_schema_by_id, get_schema_by_subject, get_subject, Subj
 use std::collections::hash_map::RandomState;
 use std::collections::HashMap;
 use std::io::Cursor;
+use schema_registry::SRCError;
 
 /// A decoder used to transform bytes to a Value object
 ///
@@ -66,7 +67,7 @@ use std::io::Cursor;
 #[derive(Debug)]
 pub struct Decoder {
     schema_registry_url: String,
-    cache: &'static mut HashMap<u32, Result<Schema, String>, RandomState>,
+    cache: &'static mut HashMap<u32, Result<Schema, SRCError>, RandomState>,
 }
 
 impl Decoder {
@@ -92,6 +93,7 @@ impl Decoder {
     ///  # extern crate avro_rs;
     ///  # use mockito::{mock, SERVER_ADDRESS};
     ///  # use schema_registry_converter::Decoder;
+    ///  # use schema_registry_converter::schema_registry::SRCError;
     ///  # use avro_rs::types::Value;
     ///
     /// let mut decoder = Decoder::new(SERVER_ADDRESS);
@@ -103,7 +105,7 @@ impl Decoder {
     ///     .with_body(r#"{"error_code":40403,"message":"Schema not found"}"#)
     ///     .create();
     /// let heartbeat = decoder.decode(Some(&bytes));
-    /// assert_eq!(heartbeat, Err("Did not get a 200 response code from 127.0.0.1:1234/schemas/ids/2 but 404 instead".to_owned()));
+    /// assert_eq!(heartbeat, Err(SRCError::new("Did not get a 200 response code from 127.0.0.1:1234/schemas/ids/2 but 404 instead", None, false).into_cache()));
     /// let _m = mock("GET", "/schemas/ids/2")
     ///     .with_status(200)
     ///     .with_header("content-type", "application/vnd.schemaregistry.v1+json")
@@ -111,7 +113,7 @@ impl Decoder {
     ///     .create();
     ///
     /// let heartbeat = decoder.decode(Some(&bytes));
-    /// assert_eq!(heartbeat, Err("Did not get a 200 response code from 127.0.0.1:1234/schemas/ids/2 but 404 instead".to_owned()));
+    /// assert_eq!(heartbeat, Err(SRCError::new("Did not get a 200 response code from 127.0.0.1:1234/schemas/ids/2 but 404 instead", None, false).into_cache()));
     ///
     /// decoder.remove_errors_from_cache();
     ///
@@ -147,7 +149,7 @@ impl Decoder {
     ///     }
     /// }
     /// ```
-    pub fn decode(&mut self, bytes: Option<&[u8]>) -> Result<Value, String> {
+    pub fn decode(&mut self, bytes: Option<&[u8]>) -> Result<Value, SRCError> {
         match bytes {
             None => Ok(Value::Null),
             Some(p) if p[0] == 0 => self.deserialize(p),
@@ -156,27 +158,27 @@ impl Decoder {
     }
     /// The actual deserialization trying to get the id from the bytes to retrieve the schema, and
     /// using a reader transforms the bytes to a value.
-    fn deserialize<'a>(&'a mut self, bytes: &'a [u8]) -> Result<Value, String> {
+    fn deserialize<'a>(&'a mut self, bytes: &'a [u8]) -> Result<Value, SRCError> {
         let mut buf = &bytes[1..5];
         let id = match buf.read_u32::<BigEndian>() {
             Ok(v) => v,
-            Err(e) => return Err(format!("Could not get id from bytes: {}", e)),
+            Err(e) => return Err(SRCError::new("Could not get id from bytes", Some(&e.to_string()), false)),
         };
         let mut reader = Cursor::new(&bytes[5..]);
         let sr = &self.schema_registry_url;
         let schema = self
             .cache
             .entry(id)
-            .or_insert_with(|| get_schema_by_id(id, sr));
-        match schema {
-            Ok(v) => match from_avro_datum(v, &mut reader, None) {
+            .or_insert_with(|| match get_schema_by_id(id, sr){
                 Ok(v) => Ok(v),
-                Err(e) => Err(format!(
-                    "Could not transform bytes using schema, error: {}",
-                    e
-                )),
+                Err(e) => Err(e.into_cache()),
+            });
+        match schema {
+            Ok(v) => match from_avro_datum(&v, &mut reader, None) {
+                Ok(v) => Ok(v),
+                Err(e) => Err(SRCError::new("Could not transform bytes using schema", Some(&e.to_string()), false)),
             },
-            Err(e) => Err(e.to_owned()),
+            Err(e) => Err(e.clone()),
         }
     }
 }
@@ -229,7 +231,7 @@ impl Decoder {
 #[derive(Debug)]
 pub struct Encoder {
     schema_registry_url: String,
-    cache: &'static mut HashMap<String, Result<(Schema, u32), String>, RandomState>,
+    cache: &'static mut HashMap<String, Result<(Schema, u32), SRCError>, RandomState>,
 }
 
 impl Encoder {
@@ -258,6 +260,7 @@ impl Encoder {
     ///  # use mockito::{mock, SERVER_ADDRESS};
     ///  # use schema_registry_converter::Encoder;
     ///  # use schema_registry_converter::schema_registry::SubjectNameStrategy;
+    ///  # use schema_registry_converter::schema_registry::SRCError;
     ///  # use avro_rs::types::Value;
     ///
     /// let mut encoder = Encoder::new(SERVER_ADDRESS);
@@ -270,7 +273,7 @@ impl Encoder {
     ///     .create();
     ///
     /// let bytes = encoder.encode(vec!(("beat", Value::Long(3))), &strategy);
-    /// assert_eq!(bytes, Err("Did not get a 200 response code from 127.0.0.1:1234/subjects/nl.openweb.data.Heartbeat/versions/latest but 404 instead".to_owned()));
+    /// assert_eq!(bytes, Err(SRCError::new("Did not get a 200 response code from 127.0.0.1:1234/subjects/nl.openweb.data.Heartbeat/versions/latest but 404 instead", None, false).into_cache()));
     ///
     /// let _m = mock("GET", "/subjects/nl.openweb.data.Heartbeat/versions/latest")
     ///     .with_status(200)
@@ -279,7 +282,7 @@ impl Encoder {
     ///     .create();
     ///
     /// let bytes = encoder.encode(vec!(("beat", Value::Long(3))), &strategy);
-    /// assert_eq!(bytes, Err("Did not get a 200 response code from 127.0.0.1:1234/subjects/nl.openweb.data.Heartbeat/versions/latest but 404 instead".to_owned()));
+    /// assert_eq!(bytes, Err(SRCError::new("Did not get a 200 response code from 127.0.0.1:1234/subjects/nl.openweb.data.Heartbeat/versions/latest but 404 instead", None, false).into_cache()));
     ///
     /// encoder.remove_errors_from_cache();
     ///
@@ -319,21 +322,23 @@ impl Encoder {
     ///
     /// assert_eq!(bytes, Ok(vec!(0,0,0,0,3,6)))
     /// ```
-    pub fn encode(
+    pub fn encode<'a>(
         &mut self,
         values: Vec<(&'static str, Value)>,
         subject_name_strategy: &SubjectNameStrategy,
-    ) -> Result<Vec<u8>, String> {
+    ) -> Result<Vec<u8>, SRCError> {
         let schema_registry_url = &self.schema_registry_url;
-        let schema_and_id = match self
+        let schema_and_id = self
             .cache
             .entry(get_subject(subject_name_strategy))
-            .or_insert_with(|| get_schema_by_subject(schema_registry_url, &subject_name_strategy))
-        {
-            Ok(v) => v,
-            Err(e) => return Err(e.to_owned()),
-        };
-        to_bytes(&schema_and_id.0, schema_and_id.1, values)
+            .or_insert_with(|| match get_schema_by_subject(schema_registry_url, &subject_name_strategy){
+                Ok(v) => Ok(v),
+                Err(e) => Err(e.into_cache())
+            });
+        match schema_and_id{
+            Ok((schema, id)) => to_bytes(&schema, *id, values),
+            Err(e) => Err(e.clone()),
+        }
     }
 }
 
@@ -343,10 +348,10 @@ fn to_bytes(
     schema: &Schema,
     id: u32,
     values: Vec<(&'static str, Value)>,
-) -> Result<Vec<u8>, String> {
+) -> Result<Vec<u8>, SRCError> {
     let mut record = match Record::new(schema) {
         Some(v) => v,
-        None => return Err("Could not create record from schema".to_owned()),
+        None => return Err(SRCError::new("Could not create record from schema", None, false)),
     };
     for value in values {
         record.put(value.0, value.1)
@@ -359,7 +364,7 @@ fn to_bytes(
     }
     match to_avro_datum(schema, record) {
         Ok(v) => payload.extend_from_slice(v.as_slice()),
-        Err(e) => return Err(format!("Could not get avro bytes: {}", e)),
+        Err(e) => return Err(SRCError::new("Could not get avro bytes", Some(&e.to_string()), false)),
     }
     Ok(payload)
 }
