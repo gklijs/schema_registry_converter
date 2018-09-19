@@ -1,6 +1,6 @@
 [package]
 name = "schema_registry_converter"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Gerard Klijs <g.klijs@gmail.com>"]
 description = "Encode/decode data from/to kafka using the Confluent Schema Registry"
 homepage = "https://github.com/gklijs/schema_registry_converter"
@@ -26,11 +26,6 @@ version = ">=0.8.0, <2.0"
 mockito = "0.12.0"
 rdkafka = "0.17.0"
 rdkafka-sys = "0.11.4-0"
-
-[badges.appveyor]
-branch = "master"
-repository = "gklijs/schema_registry_converter"
-service = "github"
 
 [badges.travis-ci]
 branch = "master"

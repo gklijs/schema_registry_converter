@@ -16,6 +16,9 @@
 //! now. For decoding it works the same as the Java part, using the id encoded in the bytes, the
 //! correct schema will be fetched and used to decode the message to a avro_rs::types::Value.
 //!
+//! Resulting errors are SRCError, besides the error they also contain a .cached which tells whether
+//! the error is cached or not.
+//!
 //! [avro-rs]: https://crates.io/crates/avro-rs
 
 extern crate avro_rs;
