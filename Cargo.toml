@@ -7,7 +7,7 @@ homepage = "https://github.com/gklijs/schema_registry_converter"
 readme = "README.md"
 keywords = ["kafka", "encode", "decode", "schema", "avro"]
 categories = ["encoding", "parsing"]
-license = "MIT OR Apache-2.0"
+license = "MIT/Apache-2.0"
 repository = "https://github.com/gklijs/schema_registry_converter"
 
 [dependencies.avro-rs]
