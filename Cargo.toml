@@ -3,6 +3,7 @@ name = "schema_registry_converter"
 version = "0.1.0"
 authors = ["Gerard Klijs <g.klijs@gmail.com>"]
 description = "Encode/decode data from/to kafka using the Confluent Schema Registry"
+homepage = "https://github.com/gklijs/schema_registry_converter"
 readme = "README.md"
 keywords = ["kafka", "encode", "decode", "schema", "avro"]
 categories = ["encoding", "parsing"]

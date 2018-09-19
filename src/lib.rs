@@ -1,3 +1,23 @@
+//! Rust encoder and decoder in order to work with the Confluent schema registry.
+//!
+//! This crate contains ways to handle encoding and decoding of messages making use of the
+//! [confluent schema-registry]. This happens in a way which is compatible to the
+//! [confluent java serde].
+//!
+//! [confluent schema-registry]: https://docs.confluent.io/current/schema-registry/docs/index.html
+//! [confluent java serde]: https://github.com/confluentinc/schema-registry/tree/master/avro-serde/src/main/java/io/confluent/kafka/streams/serdes/avro
+//!
+//! Both the Decoder and the Encoder have a cache to allow re-use of the Schema objects used for
+//! the avro transitions. For testing I only used a very basic schema, at [avro-rs] more complex
+//! schema can be found.
+//!
+//! For Encoding data it's assumed the schema is already available in the schema registry, and the
+//! latest version will be used. In the Java serde you can supply a schema, this is not supported
+//! now. For decoding it works the same as the Java part, using the id encoded in the bytes, the
+//! correct schema will be fetched and used to decode the message to a avro_rs::types::Value.
+//!
+//! [avro-rs]: https://crates.io/crates/avro-rs
+
 extern crate avro_rs;
 extern crate byteorder;
 extern crate core;
