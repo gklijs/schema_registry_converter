@@ -77,7 +77,8 @@ fn main() {
 # Relations to related libraries
 
 The avro part of the conversion is handled by avro-rs as such I don't include tests for every possible schema.
-While I used rdkafka in combination to successfully consume from and produce to kafka this crate has no direct reference to it. It does show in some of the examples. All this crate does is convert [u8] <-> avro_rs::types::Value.
+While I used rdkafka in combination to successfully consume from and produce to kafka, and it's used in the example this crate has no direct dependency to it.
+All this crate does is convert [u8] <-> avro_rs::types::Value.
 
 # Tests
 
