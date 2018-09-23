@@ -8,7 +8,6 @@ use self::avro_rs::Schema;
 use self::curl::easy::{Easy2, Handler, List, WriteError};
 use self::serde_json::Value as JsonValue;
 use core::fmt;
-use std::error;
 use std::error::Error;
 use std::ops::Deref;
 use std::str;
