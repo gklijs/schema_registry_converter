@@ -6,16 +6,12 @@ rust:
 - stable
 - beta
 - nightly
-
 matrix:
   allow_failures:
   - rust: nightly
-  fast_finish: true
-
 script:
   - cargo build --verbose
   - cargo test --verbose -- --test-threads=1
-
 addons:
   apt:
     packages:
@@ -26,7 +22,6 @@ addons:
     - gcc
     - binutils-dev
     - libiberty-dev
-
 after_success: |
   wget https://github.com/SimonKagstrom/kcov/archive/master.tar.gz &&
   tar xzf master.tar.gz &&
