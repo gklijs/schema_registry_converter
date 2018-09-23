@@ -30,11 +30,11 @@ pub mod schema_registry;
 use avro_rs::types::{Record, Value};
 use avro_rs::{from_avro_datum, to_avro_datum, Schema};
 use byteorder::{BigEndian, ByteOrder, ReadBytesExt};
+use schema_registry::SRCError;
 use schema_registry::{get_schema_by_id, get_schema_by_subject, get_subject, SubjectNameStrategy};
 use std::collections::hash_map::RandomState;
 use std::collections::HashMap;
 use std::io::Cursor;
-use schema_registry::SRCError;
 
 /// A decoder used to transform bytes to a Value object
 ///
@@ -108,7 +108,7 @@ impl Decoder {
     ///     .with_body(r#"{"error_code":40403,"message":"Schema not found"}"#)
     ///     .create();
     /// let heartbeat = decoder.decode(Some(&bytes));
-    /// assert_eq!(heartbeat, Err(SRCError::new("Did not get a 200 response code from 127.0.0.1:1234/schemas/ids/2 but 404 instead", None, false).into_cache()));
+    /// assert_eq!(heartbeat, Err(SRCError::new("Did not get a 200 response code but 404 instead", None, false).into_cache()));
     /// let _m = mock("GET", "/schemas/ids/2")
     ///     .with_status(200)
     ///     .with_header("content-type", "application/vnd.schemaregistry.v1+json")
@@ -116,7 +116,7 @@ impl Decoder {
     ///     .create();
     ///
     /// let heartbeat = decoder.decode(Some(&bytes));
-    /// assert_eq!(heartbeat, Err(SRCError::new("Did not get a 200 response code from 127.0.0.1:1234/schemas/ids/2 but 404 instead", None, false).into_cache()));
+    /// assert_eq!(heartbeat, Err(SRCError::new("Did not get a 200 response code but 404 instead", None, false).into_cache()));
     ///
     /// decoder.remove_errors_from_cache();
     ///
@@ -165,21 +165,31 @@ impl Decoder {
         let mut buf = &bytes[1..5];
         let id = match buf.read_u32::<BigEndian>() {
             Ok(v) => v,
-            Err(e) => return Err(SRCError::new("Could not get id from bytes", Some(&e.to_string()), false)),
+            Err(e) => {
+                return Err(SRCError::new(
+                    "Could not get id from bytes",
+                    Some(&e.to_string()),
+                    false,
+                ))
+            }
         };
         let mut reader = Cursor::new(&bytes[5..]);
         let sr = &self.schema_registry_url;
         let schema = self
             .cache
             .entry(id)
-            .or_insert_with(|| match get_schema_by_id(id, sr){
+            .or_insert_with(|| match get_schema_by_id(id, sr) {
                 Ok(v) => Ok(v),
                 Err(e) => Err(e.into_cache()),
             });
         match schema {
             Ok(v) => match from_avro_datum(&v, &mut reader, None) {
                 Ok(v) => Ok(v),
-                Err(e) => Err(SRCError::new("Could not transform bytes using schema", Some(&e.to_string()), false)),
+                Err(e) => Err(SRCError::new(
+                    "Could not transform bytes using schema",
+                    Some(&e.to_string()),
+                    false,
+                )),
             },
             Err(e) => Err(e.clone()),
         }
@@ -276,7 +286,7 @@ impl Encoder {
     ///     .create();
     ///
     /// let bytes = encoder.encode(vec!(("beat", Value::Long(3))), &strategy);
-    /// assert_eq!(bytes, Err(SRCError::new("Did not get a 200 response code from 127.0.0.1:1234/subjects/nl.openweb.data.Heartbeat/versions/latest but 404 instead", None, false).into_cache()));
+    /// assert_eq!(bytes, Err(SRCError::new("Did not get a 200 response code but 404 instead", None, false).into_cache()));
     ///
     /// let _m = mock("GET", "/subjects/nl.openweb.data.Heartbeat/versions/latest")
     ///     .with_status(200)
@@ -285,7 +295,7 @@ impl Encoder {
     ///     .create();
     ///
     /// let bytes = encoder.encode(vec!(("beat", Value::Long(3))), &strategy);
-    /// assert_eq!(bytes, Err(SRCError::new("Did not get a 200 response code from 127.0.0.1:1234/subjects/nl.openweb.data.Heartbeat/versions/latest but 404 instead", None, false).into_cache()));
+    /// assert_eq!(bytes, Err(SRCError::new("Did not get a 200 response code but 404 instead", None, false).into_cache()));
     ///
     /// encoder.remove_errors_from_cache();
     ///
@@ -325,7 +335,7 @@ impl Encoder {
     ///
     /// assert_eq!(bytes, Ok(vec!(0,0,0,0,3,6)))
     /// ```
-    pub fn encode<'a>(
+    pub fn encode(
         &mut self,
         values: Vec<(&'static str, Value)>,
         subject_name_strategy: &SubjectNameStrategy,
@@ -334,11 +344,13 @@ impl Encoder {
         let schema_and_id = self
             .cache
             .entry(get_subject(subject_name_strategy))
-            .or_insert_with(|| match get_schema_by_subject(schema_registry_url, &subject_name_strategy){
-                Ok(v) => Ok(v),
-                Err(e) => Err(e.into_cache())
+            .or_insert_with(|| {
+                match get_schema_by_subject(schema_registry_url, &subject_name_strategy) {
+                    Ok(v) => Ok(v),
+                    Err(e) => Err(e.into_cache()),
+                }
             });
-        match schema_and_id{
+        match schema_and_id {
             Ok((schema, id)) => to_bytes(&schema, *id, values),
             Err(e) => Err(e.clone()),
         }
@@ -354,7 +366,13 @@ fn to_bytes(
 ) -> Result<Vec<u8>, SRCError> {
     let mut record = match Record::new(schema) {
         Some(v) => v,
-        None => return Err(SRCError::new("Could not create record from schema", None, false)),
+        None => {
+            return Err(SRCError::new(
+                "Could not create record from schema",
+                None,
+                false,
+            ))
+        }
     };
     for value in values {
         record.put(value.0, value.1)
@@ -367,7 +385,266 @@ fn to_bytes(
     }
     match to_avro_datum(schema, record) {
         Ok(v) => payload.extend_from_slice(v.as_slice()),
-        Err(e) => return Err(SRCError::new("Could not get avro bytes", Some(&e.to_string()), false)),
+        Err(e) => {
+            return Err(SRCError::new(
+                "Could not get avro bytes",
+                Some(&e.to_string()),
+                false,
+            ))
+        }
     }
     Ok(payload)
+}
+
+#[cfg(test)]
+mod tests {
+    extern crate avro_rs;
+    extern crate mockito;
+    use self::mockito::{mock, SERVER_ADDRESS};
+    use avro_rs::types::Value;
+    use schema_registry::{SRCError, SubjectNameStrategy, SuppliedSchema};
+    use Decoder;
+    use Encoder;
+
+    #[test]
+    fn test_decoder_default() {
+        let _m = mock("GET", "/schemas/ids/1")
+            .with_status(200)
+             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
+             .create();
+
+        let mut decoder = Decoder::new(SERVER_ADDRESS);
+        let heartbeat = decoder.decode(Some(&[0, 0, 0, 0, 1, 6]));
+
+        assert_eq!(
+            heartbeat,
+            Ok(Value::Record(vec![("beat".to_string(), Value::Long(3))]))
+        )
+    }
+
+    #[test]
+    fn test_decoder_cache() {
+        let mut decoder = Decoder::new(SERVER_ADDRESS);
+        let bytes = [0, 0, 0, 0, 2, 6];
+
+        let _m = mock("GET", "/schemas/ids/2")
+            .with_status(404)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(r#"{"error_code":40403,"message":"Schema not found"}"#)
+            .create();
+        let heartbeat = decoder.decode(Some(&bytes));
+        assert_eq!(
+            heartbeat,
+            Err(SRCError::new(
+                "Did not get a 200 response code but 404 instead",
+                None,
+                false
+            ).into_cache())
+        );
+        let _m = mock("GET", "/schemas/ids/2")
+        .with_status(200)
+        .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+        .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
+        .create();
+
+        let heartbeat = decoder.decode(Some(&bytes));
+        assert_eq!(
+            heartbeat,
+            Err(SRCError::new(
+                "Did not get a 200 response code but 404 instead",
+                None,
+                false
+            ).into_cache())
+        );
+
+        decoder.remove_errors_from_cache();
+
+        let heartbeat = decoder.decode(Some(&bytes));
+        assert_eq!(
+            heartbeat,
+            Ok(Value::Record(vec![("beat".to_string(), Value::Long(3))]))
+        )
+    }
+
+    #[test]
+    fn test_encode_key_and_value() {
+        let _m = mock("GET", "/subjects/heartbeat-value/versions/latest")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(r#"{"subject":"heartbeat-value","version":1,"id":3,"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
+            .create();
+
+        let _n = mock("GET", "/subjects/heartbeat-key/versions/latest")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(r#"{"subject":"heartbeat-value","version":1,"id":4,"schema":"{\"type\":\"record\",\"name\":\"Name\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"name\",\"type\":\"string\",\"avro.java.string\":\"String\"}]}"}"#)
+            .create();
+
+        let mut encoder = Encoder::new(SERVER_ADDRESS);
+
+        let key_strategy = SubjectNameStrategy::TopicNameStrategy("heartbeat", true);
+        let bytes = encoder.encode(
+            vec![("name", Value::String("Some name".to_owned()))],
+            &key_strategy,
+        );
+
+        assert_eq!(
+            bytes,
+            Ok(vec![
+                0, 0, 0, 0, 4, 18, 83, 111, 109, 101, 32, 110, 97, 109, 101,
+            ])
+        );
+
+        let value_strategy = SubjectNameStrategy::TopicNameStrategy("heartbeat", false);
+        let bytes = encoder.encode(vec![("beat", Value::Long(3))], &value_strategy);
+
+        assert_eq!(bytes, Ok(vec![0, 0, 0, 0, 3, 6]))
+    }
+
+    #[test]
+    fn test_using_record_name() {
+        let _m = mock("GET", "/subjects/heartbeat-nl.openweb.data.Heartbeat/versions/latest")
+         .with_status(200)
+         .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+         .with_body(r#"{"subject":"heartbeat-value","version":1,"id":3,"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
+         .create();
+
+        let mut encoder = Encoder::new(SERVER_ADDRESS);
+        let strategy =
+            SubjectNameStrategy::TopicRecordNameStrategy("heartbeat", "nl.openweb.data.Heartbeat");
+        let bytes = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
+
+        assert_eq!(bytes, Ok(vec![0, 0, 0, 0, 3, 6]))
+    }
+
+    #[test]
+    fn test_encode_cache() {
+        let mut encoder = Encoder::new(SERVER_ADDRESS);
+        let strategy = SubjectNameStrategy::RecordNameStrategy("nl.openweb.data.Heartbeat");
+
+        let _m = mock("GET", "/subjects/nl.openweb.data.Heartbeat/versions/latest")
+            .with_status(404)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(r#"{"error_code":40403,"message":"Schema not found"}"#)
+            .create();
+
+        let bytes = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
+        assert_eq!(
+            bytes,
+            Err(SRCError::new(
+                "Did not get a 200 response code but 404 instead",
+                None,
+                false
+            ).into_cache())
+        );
+
+        let _n = mock("GET", "/subjects/nl.openweb.data.Heartbeat/versions/latest")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(r#"{"subject":"heartbeat-value","version":1,"id":4,"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
+            .create();
+
+        let bytes = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
+        assert_eq!(
+            bytes,
+            Err(SRCError::new(
+                "Did not get a 200 response code but 404 instead",
+                None,
+                false
+            ).into_cache())
+        );
+
+        encoder.remove_errors_from_cache();
+
+        let bytes = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
+        assert_eq!(bytes, Ok(vec![0, 0, 0, 0, 4, 6]))
+    }
+
+    #[test]
+    fn test_encode_key_and_value_supplied_record() {
+        let _n = mock("POST", "/subjects/heartbeat-key/versions")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(r#"{"id":3}"#)
+            .create();
+
+        let _m = mock("POST", "/subjects/heartbeat-value/versions")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(r#"{"id":4}"#)
+            .create();
+
+        let mut encoder = Encoder::new(SERVER_ADDRESS);
+
+        let name_schema = SuppliedSchema::new(r#"{"type":"record","name":"Name","namespace":"nl.openweb.data","fields":[{"name":"name","type":"string","avro.java.string":"String"}]}"#);
+        let key_strategy =
+            SubjectNameStrategy::TopicNameStrategyWithSchema("heartbeat", true, name_schema);
+        let bytes = encoder.encode(
+            vec![("name", Value::String("Some name".to_owned()))],
+            &key_strategy,
+        );
+        assert_eq!(
+            bytes,
+            Ok(vec![
+                0, 0, 0, 0, 3, 18, 83, 111, 109, 101, 32, 110, 97, 109, 101,
+            ])
+        );
+        let heartbeat_schema = SuppliedSchema::new(r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#);
+        let value_strategy =
+            SubjectNameStrategy::TopicNameStrategyWithSchema("heartbeat", false, heartbeat_schema);
+        let bytes = encoder.encode(vec![("beat", Value::Long(3))], &value_strategy);
+        assert_eq!(bytes, Ok(vec![0, 0, 0, 0, 4, 6]))
+    }
+
+    #[test]
+    fn test_encode_record_name_strategy_supplied_record() {
+        let _n = mock("POST", "/subjects/nl.openweb.data.Heartbeat/versions")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(r#"{"id":11}"#)
+            .create();
+
+        let mut encoder = Encoder::new(SERVER_ADDRESS);
+
+        let heartbeat_schema = SuppliedSchema::new(r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#);
+        let strategy = SubjectNameStrategy::RecordNameStrategyWithSchema(heartbeat_schema);
+        let bytes = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
+        assert_eq!(bytes, Ok(vec![0, 0, 0, 0, 11, 6]))
+    }
+
+    #[test]
+    fn test_encode_topic_record_name_strategy_supplied_record() {
+        let _n = mock("POST", "/subjects/hb-nl.openweb.data.Heartbeat/versions")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(r#"{"id":23}"#)
+            .create();
+
+        let mut encoder = Encoder::new(SERVER_ADDRESS);
+
+        let heartbeat_schema = SuppliedSchema::new(r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#);
+        let strategy =
+            SubjectNameStrategy::TopicRecordNameStrategyWithSchema("hb", heartbeat_schema);
+        let bytes = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
+        assert_eq!(bytes, Ok(vec![0, 0, 0, 0, 23, 6]))
+    }
+
+    #[test]
+    fn test_encode_topic_record_name_strategy_schema_registry_not_available() {
+        let mut encoder = Encoder::new(SERVER_ADDRESS);
+
+        let heartbeat_schema = SuppliedSchema::new(r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#);
+        let strategy =
+            SubjectNameStrategy::TopicRecordNameStrategyWithSchema("hb", heartbeat_schema);
+        let error = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
+        assert_eq!(
+            error,
+            Err(SRCError::new(
+                "Did not get a 200 response code but 501 instead",
+                None,
+                false
+            ).into_cache())
+        )
+    }
 }

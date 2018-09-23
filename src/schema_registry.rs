@@ -5,15 +5,33 @@ extern crate curl;
 extern crate serde_json;
 
 use self::avro_rs::Schema;
-use self::curl::easy::Easy2;
-use self::curl::easy::Handler;
-use self::curl::easy::WriteError;
+use self::curl::easy::{Easy2, Handler, List, WriteError};
 use self::serde_json::Value as JsonValue;
+use core::fmt;
+use std::error;
 use std::error::Error;
 use std::ops::Deref;
 use std::str;
-use core::fmt;
-use std::error;
+
+/// Because we need both the resulting schema, as have a way of posting the schema as json, we use
+/// this struct so we keep them both together.
+#[derive(Clone, Debug)]
+pub struct SuppliedSchema {
+    raw: &'static str,
+    parsed: Schema,
+}
+
+/// Will panic when the input is invalid.
+impl SuppliedSchema {
+    /// Creates a new Supplied Schema
+    pub fn new(raw: &'static str) -> SuppliedSchema {
+        let parsed = match Schema::parse_str(raw) {
+            Ok(v) => v,
+            Err(e) => panic!("Supplied raw value {} cant be turned into a Schema, error: {}", raw, e),
+        };
+        SuppliedSchema { raw, parsed }
+    }
+}
 
 /// Strategy similar to the one in the Java client. By default schema's needs to be backwards
 /// compatible. Historically the only available strategy was the TopicNameStrategy. This meant in
@@ -21,11 +39,37 @@ use std::error;
 /// was to be abandoned. Using either of the two other strategies allows multiple types of schema
 /// on on topic, while still being able to keep the restriction on schema's being backwards
 /// compatible.
+///
+/// ```
+/// # extern crate mockito;
+/// # extern crate schema_registry_converter;
+/// # extern crate avro_rs;
+/// # use mockito::{mock, SERVER_ADDRESS};
+/// # use schema_registry_converter::Encoder;
+/// # use schema_registry_converter::schema_registry::{SRCError, SubjectNameStrategy, SuppliedSchema};
+/// # use avro_rs::types::Value;
+///
+/// let _n = mock("POST", "/subjects/hb-nl.openweb.data.Heartbeat/versions")
+///     .with_status(200)
+///     .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+///     .with_body(r#"{"id":23}"#)
+///     .create();
+///
+/// let mut encoder = Encoder::new(SERVER_ADDRESS);
+///
+/// let heartbeat_schema = SuppliedSchema::new(r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#);
+/// let strategy = SubjectNameStrategy::TopicRecordNameStrategyWithSchema("hb", heartbeat_schema);
+/// let bytes = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
+/// assert_eq!(bytes, Ok(vec![0, 0, 0, 0, 23, 6]))
+/// ```
 #[derive(Debug)]
 pub enum SubjectNameStrategy<'a> {
     RecordNameStrategy(&'a str),
     TopicNameStrategy(&'a str, bool),
     TopicRecordNameStrategy(&'a str, &'a str),
+    RecordNameStrategyWithSchema(SuppliedSchema),
+    TopicNameStrategyWithSchema(&'a str, bool, SuppliedSchema),
+    TopicRecordNameStrategyWithSchema(&'a str, SuppliedSchema),
 }
 
 /// Gets a schema by an id. This is used to get the correct schema te deserialize bytes, when the
@@ -41,11 +85,37 @@ pub fn get_schema_by_subject(
     schema_registry_url: &str,
     subject_name_strategy: &SubjectNameStrategy,
 ) -> Result<(Schema, u32), SRCError> {
-    let url = schema_registry_url.to_owned()
-        + "/subjects/"
-        + &get_subject(subject_name_strategy)
-        + "/versions/latest";
-    schema_from_url(&url, None)
+    let schema = get_schema(subject_name_strategy);
+    match schema {
+        None => {
+            let url = format!(
+                "{}/subjects/{}/versions/latest",
+                schema_registry_url,
+                get_subject(subject_name_strategy)
+            );
+            schema_from_url(&url, None)
+        }
+        Some(v) => {
+            let url = format!(
+                "{}/subjects/{}/versions",
+                schema_registry_url,
+                get_subject(subject_name_strategy)
+            );
+            post_schema(&url, v)
+        }
+    }
+}
+
+/// Helper function to get the schema from the strategy.
+fn get_schema(subject_name_strategy: &SubjectNameStrategy) -> Option<SuppliedSchema> {
+    match subject_name_strategy {
+        SubjectNameStrategy::RecordNameStrategy(_) => None,
+        SubjectNameStrategy::TopicNameStrategy(_, _) => None,
+        SubjectNameStrategy::TopicRecordNameStrategy(_, _) => None,
+        SubjectNameStrategy::RecordNameStrategyWithSchema(s) => Some(s.clone()),
+        SubjectNameStrategy::TopicNameStrategyWithSchema(_, _, s) => Some(s.clone()),
+        SubjectNameStrategy::TopicRecordNameStrategyWithSchema(_, s) => Some(s.clone()),
+    }
 }
 
 /// Gets the subject part which is also used as key to cache the results. It's constructed so that
@@ -55,21 +125,27 @@ pub fn get_subject(subject_name_strategy: &SubjectNameStrategy) -> String {
         SubjectNameStrategy::RecordNameStrategy(rn) => String::from(*rn),
         SubjectNameStrategy::TopicNameStrategy(t, is_key) => {
             if *is_key {
-                String::from(*t) + "-key"
+                format!("{}-key", t)
             } else {
-                String::from(*t) + "-value"
+                format!("{}-value", t)
             }
         }
-        SubjectNameStrategy::TopicRecordNameStrategy(t, rn) => String::from(*t) + "-" + rn,
-    }
-}
-
-struct Collector(Vec<u8>);
-
-impl Handler for Collector {
-    fn write(&mut self, data: &[u8]) -> Result<usize, WriteError> {
-        self.0.extend_from_slice(data);
-        Ok(data.len())
+        SubjectNameStrategy::TopicRecordNameStrategy(t, rn) => format!("{}-{}", t, rn),
+        SubjectNameStrategy::RecordNameStrategyWithSchema(s) => match s.parsed {
+            Schema::Record { ref name, .. } => name.fullname(None),
+            _ => panic!("Supplied schema is not a record"),
+        },
+        SubjectNameStrategy::TopicNameStrategyWithSchema(t, is_key, _) => {
+            if *is_key {
+                format!("{}-key", t)
+            } else {
+                format!("{}-value", t)
+            }
+        }
+        SubjectNameStrategy::TopicRecordNameStrategyWithSchema(t, s) => match s.parsed {
+            Schema::Record { ref name, .. } => format!("{}-{}", t, name.fullname(None)),
+            _ => panic!("Supplied schema is not a record"),
+        },
     }
 }
 
@@ -77,50 +153,39 @@ impl Handler for Collector {
 /// all possible errors. For now there is now distinction between recoverable and unrecoverable
 /// errors.
 fn schema_from_url(url: &str, id: Option<u32>) -> Result<(Schema, u32), SRCError> {
-    let mut data = Vec::new();
-    let mut easy = Easy2::new(Collector(Vec::new()));
-    if let Err(e) = easy.get(true) {
-        return Err(SRCError::new("error setting get on easy", Some(e.description()),true));
-    }
-    if let Err(e) = easy.url(url) {
-        return Err(SRCError::new("error setting url on easy", Some(e.description()),true));
-    }
-    if let Err(e) = easy.perform() {
-        return Err(SRCError::new("error performing easy", Some(e.description()),true));
-    }
-    match easy.response_code() {
-        Ok(200) => (),
-        Ok(v) =>
-            return Err(SRCError::new(format!(
-                "Did not get a 200 response code from {} but {} instead",
-                url, v
-            ).as_str(), None, false)),
-
-        Err(e) =>
-            return Err(SRCError::new(format!(
-                "Encountered error getting http response from {}: {}",
-                url, e
-            ).as_str(), Some(e.description()), true)),
-
-    }
-    match easy.get_ref() {
-        Collector(b) => data.extend_from_slice(b),
-    }
-    let body = match str::from_utf8(data.as_ref()) {
+    let easy = match perform_get(url) {
         Ok(v) => v,
-        Err(e) => return Err(SRCError::new("Invalid UTF-8 sequence", Some(e.description()), false)),
+        Err(e) => {
+            return Err(SRCError::new(
+                "error performing get to schema registry",
+                Some(e.description()),
+                true,
+            ))
+        }
     };
-    let json: JsonValue = match serde_json::from_str(body) {
+    let json: JsonValue = match to_json(easy) {
         Ok(v) => v,
-        Err(e) => return Err(SRCError::new("Invalid json string", Some(e.description()), false)),
+        Err(e) => return Err(e),
     };
     let raw_schema = match json["schema"].as_str() {
         Some(v) => v,
-        None => return Err(SRCError::new("Could not get raw schema from response", None, false)),
+        None => {
+            return Err(SRCError::new(
+                "Could not get raw schema from response",
+                None,
+                false,
+            ))
+        }
     };
     let schema = match Schema::parse_str(raw_schema) {
         Ok(v) => v,
-        Err(e) => return Err(SRCError::new("Could not parse schema", Some(&e.to_string()), false)),
+        Err(e) => {
+            return Err(SRCError::new(
+                "Could not parse schema",
+                Some(&e.to_string()),
+                false,
+            ))
+        }
     };
     let id = match id {
         Some(v) => v,
@@ -135,6 +200,110 @@ fn schema_from_url(url: &str, id: Option<u32>) -> Result<(Schema, u32), SRCError
     Ok((schema, id))
 }
 
+/// Handles posting the schema, and getting back the id. When the schema is already in the schema
+/// registry, the matching id is returned. When it's not it depends on the settings of the schema
+/// registry. The default config will check if the schema is backwards compatible. One of the ways
+/// to do this is to add a default value for new fields.
+fn post_schema(url: &str, schema: SuppliedSchema) -> Result<(Schema, u32), SRCError> {
+    let easy = match perform_post(url, schema.raw) {
+        Ok(v) => v,
+        Err(e) => {
+            return Err(SRCError::new(
+                "error performing post to schema registry",
+                Some(e.description()),
+                true,
+            ))
+        }
+    };
+    let json: JsonValue = match to_json(easy) {
+        Ok(v) => v,
+        Err(e) => return Err(e),
+    };
+    let id = match json["id"].as_i64() {
+        Some(v) => v,
+        None => return Err(SRCError::new("Could not get id from response", None, false)),
+    };
+    Ok((schema.parsed, id as u32))
+}
+
+/// Does the get, doing it like this makes for more compact code.
+fn perform_get(url: &str) -> Result<Easy2<Collector>, curl::Error> {
+    let mut easy = Easy2::new(Collector(Vec::new()));
+    easy.get(true)?;
+    easy.url(url)?;
+    easy.perform()?;
+    Ok(easy)
+}
+
+/// Does the post, setting the headers correctly
+fn perform_post(url: &str, schema_raw: &str) -> Result<Easy2<Collector>, curl::Error> {
+    let mut easy = Easy2::new(Collector(Vec::new()));
+    easy.post(true)?;
+    easy.url(url)?;
+    easy.post_fields_copy(schema_raw.as_bytes())?;
+    let mut list = List::new();
+    list.append("Content-Type: application/vnd.schemaregistry.v1+json")?;
+    list.append("Accept: json")?;
+    easy.http_headers(list)?;
+    easy.perform()?;
+    Ok(easy)
+}
+
+/// If the response code was 200, tries to format the payload as json
+fn to_json(mut easy: Easy2<Collector>) -> Result<JsonValue, SRCError> {
+    match easy.response_code() {
+        Ok(200) => (),
+        Ok(v) => {
+            return Err(SRCError::new(
+                format!("Did not get a 200 response code but {} instead", v).as_str(),
+                None,
+                false,
+            ))
+        }
+
+        Err(e) => {
+            return Err(SRCError::new(
+                format!("Encountered error getting http response: {}", e).as_str(),
+                Some(e.description()),
+                true,
+            ))
+        }
+    }
+    let mut data = Vec::new();
+    match easy.get_ref() {
+        Collector(b) => data.extend_from_slice(b),
+    }
+    let body = match str::from_utf8(data.as_ref()) {
+        Ok(v) => v,
+        Err(e) => {
+            return Err(SRCError::new(
+                "Invalid UTF-8 sequence",
+                Some(e.description()),
+                false,
+            ))
+        }
+    };
+    match serde_json::from_str(body) {
+        Ok(v) => Ok(v),
+        Err(e) => Err(SRCError::new(
+            "Invalid json string",
+            Some(e.description()),
+            false,
+        )),
+    }
+}
+
+/// Struct to store the payload in
+struct Collector(Vec<u8>);
+
+/// Used to easily get the payload from a http call.
+impl Handler for Collector {
+    fn write(&mut self, data: &[u8]) -> Result<usize, WriteError> {
+        self.0.extend_from_slice(data);
+        Ok(data.len())
+    }
+}
+
 /// Error struct which makes it easy to know if the resulting error is also preserved in the cache
 /// or not. And whether trying it again might not cause an error.
 #[derive(Debug, PartialEq)]
@@ -145,13 +314,14 @@ pub struct SRCError {
     cached: bool,
 }
 
+/// Implements clone so when an error is returned from the cache, a copy can be returned
 impl Clone for SRCError {
     fn clone(&self) -> SRCError {
-        let side = match &self.side{
+        let side = match &self.side {
             Some(v) => Some(String::from(v.deref())),
             None => None,
         };
-        SRCError{
+        SRCError {
             error: String::from(self.error.deref()),
             side,
             retriable: self.retriable,
@@ -160,36 +330,42 @@ impl Clone for SRCError {
     }
 }
 
+/// Gives the information from the error in a readable format.
 impl fmt::Display for SRCError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match &self.side {
-            Some(cause) => write!(f, "Error: {}, was cause by {}, it's retriable: {}, it's cached: {}", self.error, &cause, self.retriable, self.cached),
-            None => write!(f, "Error: {} had no other cause, it's retriable: {}, it's cached: {}", self.error, self.retriable, self.cached),
+            Some(cause) => write!(
+                f,
+                "Error: {}, was cause by {}, it's retriable: {}, it's cached: {}",
+                self.error, &cause, self.retriable, self.cached
+            ),
+            None => write!(
+                f,
+                "Error: {} had no other cause, it's retriable: {}, it's cached: {}",
+                self.error, self.retriable, self.cached
+            ),
         }
     }
 }
 
-impl error::Error for SRCError{
-    fn description(&self) -> &str {
-        &self.error
-    }
-}
-
-impl SRCError{
+/// Specific error from which can be determined whether retrying might not lead to an error and
+/// whether the error is cashed, it's turned into the cashed variant when it's put into the cache.
+impl SRCError {
     pub fn new(error: &str, cause: Option<&str>, retriable: bool) -> SRCError {
         let side = match cause {
             Some(v) => Some(v.to_owned()),
             None => None,
         };
-        SRCError{
+        SRCError {
             error: error.to_owned(),
             side,
             retriable,
             cached: false,
         }
     }
+    /// Should be called before putting the error in the cache
     pub fn into_cache(self) -> SRCError {
-        SRCError{
+        SRCError {
             error: self.error,
             side: self.side,
             retriable: self.retriable,

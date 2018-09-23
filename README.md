@@ -1,10 +1,80 @@
-# schema_registry_converter
+> #schema_registry_converter
+
+[![Build Status](https://travis-ci.org/gklijs/schema_registry_converter.svg?branch=master)](https://travis-ci.org/gklijs/schema_registry_converter)
+[![codecov](https://codecov.io/gh/gklijs/schema_registry_converter/branch/master/graph/badge.svg)](https://codecov.io/gh/gklijs/schema_registry_converter)
+[![Crates.io](https://img.shields.io/crates/v/schema_registry_converter.svg?maxAge=2592000)](https://crates.io/crates/schema_registry_converter)
+---
 
 This library is provides a way of using the Confluent Schema Registry in a way that is compliant with the usual jvm useage.
-Consuming/decoding and producing/encoding is supported. Encoding supposes the schema's needed are already available in the schema registry.
-Feel free to open een issue/pr to add functionality to add the schema from this crate.
+Consuming/decoding and producing/encoding is supported. It's also possible to provide the schema to use when decoding. When no schema is provided the latest
+schema with the same `subject` will be used. As far as I know it's feature complete compared to the confluent java version.
+As I'm still pretty new to rust pr's/remarks for improvements are greatly appreciated.
 
-# Relation to related libraries
+# Getting Started
+
+[schema_registry_converter.rs is available on crates.io](https://crates.io/crates/schema_registry_converter).
+It is recommended to look there for the newest and more elaborate documentation.
+
+```toml
+[dependencies]
+schema_registry_converter = "0.3.0"
+```
+
+...and see the [docs](https://docs.rs/schema_registry_converter) for how to use it.
+
+# Example
+
+```rust
+extern crate rdkafka;
+extern crate avro_rs;
+extern crate schema_registry_converter;
+
+use rdkafka::message::{Message, BorrowedMessage};
+use avro_rs::types::Value;
+use schema_registry_converter::Decoder;
+use schema_registry_converter::Encoder;
+use schema_registry_converter::schema_registry::SubjectNameStrategy;
+
+
+fn get_value<'a>(
+    msg: &'a BorrowedMessage,
+    decoder: &'a mut Decoder,
+) -> Value{
+    match decoder.decode(msg.payload()){
+    Ok(v) => v,
+    Err(e) => panic!("Error getting value: {}", e),
+    }
+}
+
+fn get_future_record<'a>(
+    topic: &'a str,
+    key: Option<&'a str>,
+    values: Vec<(&'static str, Value)>,
+    encoder: &'a mut Encoder,
+) -> FutureRecord<'a>{
+    let subject_name_strategy = SubjectNameStrategy::TopicNameStrategy(topic, false);
+    let payload = match encoder.encode(values, &subject_name_strategy) {
+        Ok(v) => v,
+        Err(e) => panic!("Error getting payload: {}", e),
+    };
+    FutureRecord {
+        topic,
+        partition: None,
+        payload: Some(&payload),
+        key,
+        timestamp: None,
+        headers: None,
+    }
+}
+
+fn main() {
+    let mut decoder = Decoder::new(SERVER_ADDRESS);
+    let mut encoder = Encoder::new(SERVER_ADDRESS);
+    //somewhere else the above functions can be called
+}
+```
+
+# Relations to related libraries
 
 The avro part of the conversion is handled by avro-rs as such I don't include tests for every possible schema.
 While I used rdkafka in combination to successfully consume from and produce to kafka this crate has no direct reference to it. It does show in some of the examples. All this crate does is convert [u8] <-> avro_rs::types::Value.
