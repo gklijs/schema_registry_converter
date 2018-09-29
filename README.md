@@ -2,7 +2,9 @@
 
 [![Build Status](https://travis-ci.org/gklijs/schema_registry_converter.svg?branch=master)](https://travis-ci.org/gklijs/schema_registry_converter)
 [![codecov](https://codecov.io/gh/gklijs/schema_registry_converter/branch/master/graph/badge.svg)](https://codecov.io/gh/gklijs/schema_registry_converter)
+[![Crates.io](https://img.shields.io/crates/d/schema_registry_converter.svg?maxAge=2592000)](https://crates.io/crates/schema_registry_converter)
 [![Crates.io](https://img.shields.io/crates/v/schema_registry_converter.svg?maxAge=2592000)](https://crates.io/crates/schema_registry_converter)
+[![docs.rs](https://docs.rs/schema_registry_converter/badge.svg)](https://docs.rs/schema_registry_converter/)
 ---
 
 This library is provides a way of using the Confluent Schema Registry in a way that is compliant with the usual jvm useage.
@@ -74,7 +76,7 @@ fn main() {
 }
 ```
 
-# Relations to related libraries
+# Relation to related libraries
 
 The avro part of the conversion is handled by avro-rs as such I don't include tests for every possible schema.
 While I used rdkafka in combination to successfully consume from and produce to kafka, and it's used in the example this crate has no direct dependency to it.

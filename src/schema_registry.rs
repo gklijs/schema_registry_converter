@@ -26,7 +26,10 @@ impl SuppliedSchema {
     pub fn new(raw: &'static str) -> SuppliedSchema {
         let parsed = match Schema::parse_str(raw) {
             Ok(v) => v,
-            Err(e) => panic!("Supplied raw value {} cant be turned into a Schema, error: {}", raw, e),
+            Err(e) => panic!(
+                "Supplied raw value {} cant be turned into a Schema, error: {}",
+                raw, e
+            ),
         };
         SuppliedSchema { raw, parsed }
     }
@@ -48,11 +51,11 @@ impl SuppliedSchema {
 /// # use schema_registry_converter::schema_registry::{SRCError, SubjectNameStrategy, SuppliedSchema};
 /// # use avro_rs::types::Value;
 ///
-/// let _n = mock("POST", "/subjects/hb-nl.openweb.data.Heartbeat/versions")
-///     .with_status(200)
-///     .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-///     .with_body(r#"{"id":23}"#)
-///     .create();
+/// # let _n = mock("POST", "/subjects/hb-nl.openweb.data.Heartbeat/versions")
+/// #    .with_status(200)
+/// #    .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+/// #    .with_body(r#"{"id":23}"#)
+/// #    .create();
 ///
 /// let mut encoder = Encoder::new(SERVER_ADDRESS);
 ///
@@ -149,8 +152,8 @@ pub fn get_subject(subject_name_strategy: &SubjectNameStrategy) -> String {
 }
 
 /// Handles the work of doing an http call and transforming it to a schema while hopefully handling
-/// all possible errors. For now there is now distinction between recoverable and unrecoverable
-/// errors.
+/// all possible errors. When there is an error it might be useful to retry. For the the error has
+/// a retriable property.
 fn schema_from_url(url: &str, id: Option<u32>) -> Result<(Schema, u32), SRCError> {
     let easy = match perform_get(url) {
         Ok(v) => v,
@@ -371,4 +374,104 @@ impl SRCError {
             cached: true,
         }
     }
+}
+
+#[test]
+#[should_panic]
+fn panic_when_invalid_schema() {
+    SuppliedSchema::new(r#"{"type":"record","name":"Name"}"#);
+}
+
+#[test]
+fn display_record_name_strategy() {
+    let sns = SubjectNameStrategy::RecordNameStrategy("bla");
+    assert_eq!(
+        "RecordNameStrategy(\"bla\")".to_owned(),
+        format!("{:?}", sns)
+    )
+}
+
+#[test]
+fn display_topic_name_strategy() {
+    let sns = SubjectNameStrategy::TopicNameStrategy("bla", true);
+    assert_eq!(
+        "TopicNameStrategy(\"bla\", true)".to_owned(),
+        format!("{:?}", sns)
+    )
+}
+
+#[test]
+fn display_topic_record_name_strategy() {
+    let sns = SubjectNameStrategy::TopicRecordNameStrategy("bla", "foo");
+    assert_eq!(
+        "TopicRecordNameStrategy(\"bla\", \"foo\")".to_owned(),
+        format!("{:?}", sns)
+    )
+}
+
+#[test]
+fn display_record_name_strategy_with_schema() {
+    let ss = SuppliedSchema::new(r#"{"type":"record","name":"Name","namespace":"nl.openweb.data","fields":[{"name":"name","type":"string","avro.java.string":"String"}]}"#);
+    let sns = SubjectNameStrategy::RecordNameStrategyWithSchema(ss);
+    assert_eq!("RecordNameStrategyWithSchema(SuppliedSchema { raw: \"{\\\"type\\\":\\\"record\\\",\\\"name\\\":\\\"Name\\\",\\\"namespace\\\":\\\"nl.openweb.data\\\",\\\"fields\\\":[{\\\"name\\\":\\\"name\\\",\\\"type\\\":\\\"string\\\",\\\"avro.java.string\\\":\\\"String\\\"}]}\", parsed: Record { name: Name { name: \"Name\", namespace: Some(\"nl.openweb.data\"), aliases: None }, doc: None, fields: [RecordField { name: \"name\", doc: None, default: None, schema: String, order: Ascending, position: 0 }], lookup: {\"name\": 0} } })".to_owned(), format!("{:?}", sns))
+}
+
+#[test]
+fn display_topic_name_strategy_with_schema() {
+    let ss = SuppliedSchema::new(r#"{"type":"record","name":"Name","namespace":"nl.openweb.data","fields":[{"name":"name","type":"string","avro.java.string":"String"}]}"#);
+    let sns = SubjectNameStrategy::TopicNameStrategyWithSchema("bla", true, ss);
+    assert_eq!("TopicNameStrategyWithSchema(\"bla\", true, SuppliedSchema { raw: \"{\\\"type\\\":\\\"record\\\",\\\"name\\\":\\\"Name\\\",\\\"namespace\\\":\\\"nl.openweb.data\\\",\\\"fields\\\":[{\\\"name\\\":\\\"name\\\",\\\"type\\\":\\\"string\\\",\\\"avro.java.string\\\":\\\"String\\\"}]}\", parsed: Record { name: Name { name: \"Name\", namespace: Some(\"nl.openweb.data\"), aliases: None }, doc: None, fields: [RecordField { name: \"name\", doc: None, default: None, schema: String, order: Ascending, position: 0 }], lookup: {\"name\": 0} } })".to_owned(), format!("{:?}", sns))
+}
+
+#[test]
+fn display_topic_record_name_strategy_with_schema() {
+    let ss = SuppliedSchema::new(r#"{"type":"record","name":"Name","namespace":"nl.openweb.data","fields":[{"name":"name","type":"string","avro.java.string":"String"}]}"#);
+    let sns = SubjectNameStrategy::TopicRecordNameStrategyWithSchema("bla", ss);
+    assert_eq!("TopicRecordNameStrategyWithSchema(\"bla\", SuppliedSchema { raw: \"{\\\"type\\\":\\\"record\\\",\\\"name\\\":\\\"Name\\\",\\\"namespace\\\":\\\"nl.openweb.data\\\",\\\"fields\\\":[{\\\"name\\\":\\\"name\\\",\\\"type\\\":\\\"string\\\",\\\"avro.java.string\\\":\\\"String\\\"}]}\", parsed: Record { name: Name { name: \"Name\", namespace: Some(\"nl.openweb.data\"), aliases: None }, doc: None, fields: [RecordField { name: \"name\", doc: None, default: None, schema: String, order: Ascending, position: 0 }], lookup: {\"name\": 0} } })".to_owned(), format!("{:?}", sns))
+}
+
+#[test]
+#[should_panic]
+fn panic_when_schema_is_not_a_record() {
+    let ss = SuppliedSchema::new(r#"{"type":"boolean","value":"true"}"#);
+    let sns = SubjectNameStrategy::RecordNameStrategyWithSchema(ss);
+    get_subject(&sns);
+}
+
+#[test]
+#[should_panic]
+fn panic_when_schema_is_not_a_record_2() {
+    let ss = SuppliedSchema::new(r#"{"type":"boolean","value":"true"}"#);
+    let sns = SubjectNameStrategy::TopicRecordNameStrategyWithSchema("bla", ss);
+    get_subject(&sns);
+}
+
+#[test]
+fn handling_http_error() {
+    let easy = Easy2::new(Collector(Vec::new()));
+    let result = to_json(easy);
+    assert_eq!(
+        result,
+        Err(SRCError::new(
+            "Did not get a 200 response code but 0 instead",
+            None,
+            false
+        ))
+    )
+}
+
+#[test]
+fn display_erro_no_cause() {
+    let err = SRCError::new("Could not get id from response", None, false);
+    assert_eq!(format!("{}", err), "Error: Could not get id from response had no other cause, it\'s retriable: false, it\'s cached: false".to_owned())
+}
+
+#[test]
+fn display_erro_with_cause() {
+    let err = SRCError::new(
+        "Could not get id from response",
+        Some("error in response"),
+        false,
+    );
+    assert_eq!(format!("{}", err), "Error: Could not get id from response, was cause by error in response, it\'s retriable: false, it\'s cached: false".to_owned())
 }
