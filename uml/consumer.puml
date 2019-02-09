@@ -1,0 +1,32 @@
+@startuml
+title Consumer activity flow
+
+(*) -> "Create decoder"
+(*) -> "Create Kafka client"
+"Create Kafka client" -> "Get a Kafka message"
+"Get a Kafka message" -> "Either Key or Value"
+
+if "Magic byte in place?" then
+  -->[yes] "Get id"
+  if "Id in cache?" then
+  -> [yes] "Apply schema to bytes"
+  else
+  --> [no] "Get schema and add to cache"
+  "Get schema and add to cache" --> "Apply schema to bytes"
+  endif
+else
+  -->[no] if "Message  empty?" then
+    --> [yes] "Value::Null"
+  else
+    -->[no] "Value::Bytes"
+  endif
+endif
+
+"Create decoder" --> "Get schema and add to cache"
+"Create decoder" --> "Get id"
+
+"Apply schema to bytes" -> "Value::Record"
+"Value::Record" -> "Do something with the Value"
+"Value::Bytes" --> "Do something with the Value"
+"Value::Null" --> "Do something with the Value"
+@enduml

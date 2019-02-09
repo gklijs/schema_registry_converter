@@ -151,9 +151,8 @@ pub fn get_subject(subject_name_strategy: &SubjectNameStrategy) -> String {
     }
 }
 
-/// Handles the work of doing an http call and transforming it to a schema while hopefully handling
-/// all possible errors. When there is an error it might be useful to retry. For the the error has
-/// a retriable property.
+/// Handles the work of doing an http call and transforming it to a schema while handling
+/// possible errors. When there is an error it might be useful to retry.
 fn schema_from_url(url: &str, id: Option<u32>) -> Result<(Schema, u32), SRCError> {
     let easy = match perform_get(url) {
         Ok(v) => v,

@@ -1,0 +1,21 @@
+@startuml
+title Producer activity flow
+
+(*) -> "Create encoder"
+(*) ---> "Create Kafka client"
+(*) -> "Create SubjectNameStrategy"
+(*) ---> "Create a Vec<(&'static str, Value)> with the data"
+"Create encoder" --> "Encode with encoder"
+"Create SubjectNameStrategy" --> "Encode with encoder"
+"Create a Vec<(&'static str, Value)> with the data" --> "Encode with encoder"
+
+if "Subject in cache?" then
+  -->[yes] "Use schema and id to transform to bytes"
+else
+  --> [no] "Get schema,id and add to cache"
+  "Get schema,id and add to cache" --> "Use schema and id to transform to bytes"
+endif
+
+"Use schema and id to transform to bytes" --> "Send as key or value"
+"Create Kafka client" --> "Send as key or value"
+@enduml
