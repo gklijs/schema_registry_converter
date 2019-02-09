@@ -12,7 +12,15 @@ Consuming/decoding and producing/encoding is supported. It's also possible to pr
 schema with the same `subject` will be used. As far as I know it's feature complete compared to the confluent java version.
 As I'm still pretty new to rust pr's/remarks for improvements are greatly appreciated.
 
+## Consumer
+
+For consuming messages encoded with the schema registry you need to fetch the correct schema from the schema registry to transform it into a record. For clarity error handling is omitted from the diagram. 
+
 ![Consumer activity flow](http://www.plantuml.com/plantuml/proxy?cache=no&src=https://raw.githubusercontent.com/gklijs/schema_registry_converter/development/uml/consumer.puml)
+
+## Producer
+
+For producing messages which can be properly consumed by other clients the proper id needs to be encoded with the message, and to get the correct id it might be needed to register a new schema. For clarity error handling is omitted from the diagram.
 
 ![Producer activity flow](http://www.plantuml.com/plantuml/proxy?cache=no&src=https://raw.githubusercontent.com/gklijs/schema_registry_converter/development/uml/producer.puml)
 
@@ -23,7 +31,7 @@ It is recommended to look there for the newest and more elaborate documentation.
 
 ```toml
 [dependencies]
-schema_registry_converter = "0.3.0"
+schema_registry_converter = "0.3.2"
 ```
 
 ...and see the [docs](https://docs.rs/schema_registry_converter) for how to use it.
