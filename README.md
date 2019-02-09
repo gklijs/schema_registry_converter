@@ -12,6 +12,10 @@ Consuming/decoding and producing/encoding is supported. It's also possible to pr
 schema with the same `subject` will be used. As far as I know it's feature complete compared to the confluent java version.
 As I'm still pretty new to rust pr's/remarks for improvements are greatly appreciated.
 
+![Consumer activity flow](http://www.plantuml.com/plantuml/proxy?cache=no&src=https://raw.githubusercontent.com/gklijs/schema_registry_converter/development/uml/consumer.puml)
+
+![Producer activity flow](http://www.plantuml.com/plantuml/proxy?cache=no&src=https://raw.githubusercontent.com/gklijs/schema_registry_converter/development/uml/producer.puml)
+
 # Getting Started
 
 [schema_registry_converter.rs is available on crates.io](https://crates.io/crates/schema_registry_converter).
