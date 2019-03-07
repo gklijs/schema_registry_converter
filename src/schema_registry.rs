@@ -244,7 +244,7 @@ fn perform_post(url: &str, schema_raw: &str) -> Result<Easy2<Collector>, curl::E
     easy.post_fields_copy(schema_raw.as_bytes())?;
     let mut list = List::new();
     list.append("Content-Type: application/vnd.schemaregistry.v1+json")?;
-    list.append("Accept: json")?;
+    list.append("Accept: application/vnd.schemaregistry.v1+json")?;
     easy.http_headers(list)?;
     easy.perform()?;
     Ok(easy)
