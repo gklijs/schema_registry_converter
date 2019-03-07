@@ -696,7 +696,7 @@ mod tests {
     #[test]
     fn test_encoder_schema_registry_unavailable_with_record() {
         let mut encoder = Encoder::new("bogus");
-        let heartbeat_schema = SuppliedSchema::new(r#"{"type":"record","name":"Balance","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#);
+        let heartbeat_schema = SuppliedSchema::new(r#"{"type":"record","name":"Balance","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#.into());
         let strategy = SubjectNameStrategy::RecordNameStrategyWithSchema(heartbeat_schema);
         let result = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
 
@@ -769,7 +769,7 @@ mod tests {
 
         let mut encoder = Encoder::new(SERVER_ADDRESS);
 
-        let name_schema = SuppliedSchema::new(r#"{"type":"record","name":"Name","namespace":"nl.openweb.data","fields":[{"name":"name","type":"string","avro.java.string":"String"}]}"#);
+        let name_schema = SuppliedSchema::new(r#"{"type":"record","name":"Name","namespace":"nl.openweb.data","fields":[{"name":"name","type":"string","avro.java.string":"String"}]}"#.into());
         let key_strategy =
             SubjectNameStrategy::TopicNameStrategyWithSchema("heartbeat".into(), true, name_schema);
         let bytes = encoder.encode(
@@ -782,7 +782,7 @@ mod tests {
                 0, 0, 0, 0, 3, 18, 83, 111, 109, 101, 32, 110, 97, 109, 101,
             ])
         );
-        let heartbeat_schema = SuppliedSchema::new(r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#);
+        let heartbeat_schema = SuppliedSchema::new(r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#.into());
         let value_strategy =
             SubjectNameStrategy::TopicNameStrategyWithSchema("heartbeat".into(), false, heartbeat_schema);
         let bytes = encoder.encode(vec![("beat", Value::Long(3))], &value_strategy);
@@ -799,7 +799,7 @@ mod tests {
 
         let mut encoder = Encoder::new(SERVER_ADDRESS);
 
-        let heartbeat_schema = SuppliedSchema::new(r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#);
+        let heartbeat_schema = SuppliedSchema::new(r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#.into());
         let strategy = SubjectNameStrategy::RecordNameStrategyWithSchema(heartbeat_schema);
         let bytes = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
         assert_eq!(bytes, Ok(vec![0, 0, 0, 0, 11, 6]))
@@ -815,7 +815,7 @@ mod tests {
 
         let mut encoder = Encoder::new(SERVER_ADDRESS);
 
-        let heartbeat_schema = SuppliedSchema::new(r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#);
+        let heartbeat_schema = SuppliedSchema::new(r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#.into());
         let strategy = SubjectNameStrategy::RecordNameStrategyWithSchema(heartbeat_schema);
         let bytes = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
         assert_eq!(
@@ -834,7 +834,7 @@ mod tests {
 
         let mut encoder = Encoder::new(SERVER_ADDRESS);
 
-        let heartbeat_schema = SuppliedSchema::new(r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#);
+        let heartbeat_schema = SuppliedSchema::new(r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#.into());
         let strategy =
             SubjectNameStrategy::TopicRecordNameStrategyWithSchema("hb".into(), heartbeat_schema);
         let bytes = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
@@ -845,7 +845,7 @@ mod tests {
     fn test_encode_topic_record_name_strategy_schema_registry_not_available() {
         let mut encoder = Encoder::new(SERVER_ADDRESS);
 
-        let heartbeat_schema = SuppliedSchema::new(r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#);
+        let heartbeat_schema = SuppliedSchema::new(r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#.into());
         let strategy =
             SubjectNameStrategy::TopicRecordNameStrategyWithSchema("hb".into(), heartbeat_schema);
         let error = encoder.encode(vec![("beat", Value::Long(3))], &strategy);

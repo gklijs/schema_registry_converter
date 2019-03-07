@@ -16,15 +16,15 @@ use std::str;
 /// this struct so we keep them both together.
 #[derive(Clone, Debug)]
 pub struct SuppliedSchema {
-    raw: &'static str,
+    raw: String,
     parsed: Schema,
 }
 
 /// Will panic when the input is invalid.
 impl SuppliedSchema {
     /// Creates a new Supplied Schema
-    pub fn new(raw: &'static str) -> SuppliedSchema {
-        let parsed = match Schema::parse_str(raw) {
+    pub fn new(raw: String) -> SuppliedSchema {
+        let parsed = match Schema::parse_str(raw.as_str()) {
             Ok(v) => v,
             Err(e) => panic!(
                 "Supplied raw value {} cant be turned into a Schema, error: {}",
@@ -206,7 +206,7 @@ fn schema_from_url(url: &str, id: Option<u32>) -> Result<(Schema, u32), SRCError
 /// registry. The default config will check if the schema is backwards compatible. One of the ways
 /// to do this is to add a default value for new fields.
 pub fn post_schema(url: &str, schema: SuppliedSchema) -> Result<(Schema, u32), SRCError> {
-    let easy = match perform_post(url, schema.raw) {
+    let easy = match perform_post(url, schema.raw.as_str()) {
         Ok(v) => v,
         Err(e) => {
             return Err(SRCError::new(
@@ -378,7 +378,7 @@ impl SRCError {
 #[test]
 #[should_panic]
 fn panic_when_invalid_schema() {
-    SuppliedSchema::new(r#"{"type":"record","name":"Name"}"#);
+    SuppliedSchema::new(r#"{"type":"record","name":"Name"}"#.into());
 }
 
 #[test]
@@ -410,21 +410,21 @@ fn display_topic_record_name_strategy() {
 
 #[test]
 fn display_record_name_strategy_with_schema() {
-    let ss = SuppliedSchema::new(r#"{"type":"record","name":"Name","namespace":"nl.openweb.data","fields":[{"name":"name","type":"string","avro.java.string":"String"}]}"#);
+    let ss = SuppliedSchema::new(r#"{"type":"record","name":"Name","namespace":"nl.openweb.data","fields":[{"name":"name","type":"string","avro.java.string":"String"}]}"#.into());
     let sns = SubjectNameStrategy::RecordNameStrategyWithSchema(ss);
     assert_eq!("RecordNameStrategyWithSchema(SuppliedSchema { raw: \"{\\\"type\\\":\\\"record\\\",\\\"name\\\":\\\"Name\\\",\\\"namespace\\\":\\\"nl.openweb.data\\\",\\\"fields\\\":[{\\\"name\\\":\\\"name\\\",\\\"type\\\":\\\"string\\\",\\\"avro.java.string\\\":\\\"String\\\"}]}\", parsed: Record { name: Name { name: \"Name\", namespace: Some(\"nl.openweb.data\"), aliases: None }, doc: None, fields: [RecordField { name: \"name\", doc: None, default: None, schema: String, order: Ascending, position: 0 }], lookup: {\"name\": 0} } })".to_owned(), format!("{:?}", sns))
 }
 
 #[test]
 fn display_topic_name_strategy_with_schema() {
-    let ss = SuppliedSchema::new(r#"{"type":"record","name":"Name","namespace":"nl.openweb.data","fields":[{"name":"name","type":"string","avro.java.string":"String"}]}"#);
+    let ss = SuppliedSchema::new(r#"{"type":"record","name":"Name","namespace":"nl.openweb.data","fields":[{"name":"name","type":"string","avro.java.string":"String"}]}"#.into());
     let sns = SubjectNameStrategy::TopicNameStrategyWithSchema("bla".into(), true, ss);
     assert_eq!("TopicNameStrategyWithSchema(\"bla\", true, SuppliedSchema { raw: \"{\\\"type\\\":\\\"record\\\",\\\"name\\\":\\\"Name\\\",\\\"namespace\\\":\\\"nl.openweb.data\\\",\\\"fields\\\":[{\\\"name\\\":\\\"name\\\",\\\"type\\\":\\\"string\\\",\\\"avro.java.string\\\":\\\"String\\\"}]}\", parsed: Record { name: Name { name: \"Name\", namespace: Some(\"nl.openweb.data\"), aliases: None }, doc: None, fields: [RecordField { name: \"name\", doc: None, default: None, schema: String, order: Ascending, position: 0 }], lookup: {\"name\": 0} } })".to_owned(), format!("{:?}", sns))
 }
 
 #[test]
 fn display_topic_record_name_strategy_with_schema() {
-    let ss = SuppliedSchema::new(r#"{"type":"record","name":"Name","namespace":"nl.openweb.data","fields":[{"name":"name","type":"string","avro.java.string":"String"}]}"#);
+    let ss = SuppliedSchema::new(r#"{"type":"record","name":"Name","namespace":"nl.openweb.data","fields":[{"name":"name","type":"string","avro.java.string":"String"}]}"#.into());
     let sns = SubjectNameStrategy::TopicRecordNameStrategyWithSchema("bla".into(), ss);
     assert_eq!("TopicRecordNameStrategyWithSchema(\"bla\", SuppliedSchema { raw: \"{\\\"type\\\":\\\"record\\\",\\\"name\\\":\\\"Name\\\",\\\"namespace\\\":\\\"nl.openweb.data\\\",\\\"fields\\\":[{\\\"name\\\":\\\"name\\\",\\\"type\\\":\\\"string\\\",\\\"avro.java.string\\\":\\\"String\\\"}]}\", parsed: Record { name: Name { name: \"Name\", namespace: Some(\"nl.openweb.data\"), aliases: None }, doc: None, fields: [RecordField { name: \"name\", doc: None, default: None, schema: String, order: Ascending, position: 0 }], lookup: {\"name\": 0} } })".to_owned(), format!("{:?}", sns))
 }
@@ -432,7 +432,7 @@ fn display_topic_record_name_strategy_with_schema() {
 #[test]
 #[should_panic]
 fn panic_when_schema_is_not_a_record() {
-    let ss = SuppliedSchema::new(r#"{"type":"boolean","value":"true"}"#);
+    let ss = SuppliedSchema::new(r#"{"type":"boolean","value":"true"}"#.into());
     let sns = SubjectNameStrategy::RecordNameStrategyWithSchema(ss);
     get_subject(&sns);
 }
@@ -440,7 +440,7 @@ fn panic_when_schema_is_not_a_record() {
 #[test]
 #[should_panic]
 fn panic_when_schema_is_not_a_record_2() {
-    let ss = SuppliedSchema::new(r#"{"type":"boolean","value":"true"}"#);
+    let ss = SuppliedSchema::new(r#"{"type":"boolean","value":"true"}"#.into());
     let sns = SubjectNameStrategy::TopicRecordNameStrategyWithSchema("bla".into(), ss);
     get_subject(&sns);
 }
