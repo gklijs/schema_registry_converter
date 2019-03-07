@@ -64,7 +64,7 @@ impl SuppliedSchema {
 /// let bytes = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
 /// assert_eq!(bytes, Ok(vec![0, 0, 0, 0, 23, 6]))
 /// ```
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum SubjectNameStrategy {
     RecordNameStrategy(String),
     TopicNameStrategy(String, bool),
