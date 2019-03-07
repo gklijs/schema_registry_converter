@@ -6,7 +6,7 @@ extern crate serde_json;
 
 use self::avro_rs::Schema;
 use self::curl::easy::{Easy2, Handler, List, WriteError};
-use self::serde_json::Value as JsonValue;
+use self::serde_json::{Value as JsonValue, Map as JsonMap};
 use core::fmt;
 use std::error::Error;
 use std::ops::Deref;
@@ -206,7 +206,12 @@ fn schema_from_url(url: &str, id: Option<u32>) -> Result<(Schema, u32), SRCError
 /// registry. The default config will check if the schema is backwards compatible. One of the ways
 /// to do this is to add a default value for new fields.
 pub fn post_schema(url: &str, schema: SuppliedSchema) -> Result<(Schema, u32), SRCError> {
-    let easy = match perform_post(url, schema.raw.as_str()) {
+    let mut root_element = JsonMap::new();
+    root_element.insert("schema".into(), JsonValue::String(schema.raw.clone()));
+    let schema_element = JsonValue::Object(root_element);
+    let schema_str = schema_element.to_string();
+
+    let easy = match perform_post(url, schema_str.as_str()) {
         Ok(v) => v,
         Err(e) => {
             return Err(SRCError::new(
