@@ -316,7 +316,7 @@ impl Encoder {
     ///     .create();
     ///
     /// let mut encoder = Encoder::new(SERVER_ADDRESS);
-    /// let strategy = SubjectNameStrategy::TopicRecordNameStrategy("heartbeat".into(), "nl.openweb.data.Heartbeat");
+    /// let strategy = SubjectNameStrategy::TopicRecordNameStrategy("heartbeat".into(), "nl.openweb.data.Heartbeat".into());
     /// let bytes = encoder.encode(vec!(("beat", Value::Long(3))), &strategy);
     ///
     /// assert_eq!(bytes, Ok(vec!(0,0,0,0,3,6)))

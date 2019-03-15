@@ -59,7 +59,7 @@ impl SuppliedSchema {
 ///
 /// let mut encoder = Encoder::new(SERVER_ADDRESS);
 ///
-/// let heartbeat_schema = SuppliedSchema::new(r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#);
+/// let heartbeat_schema = SuppliedSchema::new(r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#.into());
 /// let strategy = SubjectNameStrategy::TopicRecordNameStrategyWithSchema("hb".into(), heartbeat_schema);
 /// let bytes = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
 /// assert_eq!(bytes, Ok(vec![0, 0, 0, 0, 23, 6]))
