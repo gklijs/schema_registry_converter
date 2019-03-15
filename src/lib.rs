@@ -220,12 +220,12 @@ impl Decoder {
 ///
 /// let mut encoder = Encoder::new(SERVER_ADDRESS);
 ///
-/// let key_strategy = SubjectNameStrategy::TopicNameStrategy("heartbeat", true);
+/// let key_strategy = SubjectNameStrategy::TopicNameStrategy("heartbeat".into(), true);
 /// let bytes = encoder.encode(vec!(("name", Value::String("Some name".to_owned()))), &key_strategy);
 ///
 /// assert_eq!(bytes, Ok(vec!(0, 0, 0, 0, 4, 18, 83, 111, 109, 101, 32, 110, 97, 109, 101)));
 ///
-/// let value_strategy = SubjectNameStrategy::TopicNameStrategy("heartbeat", false);
+/// let value_strategy = SubjectNameStrategy::TopicNameStrategy("heartbeat".into(), false);
 /// let bytes = encoder.encode(vec!(("beat", Value::Long(3))), &value_strategy);
 ///
 /// assert_eq!(bytes, Ok(vec!(0,0,0,0,3,6)))
@@ -266,7 +266,7 @@ impl Encoder {
     ///  # use avro_rs::types::Value;
     ///
     /// let mut encoder = Encoder::new(SERVER_ADDRESS);
-    /// let strategy = SubjectNameStrategy::RecordNameStrategy("nl.openweb.data.Heartbeat");
+    /// let strategy = SubjectNameStrategy::RecordNameStrategy("nl.openweb.data.Heartbeat".into());
     ///
     /// let _m = mock("GET", "/subjects/nl.openweb.data.Heartbeat/versions/latest")
     ///     .with_status(404)
@@ -316,7 +316,7 @@ impl Encoder {
     ///     .create();
     ///
     /// let mut encoder = Encoder::new(SERVER_ADDRESS);
-    /// let strategy = SubjectNameStrategy::TopicRecordNameStrategy("heartbeat", "nl.openweb.data.Heartbeat");
+    /// let strategy = SubjectNameStrategy::TopicRecordNameStrategy("heartbeat".into(), "nl.openweb.data.Heartbeat");
     /// let bytes = encoder.encode(vec!(("beat", Value::Long(3))), &strategy);
     ///
     /// assert_eq!(bytes, Ok(vec!(0,0,0,0,3,6)))
