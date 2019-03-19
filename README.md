@@ -7,20 +7,20 @@
 [![docs.rs](https://docs.rs/schema_registry_converter/badge.svg)](https://docs.rs/schema_registry_converter/)
 ---
 
-This library is provides a way of using the Confluent Schema Registry in a way that is compliant with the usual jvm useage.
-Consuming/decoding and producing/encoding is supported. It's also possible to provide the schema to use when decoding. When no schema is provided the latest
-schema with the same `subject` will be used. As far as I know it's feature complete compared to the confluent java version.
-As I'm still pretty new to rust pr's/remarks for improvements are greatly appreciated.
+This library provides a way of using the Confluent Schema Registry in a way that is compliant with the usual jvm usage.
+Consuming/decoding and producing/encoding is supported. It's also possible to provide the schema to use when decoding. When no schema is provided, the latest
+schema with the same `subject` will be used. As far as I know, it's feature complete compared to the confluent java version.
+As I'm still pretty new to rust, pr's/remarks for improvements are greatly appreciated.
 
 ## Consumer
 
-For consuming messages encoded with the schema registry you need to fetch the correct schema from the schema registry to transform it into a record. For clarity error handling is omitted from the diagram. 
+For consuming messages encoded with the schema registry, you need to fetch the correct schema from the schema registry to transform it into a record. For clarity, error handling is omitted from the diagram. 
 
 ![Consumer activity flow](http://www.plantuml.com/plantuml/proxy?cache=no&src=https://raw.githubusercontent.com/gklijs/schema_registry_converter/master/uml/consumer.puml)
 
 ## Producer
 
-For producing messages which can be properly consumed by other clients the proper id needs to be encoded with the message, and to get the correct id it might be needed to register a new schema. For clarity error handling is omitted from the diagram.
+For producing messages which can be properly consumed by other clients, the proper id needs to be encoded with the message.  To get the correct id, it might be necessary to register a new schema. For clarity, error handling is omitted from the diagram.
 
 ![Producer activity flow](http://www.plantuml.com/plantuml/proxy?cache=no&src=https://raw.githubusercontent.com/gklijs/schema_registry_converter/master/uml/producer.puml)
 
@@ -90,13 +90,13 @@ fn main() {
 
 # Relation to related libraries
 
-The avro part of the conversion is handled by avro-rs as such I don't include tests for every possible schema.
-While I used rdkafka in combination to successfully consume from and produce to kafka, and it's used in the example this crate has no direct dependency to it.
+The avro part of the conversion is handled by avro-rs.  As such, I don't include tests for every possible schema.
+While I used rdkafka in combination to successfully consume from and produce to kafka, and while it's used in the example, this crate has no direct dependency on it.
 All this crate does is convert [u8] <-> avro_rs::types::Value.
 
 # Tests
 
-Do to mockito, used for mocking the schema registry responses, being run in a seperate thead, tests have to be run using ` --test-threads=1` for example like
+Due to mockito, used for mocking the schema registry responses, being run in a separate thread, tests have to be run using ` --test-threads=1` for example like
 `cargo +stable test --color=always -- --nocapture --test-threads=1`
 
 # License
