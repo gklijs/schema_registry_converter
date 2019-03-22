@@ -46,7 +46,7 @@ impl SuppliedSchema {
 /// # extern crate mockito;
 /// # extern crate schema_registry_converter;
 /// # extern crate avro_rs;
-/// # use mockito::{mock, SERVER_ADDRESS};
+/// # use mockito::{mock, server_address};
 /// # use schema_registry_converter::Encoder;
 /// # use schema_registry_converter::schema_registry::{SRCError, SubjectNameStrategy, SuppliedSchema};
 /// # use avro_rs::types::Value;
@@ -57,7 +57,7 @@ impl SuppliedSchema {
 /// #    .with_body(r#"{"id":23}"#)
 /// #    .create();
 ///
-/// let mut encoder = Encoder::new(SERVER_ADDRESS);
+/// let mut encoder = Encoder::new(server_address().to_string());
 ///
 /// let heartbeat_schema = SuppliedSchema::new(r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#.into());
 /// let strategy = SubjectNameStrategy::TopicRecordNameStrategyWithSchema("hb".into(), heartbeat_schema);

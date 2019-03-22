@@ -12,6 +12,20 @@ Consuming/decoding and producing/encoding is supported. It's also possible to pr
 schema with the same `subject` will be used. As far as I know, it's feature complete compared to the confluent java version.
 As I'm still pretty new to rust, pr's/remarks for improvements are greatly appreciated.
 
+## Release notes
+
+### 1.0.0
+
+#### Issues
+
+- Made it easier to use the crate by changing some values to owed strings.
+- Fixed to issues related to sending the schema to the schema registry.
+- Added integration tests, to test against a kafka cluster.
+
+#### Contributors
+
+- [@kitsuneninetails](https://github.com/kitsuneninetails)
+
 ## Consumer
 
 For consuming messages encoded with the schema registry, you need to fetch the correct schema from the schema registry to transform it into a record. For clarity, error handling is omitted from the diagram. 
@@ -31,7 +45,7 @@ It is recommended to look there for the newest and more elaborate documentation.
 
 ```toml
 [dependencies]
-schema_registry_converter = "0.3.2"
+schema_registry_converter = "1.0.0"
 ```
 
 ...and see the [docs](https://docs.rs/schema_registry_converter) for how to use it.
@@ -82,8 +96,8 @@ fn get_future_record<'a>(
 }
 
 fn main() {
-    let mut decoder = Decoder::new(SERVER_ADDRESS);
-    let mut encoder = Encoder::new(SERVER_ADDRESS);
+    let mut decoder = Decoder::new(SERVER_ADDRESS.clone());
+    let mut encoder = Encoder::new(SERVER_ADDRESS.clone());
     //somewhere else the above functions can be called
 }
 ```
@@ -98,6 +112,11 @@ All this crate does is convert [u8] <-> avro_rs::types::Value.
 
 Due to mockito, used for mocking the schema registry responses, being run in a separate thread, tests have to be run using ` --test-threads=1` for example like
 `cargo +stable test --color=always -- --nocapture --test-threads=1`
+
+# Integration test
+
+The integration tests require a Kafka cluster running on the default ports. It will create topics, register schema's, produce and consume some messages.
+They are marked with `kafka_test` so to include them in testing `+stable test --features kafka_test --color=always -- --nocapture --test-threads=1` need to be run.
 
 # License
 

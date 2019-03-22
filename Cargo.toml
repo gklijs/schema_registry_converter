@@ -1,6 +1,6 @@
 [package]
 name = "schema_registry_converter"
-version = "0.3.2"
+version = "1.0.0"
 authors = ["Gerard Klijs <g.klijs@gmail.com>"]
 include = ["src/**/*", "Cargo.toml"]
 description = "Encode/decode data from/to kafka using the Confluent Schema Registry"
@@ -10,6 +10,10 @@ readme = "README.md"
 keywords = ["kafka", "encode", "decode", "schema", "avro"]
 categories = ["encoding", "parsing"]
 license = "MIT/Apache-2.0"
+
+[features]
+default = []
+kafka_test = []
 
 [dependencies.avro-rs]
 version = ">= 0.6"
@@ -24,7 +28,7 @@ version = ">= 0.4"
 version = ">=0.8.0, <2.0"
 
 [dev-dependencies]
-mockito = "0.12.0"
+mockito = "0.16.0"
 rdkafka = "0.17.0"
 
 [badges.travis-ci]
