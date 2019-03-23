@@ -8,9 +8,12 @@
 ---
 
 This library provides a way of using the Confluent Schema Registry in a way that is compliant with the usual jvm usage.
+The release notes can be found on [github](https://github.com/gklijs/schema_registry_converter/blob/master/RELEASE_NOTES.md)
 Consuming/decoding and producing/encoding is supported. It's also possible to provide the schema to use when decoding. When no schema is provided, the latest
 schema with the same `subject` will be used. As far as I know, it's feature complete compared to the confluent java version.
 As I'm still pretty new to rust, pr's/remarks for improvements are greatly appreciated.
+
+
 
 ## Consumer
 
@@ -31,24 +34,23 @@ It is recommended to look there for the newest and more elaborate documentation.
 
 ```toml
 [dependencies]
-schema_registry_converter = "0.3.2"
+schema_registry_converter = "1.0.0"
 ```
 
 ...and see the [docs](https://docs.rs/schema_registry_converter) for how to use it.
 
-# Example
+# Example with consumer and producer
 
 ```rust
-extern crate rdkafka;
-extern crate avro_rs;
-extern crate schema_registry_converter;
-
 use rdkafka::message::{Message, BorrowedMessage};
 use avro_rs::types::Value;
-use schema_registry_converter::Decoder;
-use schema_registry_converter::Encoder;
+use schema_registry_converter::{Decoder, Encoder};
 use schema_registry_converter::schema_registry::SubjectNameStrategy;
 
+fn main() {
+    let mut decoder = Decoder::new("localhost:8081".into());
+    let mut encoder = Encoder::new("localhost:8081".into());
+}
 
 fn get_value<'a>(
     msg: &'a BorrowedMessage,
@@ -80,12 +82,18 @@ fn get_future_record<'a>(
         headers: None,
     }
 }
+```
 
-fn main() {
-    let mut decoder = Decoder::new(SERVER_ADDRESS);
-    let mut encoder = Encoder::new(SERVER_ADDRESS);
-    //somewhere else the above functions can be called
+# Example using to post schema to schema registry
+
+```rust
+use schema_registry_converter::schema_registry::SubjectNameStrategy::post_schema;
+
+fn main(){
+    let heartbeat_schema = SuppliedSchema::new(r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#.into());
+    let result = post_schema("localhost:8081/subjects/test-value/versions");
 }
+
 ```
 
 # Relation to related libraries
@@ -98,6 +106,12 @@ All this crate does is convert [u8] <-> avro_rs::types::Value.
 
 Due to mockito, used for mocking the schema registry responses, being run in a separate thread, tests have to be run using ` --test-threads=1` for example like
 `cargo +stable test --color=always -- --nocapture --test-threads=1`
+
+# Integration test
+
+The integration tests require a Kafka cluster running on the default ports. It will create topics, register schema's, produce and consume some messages.
+They are marked with `kafka_test` so to include them in testing `+stable test --features kafka_test --color=always -- --nocapture --test-threads=1` need to be run.
+The easiest way to run them is with the confluent cli. The 'prepare_integration_test.sh' script can be used to create the 3 topics needed for the tests, but even without those the test pass.
 
 # License
 

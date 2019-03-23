@@ -18,4 +18,4 @@ script:
   - cargo install --debug cargo-make
   - cargo build --verbose
   - cargo test --verbose -- --test-threads=1
-  - cargo make ci-flow
+  - cargo make --makefile make.toml ci-flow

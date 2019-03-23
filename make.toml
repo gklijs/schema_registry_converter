@@ -1,0 +1,3 @@
+[tasks.test-verbose]
+command = "cargo"
+args = ["test", "--verbose" ,"--", "--test-threads=1"]

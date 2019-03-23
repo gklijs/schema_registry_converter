@@ -22,10 +22,6 @@
 //!
 //! [avro-rs]: https://crates.io/crates/avro-rs
 
-extern crate avro_rs;
-extern crate byteorder;
-extern crate core;
-
 pub mod schema_registry;
 
 use avro_rs::types::{Record, Value};
@@ -50,10 +46,7 @@ use std::io::Cursor;
 /// whether it's actual used as key or value.
 ///
 /// ```
-///  # extern crate mockito;
-///  # extern crate schema_registry_converter;
-///  # extern crate avro_rs;
-///  # use mockito::{mock, SERVER_ADDRESS};
+///  # use mockito::{mock, server_address};
 ///  # use schema_registry_converter::Decoder;
 ///  # use avro_rs::types::Value;
 ///
@@ -63,7 +56,7 @@ use std::io::Cursor;
 ///     .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
 ///     .create();
 ///
-/// let mut decoder = Decoder::new(SERVER_ADDRESS);
+/// let mut decoder = Decoder::new(server_address().to_string());
 /// let heartbeat = decoder.decode(Some(&[0,0,0,0,1,6]));
 ///
 /// assert_eq!(heartbeat, Ok(Value::Record(vec!(("beat".to_string(), Value::Long(3))))))
@@ -80,10 +73,10 @@ impl Decoder {
     /// additional data. It's possible for recoverable errors to stay in the cash, when a result
     /// comes back as an error you can use remove_errors_from_cache to clean the cache, keeping the
     /// correctly fetched schema's
-    pub fn new(schema_registry_url: &str) -> Decoder {
+    pub fn new(schema_registry_url: String) -> Decoder {
         let new_cache = Box::new(HashMap::new());
         Decoder {
-            schema_registry_url: String::from(schema_registry_url),
+            schema_registry_url,
             cache: Box::leak(new_cache),
         }
     }
@@ -92,15 +85,12 @@ impl Decoder {
     /// exist or can't be parsed.
     ///
     /// ```
-    ///  # extern crate mockito;
-    ///  # extern crate schema_registry_converter;
-    ///  # extern crate avro_rs;
-    ///  # use mockito::{mock, SERVER_ADDRESS};
+    ///  # use mockito::{mock, server_address};
     ///  # use schema_registry_converter::Decoder;
     ///  # use schema_registry_converter::schema_registry::SRCError;
     ///  # use avro_rs::types::Value;
     ///
-    /// let mut decoder = Decoder::new(SERVER_ADDRESS);
+    /// let mut decoder = Decoder::new(server_address().to_string());
     /// let bytes = [0,0,0,0,2,6];
     ///
     /// let _m = mock("GET", "/schemas/ids/2")
@@ -134,9 +124,6 @@ impl Decoder {
     /// decoder.decode(m.key()) to get the decoded key.
     ///
     /// ```no_run
-    /// # extern crate rdkafka;
-    /// # extern crate schema_registry_converter;
-    /// # extern crate avro_rs;
     /// # use rdkafka::message::{Message, BorrowedMessage};
     /// # use schema_registry_converter::Decoder;
     /// # use avro_rs::types::Value;
@@ -198,10 +185,7 @@ impl Decoder {
 /// whether it's actual used as key or value.
 ///
 /// ```
-///  # extern crate mockito;
-///  # extern crate schema_registry_converter;
-///  # extern crate avro_rs;
-///  # use mockito::{mock, SERVER_ADDRESS};
+///  # use mockito::{mock, server_address};
 ///  # use schema_registry_converter::Encoder;
 ///  # use schema_registry_converter::schema_registry::SubjectNameStrategy;
 ///  # use avro_rs::types::Value;
@@ -218,7 +202,7 @@ impl Decoder {
 ///     .with_body(r#"{"subject":"heartbeat-value","version":1,"id":4,"schema":"{\"type\":\"record\",\"name\":\"Name\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"name\",\"type\":\"string\",\"avro.java.string\":\"String\"}]}"}"#)
 ///     .create();
 ///
-/// let mut encoder = Encoder::new(SERVER_ADDRESS);
+/// let mut encoder = Encoder::new(server_address().to_string());
 ///
 /// let key_strategy = SubjectNameStrategy::TopicNameStrategy("heartbeat".into(), true);
 /// let bytes = encoder.encode(vec!(("name", Value::String("Some name".to_owned()))), &key_strategy);
@@ -244,10 +228,10 @@ impl Encoder {
     /// unlike the Java client with wich it's possible to update/upload the schema when it's not
     /// present yet. While it may be added to this library, it's also not hard to do it separately.
     /// New schema's can set by doing a post at /subjects/{subject}/versions.
-    pub fn new(schema_registry_url: &str) -> Encoder {
+    pub fn new(schema_registry_url: String) -> Encoder {
         let new_cache = Box::new(HashMap::new());
         Encoder {
-            schema_registry_url: String::from(schema_registry_url),
+            schema_registry_url,
             cache: Box::leak(new_cache),
         }
     }
@@ -256,16 +240,13 @@ impl Encoder {
     /// exist or can't be parsed.
     ///
     /// ```
-    ///  # extern crate mockito;
-    ///  # extern crate schema_registry_converter;
-    ///  # extern crate avro_rs;
-    ///  # use mockito::{mock, SERVER_ADDRESS};
+    ///  # use mockito::{mock, server_address};
     ///  # use schema_registry_converter::Encoder;
     ///  # use schema_registry_converter::schema_registry::SubjectNameStrategy;
     ///  # use schema_registry_converter::schema_registry::SRCError;
     ///  # use avro_rs::types::Value;
     ///
-    /// let mut encoder = Encoder::new(SERVER_ADDRESS);
+    /// let mut encoder = Encoder::new(server_address().to_string());
     /// let strategy = SubjectNameStrategy::RecordNameStrategy("nl.openweb.data.Heartbeat".into());
     ///
     /// let _m = mock("GET", "/subjects/nl.openweb.data.Heartbeat/versions/latest")
@@ -301,10 +282,7 @@ impl Encoder {
     /// become available in the correct way.
     ///
     /// ```
-    ///  # extern crate mockito;
-    ///  # extern crate schema_registry_converter;
-    ///  # extern crate avro_rs;
-    ///  # use mockito::{mock, SERVER_ADDRESS};
+    ///  # use mockito::{mock, server_address};
     ///  # use schema_registry_converter::Encoder;
     ///  # use schema_registry_converter::schema_registry::SubjectNameStrategy;
     ///  # use avro_rs::types::Value;
@@ -315,7 +293,7 @@ impl Encoder {
     ///     .with_body(r#"{"subject":"heartbeat-value","version":1,"id":3,"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
     ///     .create();
     ///
-    /// let mut encoder = Encoder::new(SERVER_ADDRESS);
+    /// let mut encoder = Encoder::new(server_address().to_string());
     /// let strategy = SubjectNameStrategy::TopicRecordNameStrategy("heartbeat".into(), "nl.openweb.data.Heartbeat".into());
     /// let bytes = encoder.encode(vec!(("beat", Value::Long(3))), &strategy);
     ///
@@ -412,17 +390,15 @@ fn to_bytes_no_tranfer_wrong() {
 
 #[cfg(test)]
 mod tests {
-    extern crate avro_rs;
-    extern crate mockito;
-    use self::mockito::{mock, SERVER_ADDRESS};
+    use mockito::{mock, server_address};
     use avro_rs::types::Value;
-    use schema_registry::{SRCError, SubjectNameStrategy, SuppliedSchema};
-    use Decoder;
-    use Encoder;
+    use crate::schema_registry::{SRCError, SubjectNameStrategy, SuppliedSchema};
+    use crate::Decoder;
+    use crate::Encoder;
 
     #[test]
     fn display_decoder() {
-        let decoder = Decoder::new(SERVER_ADDRESS);
+        let decoder = Decoder::new(server_address().to_string());
         assert_eq!(
             "Decoder { schema_registry_url: \"127.0.0.1:1234\", cache: {} }".to_owned(),
             format!("{:?}", decoder)
@@ -437,7 +413,7 @@ mod tests {
             .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
              .create();
 
-        let mut decoder = Decoder::new(SERVER_ADDRESS);
+        let mut decoder = Decoder::new(server_address().to_string());
         let heartbeat = decoder.decode(Some(&[0, 0, 0, 0, 1, 6]));
 
         assert_eq!(
@@ -448,7 +424,7 @@ mod tests {
 
     #[test]
     fn test_decoder_magic_byte_not_present() {
-        let mut decoder = Decoder::new(SERVER_ADDRESS);
+        let mut decoder = Decoder::new(server_address().to_string());
         let heartbeat = decoder.decode(Some(&[1, 0, 0, 0, 1, 6]));
 
         assert_eq!(heartbeat, Ok(Value::Bytes(vec![1, 0, 0, 0, 1, 6])))
@@ -456,7 +432,7 @@ mod tests {
 
     #[test]
     fn test_decoder_not_enough_bytes() {
-        let mut decoder = Decoder::new(SERVER_ADDRESS);
+        let mut decoder = Decoder::new(server_address().to_string());
         let heartbeat = decoder.decode(Some(&[0, 0, 0, 0]));
 
         assert_eq!(heartbeat, Ok(Value::Bytes(vec![0, 0, 0, 0])))
@@ -470,7 +446,7 @@ mod tests {
             .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
             .create();
 
-        let mut decoder = Decoder::new(SERVER_ADDRESS);
+        let mut decoder = Decoder::new(server_address().to_string());
         let heartbeat = decoder.decode(Some(&[0, 0, 0, 0, 1]));
 
         assert_eq!(
@@ -491,7 +467,7 @@ mod tests {
             .with_body(r#"{"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
             .create();
 
-        let mut decoder = Decoder::new(SERVER_ADDRESS);
+        let mut decoder = Decoder::new(server_address().to_string());
         let heartbeat = decoder.decode(Some(&[0, 0, 0, 0, 1, 6]));
 
         assert_eq!(
@@ -502,7 +478,7 @@ mod tests {
 
     #[test]
     fn test_decoder_schema_registry_unavailable() {
-        let mut decoder = Decoder::new("bogus");
+        let mut decoder = Decoder::new("bogus".to_string());
         let heartbeat = decoder.decode(Some(&[0, 0, 0, 10, 1, 6]));
 
         assert_eq!(
@@ -523,7 +499,7 @@ mod tests {
             .with_body(r#"{"no-schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
             .create();
 
-        let mut decoder = Decoder::new(SERVER_ADDRESS);
+        let mut decoder = Decoder::new(server_address().to_string());
         let heartbeat = decoder.decode(Some(&[0, 0, 0, 0, 1, 6]));
 
         assert_eq!(
@@ -540,7 +516,7 @@ mod tests {
             .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\"}"}"#)
             .create();
 
-        let mut decoder = Decoder::new(SERVER_ADDRESS);
+        let mut decoder = Decoder::new(server_address().to_string());
         let heartbeat = decoder.decode(Some(&[0, 0, 0, 0, 1, 6]));
 
         assert_eq!(
@@ -555,7 +531,7 @@ mod tests {
 
     #[test]
     fn test_decoder_cache() {
-        let mut decoder = Decoder::new(SERVER_ADDRESS);
+        let mut decoder = Decoder::new(server_address().to_string());
         let bytes = [0, 0, 0, 0, 2, 6];
 
         let _m = mock("GET", "/schemas/ids/2")
@@ -599,7 +575,7 @@ mod tests {
 
     #[test]
     fn display_encode() {
-        let decoder = Encoder::new(SERVER_ADDRESS);
+        let decoder = Encoder::new(server_address().to_string());
         assert_eq!(
             "Encoder { schema_registry_url: \"127.0.0.1:1234\", cache: {} }".to_owned(),
             format!("{:?}", decoder)
@@ -620,7 +596,7 @@ mod tests {
             .with_body(r#"{"subject":"heartbeat-value","version":1,"id":4,"schema":"{\"type\":\"record\",\"name\":\"Name\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"name\",\"type\":\"string\",\"avro.java.string\":\"String\"}]}"}"#)
             .create();
 
-        let mut encoder = Encoder::new(SERVER_ADDRESS);
+        let mut encoder = Encoder::new(server_address().to_string());
 
         let key_strategy = SubjectNameStrategy::TopicNameStrategy("heartbeat".into(), true);
         let bytes = encoder.encode(
@@ -649,7 +625,7 @@ mod tests {
          .with_body(r#"{"subject":"heartbeat-value","version":1,"id":3,"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
          .create();
 
-        let mut encoder = Encoder::new(SERVER_ADDRESS);
+        let mut encoder = Encoder::new(server_address().to_string());
         let strategy =
             SubjectNameStrategy::TopicRecordNameStrategy("heartbeat".into(), "nl.openweb.data.Heartbeat".into());
         let bytes = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
@@ -665,7 +641,7 @@ mod tests {
             .with_body(r#"{"subject":"heartbeat-value","version":1,"no-id":3,"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
             .create();
 
-        let mut encoder = Encoder::new(SERVER_ADDRESS);
+        let mut encoder = Encoder::new(server_address().to_string());
         let strategy =
             SubjectNameStrategy::TopicRecordNameStrategy("heartbeat".into(), "nl.openweb.data.Heartbeat".into());
         let bytes = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
@@ -678,7 +654,7 @@ mod tests {
 
     #[test]
     fn test_encoder_schema_registry_unavailable() {
-        let mut encoder = Encoder::new("bogus");
+        let mut encoder = Encoder::new("bogus".into());
         let strategy =
             SubjectNameStrategy::TopicRecordNameStrategy("heartbeat".into(), "nl.openweb.data.Balance".into());
         let result = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
@@ -695,7 +671,7 @@ mod tests {
 
     #[test]
     fn test_encoder_schema_registry_unavailable_with_record() {
-        let mut encoder = Encoder::new("bogus");
+        let mut encoder = Encoder::new("bogus".into());
         let heartbeat_schema = SuppliedSchema::new(r#"{"type":"record","name":"Balance","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#.into());
         let strategy = SubjectNameStrategy::RecordNameStrategyWithSchema(heartbeat_schema);
         let result = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
@@ -712,7 +688,7 @@ mod tests {
 
     #[test]
     fn test_encode_cache() {
-        let mut encoder = Encoder::new(SERVER_ADDRESS);
+        let mut encoder = Encoder::new(server_address().to_string());
         let strategy = SubjectNameStrategy::RecordNameStrategy("nl.openweb.data.Heartbeat".into());
 
         let _m = mock("GET", "/subjects/nl.openweb.data.Heartbeat/versions/latest")
@@ -767,7 +743,7 @@ mod tests {
             .with_body(r#"{"id":4}"#)
             .create();
 
-        let mut encoder = Encoder::new(SERVER_ADDRESS);
+        let mut encoder = Encoder::new(server_address().to_string());
 
         let name_schema = SuppliedSchema::new(r#"{"type":"record","name":"Name","namespace":"nl.openweb.data","fields":[{"name":"name","type":"string","avro.java.string":"String"}]}"#.into());
         let key_strategy =
@@ -797,7 +773,7 @@ mod tests {
             .with_body(r#"{"id":11}"#)
             .create();
 
-        let mut encoder = Encoder::new(SERVER_ADDRESS);
+        let mut encoder = Encoder::new(server_address().to_string());
 
         let heartbeat_schema = SuppliedSchema::new(r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#.into());
         let strategy = SubjectNameStrategy::RecordNameStrategyWithSchema(heartbeat_schema);
@@ -813,7 +789,7 @@ mod tests {
             .with_body(r#"{"no-id":11}"#)
             .create();
 
-        let mut encoder = Encoder::new(SERVER_ADDRESS);
+        let mut encoder = Encoder::new(server_address().to_string());
 
         let heartbeat_schema = SuppliedSchema::new(r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#.into());
         let strategy = SubjectNameStrategy::RecordNameStrategyWithSchema(heartbeat_schema);
@@ -832,7 +808,7 @@ mod tests {
             .with_body(r#"{"id":23}"#)
             .create();
 
-        let mut encoder = Encoder::new(SERVER_ADDRESS);
+        let mut encoder = Encoder::new(server_address().to_string());
 
         let heartbeat_schema = SuppliedSchema::new(r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#.into());
         let strategy =
@@ -843,7 +819,7 @@ mod tests {
 
     #[test]
     fn test_encode_topic_record_name_strategy_schema_registry_not_available() {
-        let mut encoder = Encoder::new(SERVER_ADDRESS);
+        let mut encoder = Encoder::new(server_address().to_string());
 
         let heartbeat_schema = SuppliedSchema::new(r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#.into());
         let strategy =
