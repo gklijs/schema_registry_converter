@@ -10,6 +10,7 @@ readme = "README.md"
 keywords = ["kafka", "encode", "decode", "schema", "avro"]
 categories = ["encoding", "parsing"]
 license = "MIT/Apache-2.0"
+edition = "2018"
 
 [features]
 default = []
@@ -29,7 +30,9 @@ version = ">=0.8.0, <2.0"
 
 [dev-dependencies]
 mockito = "0.16.0"
-rdkafka = "0.17.0"
+rdkafka = "0.20.0"
+futures = "^0.1.25"
+rand = "0.6.5"
 
 [badges.travis-ci]
 repository = "gklijs/schema_registry_converter"

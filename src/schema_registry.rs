@@ -1,12 +1,8 @@
 //! This module contains the code specific for the schema registry.
 
-extern crate avro_rs;
-extern crate curl;
-extern crate serde_json;
-
-use self::avro_rs::Schema;
-use self::curl::easy::{Easy2, Handler, List, WriteError};
-use self::serde_json::{Value as JsonValue, Map as JsonMap};
+use avro_rs::Schema;
+use curl::easy::{Easy2, Handler, List, WriteError};
+use serde_json::{Value as JsonValue, Map as JsonMap};
 use core::fmt;
 use std::error::Error;
 use std::ops::Deref;
@@ -41,11 +37,10 @@ impl SuppliedSchema {
 /// was to be abandoned. Using either of the two other strategies allows multiple types of schema
 /// on on topic, while still being able to keep the restriction on schema's being backwards
 /// compatible.
+/// Depending on the strategy, either the topic, whether the value is used as key, the fully
+/// qualified name (only for RecordNameStrategy), or the schema needs to be provided.
 ///
 /// ```
-/// # extern crate mockito;
-/// # extern crate schema_registry_converter;
-/// # extern crate avro_rs;
 /// # use mockito::{mock, server_address};
 /// # use schema_registry_converter::Encoder;
 /// # use schema_registry_converter::schema_registry::{SRCError, SubjectNameStrategy, SuppliedSchema};

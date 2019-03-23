@@ -22,10 +22,6 @@
 //!
 //! [avro-rs]: https://crates.io/crates/avro-rs
 
-extern crate avro_rs;
-extern crate byteorder;
-extern crate core;
-
 pub mod schema_registry;
 
 use avro_rs::types::{Record, Value};
@@ -50,9 +46,6 @@ use std::io::Cursor;
 /// whether it's actual used as key or value.
 ///
 /// ```
-///  # extern crate mockito;
-///  # extern crate schema_registry_converter;
-///  # extern crate avro_rs;
 ///  # use mockito::{mock, server_address};
 ///  # use schema_registry_converter::Decoder;
 ///  # use avro_rs::types::Value;
@@ -83,7 +76,7 @@ impl Decoder {
     pub fn new(schema_registry_url: String) -> Decoder {
         let new_cache = Box::new(HashMap::new());
         Decoder {
-            schema_registry_url: schema_registry_url,
+            schema_registry_url,
             cache: Box::leak(new_cache),
         }
     }
@@ -92,9 +85,6 @@ impl Decoder {
     /// exist or can't be parsed.
     ///
     /// ```
-    ///  # extern crate mockito;
-    ///  # extern crate schema_registry_converter;
-    ///  # extern crate avro_rs;
     ///  # use mockito::{mock, server_address};
     ///  # use schema_registry_converter::Decoder;
     ///  # use schema_registry_converter::schema_registry::SRCError;
@@ -134,9 +124,6 @@ impl Decoder {
     /// decoder.decode(m.key()) to get the decoded key.
     ///
     /// ```no_run
-    /// # extern crate rdkafka;
-    /// # extern crate schema_registry_converter;
-    /// # extern crate avro_rs;
     /// # use rdkafka::message::{Message, BorrowedMessage};
     /// # use schema_registry_converter::Decoder;
     /// # use avro_rs::types::Value;
@@ -198,9 +185,6 @@ impl Decoder {
 /// whether it's actual used as key or value.
 ///
 /// ```
-///  # extern crate mockito;
-///  # extern crate schema_registry_converter;
-///  # extern crate avro_rs;
 ///  # use mockito::{mock, server_address};
 ///  # use schema_registry_converter::Encoder;
 ///  # use schema_registry_converter::schema_registry::SubjectNameStrategy;
@@ -247,7 +231,7 @@ impl Encoder {
     pub fn new(schema_registry_url: String) -> Encoder {
         let new_cache = Box::new(HashMap::new());
         Encoder {
-            schema_registry_url: schema_registry_url,
+            schema_registry_url,
             cache: Box::leak(new_cache),
         }
     }
@@ -256,9 +240,6 @@ impl Encoder {
     /// exist or can't be parsed.
     ///
     /// ```
-    ///  # extern crate mockito;
-    ///  # extern crate schema_registry_converter;
-    ///  # extern crate avro_rs;
     ///  # use mockito::{mock, server_address};
     ///  # use schema_registry_converter::Encoder;
     ///  # use schema_registry_converter::schema_registry::SubjectNameStrategy;
@@ -301,9 +282,6 @@ impl Encoder {
     /// become available in the correct way.
     ///
     /// ```
-    ///  # extern crate mockito;
-    ///  # extern crate schema_registry_converter;
-    ///  # extern crate avro_rs;
     ///  # use mockito::{mock, server_address};
     ///  # use schema_registry_converter::Encoder;
     ///  # use schema_registry_converter::schema_registry::SubjectNameStrategy;
@@ -412,13 +390,11 @@ fn to_bytes_no_tranfer_wrong() {
 
 #[cfg(test)]
 mod tests {
-    extern crate avro_rs;
-    extern crate mockito;
-    use self::mockito::{mock, server_address};
+    use mockito::{mock, server_address};
     use avro_rs::types::Value;
-    use schema_registry::{SRCError, SubjectNameStrategy, SuppliedSchema};
-    use Decoder;
-    use Encoder;
+    use crate::schema_registry::{SRCError, SubjectNameStrategy, SuppliedSchema};
+    use crate::Decoder;
+    use crate::Encoder;
 
     #[test]
     fn display_decoder() {
