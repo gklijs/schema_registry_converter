@@ -25,6 +25,10 @@ version = ">= 1.0"
 [dependencies.curl]
 version = ">= 0.4"
 
+[dependencies.serde]
+version = "1.0"
+features = ["derive"]
+
 [dependencies.serde_json]
 version = ">=0.8.0, <2.0"
 
