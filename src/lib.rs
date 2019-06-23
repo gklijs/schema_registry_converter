@@ -24,6 +24,7 @@
 
 pub mod schema_registry;
 
+use avro_rs::schema::Name;
 use avro_rs::to_value;
 use avro_rs::types::{Record, Value};
 use avro_rs::{from_avro_datum, to_avro_datum, Schema};
@@ -149,17 +150,8 @@ impl Decoder {
     /// The actual deserialization trying to get the id from the bytes to retrieve the schema, and
     /// using a reader transforms the bytes to a value.
     fn deserialize<'a>(&'a mut self, bytes: &'a [u8]) -> Result<Value, SRCError> {
-        let mut buf = &bytes[1..5];
-        let id = buf.read_u32::<BigEndian>().unwrap();
+        let schema = self.get_schema(bytes);
         let mut reader = Cursor::new(&bytes[5..]);
-        let sr = &self.schema_registry_url;
-        let schema = self
-            .cache
-            .entry(id)
-            .or_insert_with(|| match get_schema_by_id(id, sr) {
-                Ok(v) => Ok(v),
-                Err(e) => Err(e.into_cache()),
-            });
         match schema {
             Ok(v) => match from_avro_datum(&v, &mut reader, None) {
                 Ok(v) => Ok(v),
@@ -171,6 +163,45 @@ impl Decoder {
             },
             Err(e) => Err(e.clone()),
         }
+    }
+
+    /// Decodes bytes into a value.
+    /// Also gives back the name of  the schema used as a way to match with a struct to deserialize.
+    pub fn decode_with_name(&mut self, bytes: Option<&[u8]>) -> Result<(Name, Value), SRCError> {
+        match bytes {
+            None => Ok((Name::new("null"), Value::Null)),
+            Some(p) if p.len() > 4 && p[0] == 0 => self.deserialize_with_name(p),
+            Some(p) => Ok((Name::new("bytes"), Value::Bytes(p.to_vec()))),
+        }
+    }
+    /// The actual deserialization trying to get the id from the bytes to retrieve the schema, and
+    /// using a reader transforms the bytes to a value.
+    fn deserialize_with_name<'a>(&'a mut self, bytes: &'a [u8]) -> Result<(Name, Value), SRCError> {
+        let schema = self.get_schema(bytes);
+        let mut reader = Cursor::new(&bytes[5..]);
+        match schema {
+            Ok(v) => match from_avro_datum(&v, &mut reader, None) {
+                Ok(val) => Ok((get_name(v), val)),
+                Err(e) => Err(SRCError::new(
+                    "Could not transform bytes using schema",
+                    Some(&e.to_string()),
+                    false,
+                )),
+            },
+            Err(e) => Err(e.clone()),
+        }
+    }
+
+    fn get_schema(&mut self, bytes: &[u8]) -> &mut Result<Schema, SRCError> {
+        let mut buf = &bytes[1..5];
+        let id = buf.read_u32::<BigEndian>().unwrap();
+        let sr = &self.schema_registry_url;
+        self.cache
+            .entry(id)
+            .or_insert_with(|| match get_schema_by_id(id, sr) {
+                Ok(v) => Ok(v),
+                Err(e) => Err(e.into_cache()),
+            })
     }
 }
 
@@ -442,6 +473,13 @@ fn item_to_bytes(schema: &Schema, id: u32, item: impl Serialize) -> Result<Vec<u
     Ok(payload)
 }
 
+fn get_name(schema: &Schema) -> Name {
+    match schema {
+        Schema::Record { name: n, .. } => n.clone(),
+        _ => Name::new("no record"),
+    }
+}
+
 #[test]
 fn to_bytes_no_record() {
     let schema = Schema::Boolean;
@@ -457,7 +495,7 @@ fn to_bytes_no_record() {
 }
 
 #[test]
-fn to_bytes_no_tranfer_wrong() {
+fn to_bytes_no_transfer_wrong() {
     let schema = Schema::parse_str(r#"{"type":"record","name":"Name","namespace":"nl.openweb.data","fields":[{"name":"name","type":"string","avro.java.string":"String"}]}"#).unwrap();
     let result = to_bytes(&schema, 5, vec![("beat", Value::Long(3))]);
     assert_eq!(
@@ -475,20 +513,23 @@ mod tests {
     use crate::schema_registry::{SRCError, SubjectNameStrategy, SuppliedSchema};
     use crate::Decoder;
     use crate::Encoder;
+    use avro_rs::from_value;
+    use avro_rs::schema::Name;
     use avro_rs::types::Value;
-    use mockito::{mock, server_address};
     use avro_rs::Schema;
+    use mockito::{mock, server_address};
+    use serde::Deserialize;
     use serde::Serialize;
     use std::collections::HashMap;
 
-    #[derive(Serialize)]
+    #[derive(Debug, Deserialize, Serialize)]
     struct Heartbeat {
         beat: i64,
     }
 
     #[derive(Serialize)]
     struct NoWayAvro {
-        map: HashMap<u32, u32>
+        map: HashMap<u32, u32>,
     }
 
     #[test]
@@ -514,7 +555,55 @@ mod tests {
         assert_eq!(
             heartbeat,
             Ok(Value::Record(vec![("beat".to_string(), Value::Long(3))]))
-        )
+        );
+
+        let item = match from_value::<Heartbeat>(&heartbeat.unwrap()) {
+            Ok(h) => h,
+            Err(_) => panic!("should get heartbeat"),
+        };
+        assert_eq!(item.beat, 3i64);
+    }
+
+    #[test]
+    fn test_decoder_with_name() {
+        let _m = mock("GET", "/schemas/ids/1")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
+            .create();
+
+        let mut decoder = Decoder::new(server_address().to_string());
+        let heartbeat = decoder.decode_with_name(Some(&[0, 0, 0, 0, 1, 6]));
+        let item = match heartbeat {
+            Ok((name, value)) => match name.name.as_str() {
+                "Heartbeat" => match name.namespace {
+                    Some(namespace) => match namespace.as_str() {
+                        "nl.openweb.data" => from_value::<Heartbeat>(&value).unwrap(),
+                        ns => panic!("Unexpected namespace {}", ns),
+                    },
+                    None => panic!("No namespace, was expected"),
+                },
+                name => panic!("Unexpected name {}", name),
+            },
+            Err(_) => panic!("should get heartbeat"),
+        };
+        assert_eq!(item.beat, 3i64);
+    }
+
+    #[test]
+    fn test_decoder_no_bytes() {
+        let mut decoder = Decoder::new(server_address().to_string());
+        let heartbeat = decoder.decode(None);
+
+        assert_eq!(heartbeat, Ok(Value::Null))
+    }
+
+    #[test]
+    fn test_decoder_with_name_no_bytes() {
+        let mut decoder = Decoder::new(server_address().to_string());
+        let heartbeat = decoder.decode_with_name(None);
+
+        assert_eq!(heartbeat, Ok((Name::new("null"), Value::Null)))
     }
 
     #[test]
@@ -523,6 +612,17 @@ mod tests {
         let heartbeat = decoder.decode(Some(&[1, 0, 0, 0, 1, 6]));
 
         assert_eq!(heartbeat, Ok(Value::Bytes(vec![1, 0, 0, 0, 1, 6])))
+    }
+
+    #[test]
+    fn test_decoder_with_name_magic_byte_not_present() {
+        let mut decoder = Decoder::new(server_address().to_string());
+        let heartbeat = decoder.decode_with_name(Some(&[1, 0, 0, 0, 1, 6]));
+
+        assert_eq!(
+            heartbeat,
+            Ok((Name::new("bytes"), Value::Bytes(vec![1, 0, 0, 0, 1, 6])))
+        )
     }
 
     #[test]
@@ -555,6 +655,27 @@ mod tests {
     }
 
     #[test]
+    fn test_decoder_with_name_wrong_data() {
+        let _m = mock("GET", "/schemas/ids/1")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
+            .create();
+
+        let mut decoder = Decoder::new(server_address().to_string());
+        let heartbeat = decoder.decode_with_name(Some(&[0, 0, 0, 0, 1]));
+
+        assert_eq!(
+            heartbeat,
+            Err(SRCError::new(
+                "Could not transform bytes using schema",
+                Some("failed to fill whole buffer"),
+                false,
+            ))
+        )
+    }
+
+    #[test]
     fn test_decoder_no_json_response() {
         let _m = mock("GET", "/schemas/ids/1")
             .with_status(200)
@@ -564,6 +685,23 @@ mod tests {
 
         let mut decoder = Decoder::new(server_address().to_string());
         let heartbeat = decoder.decode(Some(&[0, 0, 0, 0, 1, 6]));
+
+        assert_eq!(
+            heartbeat,
+            Err(SRCError::new("Invalid json string", Some("JSON error"), false).into_cache())
+        )
+    }
+
+    #[test]
+    fn test_decoder_with_name_no_json_response() {
+        let _m = mock("GET", "/schemas/ids/1")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(r#"{"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
+            .create();
+
+        let mut decoder = Decoder::new(server_address().to_string());
+        let heartbeat = decoder.decode_with_name(Some(&[0, 0, 0, 0, 1, 6]));
 
         assert_eq!(
             heartbeat,
@@ -583,7 +721,7 @@ mod tests {
                 Some("Couldn\'t resolve host name"),
                 true,
             )
-                .into_cache())
+            .into_cache())
         )
     }
 
@@ -622,7 +760,7 @@ mod tests {
                 Some("Failed to parse schema: No `fields` in record"),
                 false,
             )
-                .into_cache())
+            .into_cache())
         )
     }
 
@@ -644,7 +782,7 @@ mod tests {
                 None,
                 false,
             )
-                .into_cache())
+            .into_cache())
         );
         let _m = mock("GET", "/schemas/ids/2")
             .with_status(200)
@@ -660,7 +798,7 @@ mod tests {
                 None,
                 false,
             )
-                .into_cache())
+            .into_cache())
         );
 
         decoder.remove_errors_from_cache();
@@ -771,7 +909,7 @@ mod tests {
                 Some("Couldn\'t resolve host name"),
                 true,
             )
-                .into_cache())
+            .into_cache())
         )
     }
 
@@ -789,7 +927,7 @@ mod tests {
                 Some("Couldn\'t resolve host name"),
                 true,
             )
-                .into_cache())
+            .into_cache())
         )
     }
 
@@ -812,7 +950,7 @@ mod tests {
                 None,
                 false,
             )
-                .into_cache())
+            .into_cache())
         );
 
         let _n = mock("GET", "/subjects/nl.openweb.data.Heartbeat/versions/latest")
@@ -829,7 +967,7 @@ mod tests {
                 None,
                 false,
             )
-                .into_cache())
+            .into_cache())
         );
 
         encoder.remove_errors_from_cache();
@@ -944,16 +1082,15 @@ mod tests {
                 None,
                 false,
             )
-                .into_cache())
+            .into_cache())
         )
     }
 
     #[test]
     fn item_to_bytes_no_tranfer_wrong() {
-
         let schema = Schema::parse_str(r#"{"type":"record","name":"Name","namespace":"nl.openweb.data","fields":[{"name":"name","type":"string","avro.java.string":"String"}]}"#).unwrap();
 
-        let result = crate::item_to_bytes(&schema, 5, Heartbeat{beat: 3});
+        let result = crate::item_to_bytes(&schema, 5, Heartbeat { beat: 3 });
         assert_eq!(
             result,
             Err(SRCError::new(
@@ -966,11 +1103,10 @@ mod tests {
 
     #[test]
     fn derive_but_not_valid_avro() {
-
         let schema = Schema::parse_str(r#"{"type":"record","name":"Name","namespace":"nl.openweb.data","fields":[{"name":"name","type":"string","avro.java.string":"String"}]}"#).unwrap();
         let mut map = HashMap::new();
-        map.insert(1,2);
-        let result = crate::item_to_bytes(&schema, 5, NoWayAvro{ map});
+        map.insert(1, 2);
+        let result = crate::item_to_bytes(&schema, 5, NoWayAvro { map });
         assert_eq!(
             result,
             Err(SRCError::new(

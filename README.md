@@ -10,10 +10,9 @@
 This library provides a way of using the Confluent Schema Registry in a way that is compliant with the usual jvm usage.
 The release notes can be found on [github](https://github.com/gklijs/schema_registry_converter/blob/master/RELEASE_NOTES.md)
 Consuming/decoding and producing/encoding is supported. It's also possible to provide the schema to use when decoding. When no schema is provided, the latest
-schema with the same `subject` will be used. As far as I know, it's feature complete compared to the confluent java version.
-As I'm still pretty new to rust, pr's/remarks for improvements are greatly appreciated.
-
-
+schema with the same `subject` will be used. It's feature complete compared to the confluent java version. However it does not yet support adding credentials
+to the requests to the schema registry like done for [java as part of the 5.3 release](https://github.com/confluentinc/schema-registry/pull/1130). Please create
+and issue if you would like to use this feature.
 
 ## Consumer
 
@@ -34,12 +33,15 @@ It is recommended to look there for the newest and more elaborate documentation.
 
 ```toml
 [dependencies]
-schema_registry_converter = "1.0.0"
+schema_registry_converter = "1.1.0"
 ```
 
 ...and see the [docs](https://docs.rs/schema_registry_converter) for how to use it.
 
 # Example with consumer and producer
+
+Two examples of but consuming/decoding and producing/encoding.
+To use structs the must have an implementation of either the `serde::Deserialize` or `serde::Serialize` trait to work. 
 
 ```rust
 use rdkafka::message::{Message, BorrowedMessage};
@@ -62,6 +64,31 @@ fn get_value<'a>(
     }
 }
 
+fn get_heartbeat<'a>(
+    msg: &'a BorrowedMessage,
+    decoder: &'a mut Decoder,
+) -> Heartbeat{
+    match decoder.decode_with_name(msg.payload()){
+        Ok((name, value)) => {
+            match name.name.as_str() {
+                "Heartbeat" => {
+                    match name.namespace{
+                        Some(namespace) => {
+                            match namespace.as_str(){
+                                "nl.openweb.data" => from_value::<Heartbeat>(&value).unwrap(),
+                                ns=> panic!("Unexpected namespace {}", ns),
+                            }
+                        },
+                        None => panic!("No namespace in schema, while expected"),
+                    }
+                }
+                name=> panic!("Unexpected name {}", name),
+            }
+        }
+        Err(e) => panic!("error getting heartbeat: {}, e"),
+    }
+}
+
 fn get_future_record<'a>(
     topic: &'a str,
     key: Option<&'a str>,
@@ -70,6 +97,27 @@ fn get_future_record<'a>(
 ) -> FutureRecord<'a>{
     let subject_name_strategy = SubjectNameStrategy::TopicNameStrategy(topic, false);
     let payload = match encoder.encode(values, &subject_name_strategy) {
+        Ok(v) => v,
+        Err(e) => panic!("Error getting payload: {}", e),
+    };
+    FutureRecord {
+        topic,
+        partition: None,
+        payload: Some(&payload),
+        key,
+        timestamp: None,
+        headers: None,
+    }
+}
+
+fn get_future_record_from_struct<'a>(
+    topic: &'a str,
+    key: Option<&'a str>,
+    heartbeat: Heartbeat,
+    encoder: &'a mut Encoder,
+) -> FutureRecord<'a>{
+    let subject_name_strategy = SubjectNameStrategy::TopicNameStrategy(topic, false);
+    let payload = match encoder.encode(heartbeat, &subject_name_strategy) {
         Ok(v) => v,
         Err(e) => panic!("Error getting payload: {}", e),
     };
