@@ -1,9 +1,9 @@
 //! This module contains the code specific for the schema registry.
 
 use avro_rs::Schema;
-use curl::easy::{Easy2, Handler, List, WriteError};
-use serde_json::{Value as JsonValue, Map as JsonMap};
 use core::fmt;
+use curl::easy::{Easy2, Handler, List, WriteError};
+use serde_json::{Map as JsonMap, Value as JsonValue};
 use std::error::Error;
 use std::ops::Deref;
 use std::str;

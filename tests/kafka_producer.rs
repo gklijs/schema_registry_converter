@@ -6,7 +6,7 @@ use schema_registry_converter::Encoder;
 
 pub struct RecordProducer {
     producer: FutureProducer,
-    encoder: Encoder
+    encoder: Encoder,
 }
 
 impl<'a> RecordProducer {
@@ -16,7 +16,7 @@ impl<'a> RecordProducer {
         key_values: Vec<(&'static str, Value)>,
         value_values: Vec<(&'static str, Value)>,
         key_strategy: SubjectNameStrategy,
-        value_strategy: SubjectNameStrategy
+        value_strategy: SubjectNameStrategy,
     ) {
         let payload = match self.encoder.encode(value_values, &value_strategy) {
             Ok(v) => v,
@@ -30,7 +30,7 @@ impl<'a> RecordProducer {
             topic,
             partition: None,
             payload: Some(&payload),
-            key : Some(&key),
+            key: Some(&key),
             timestamp: None,
             headers: None,
         };
@@ -47,8 +47,5 @@ pub fn get_producer(brokers: &str, schema_registry_url: String) -> RecordProduce
         .create()
         .expect("Producer creation error");
     let encoder = Encoder::new(schema_registry_url);
-    RecordProducer {
-        producer,
-        encoder,
-    }
+    RecordProducer { producer, encoder }
 }

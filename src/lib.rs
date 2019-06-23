@@ -24,11 +24,13 @@
 
 pub mod schema_registry;
 
+use avro_rs::to_value;
 use avro_rs::types::{Record, Value};
 use avro_rs::{from_avro_datum, to_avro_datum, Schema};
 use byteorder::{BigEndian, ByteOrder, ReadBytesExt};
 use schema_registry::SRCError;
 use schema_registry::{get_schema_by_id, get_schema_by_subject, get_subject, SubjectNameStrategy};
+use serde::ser::Serialize;
 use std::collections::hash_map::RandomState;
 use std::collections::HashMap;
 use std::io::Cursor;
@@ -304,20 +306,68 @@ impl Encoder {
         values: Vec<(&'static str, Value)>,
         subject_name_strategy: &SubjectNameStrategy,
     ) -> Result<Vec<u8>, SRCError> {
+        let schema_and_id = self.get_schema_and_id(subject_name_strategy);
+        match schema_and_id {
+            Ok((schema, id)) => to_bytes(&schema, *id, values),
+            Err(e) => Err(e.clone()),
+        }
+    }
+
+    /// Encodes struct to bytes. The corrects values of the 'keys' depend on the schema being
+    /// fetched at runtime. For example you might agree on a schema with a consuming party and
+    /// /or upload a schema to the schema registry before starting the program. In the future an
+    /// 'encode with schema' might be added which makes it easier to make sure the schema will
+    /// become available in the correct way.
+    ///
+    /// ```
+    ///  # use mockito::{mock, server_address};
+    ///  # use schema_registry_converter::Encoder;
+    ///  # use schema_registry_converter::schema_registry::SubjectNameStrategy;
+    ///  # use serde::Serialize;
+    ///  # use avro_rs::types::Value;
+    ///
+    /// let _m = mock("GET", "/subjects/heartbeat-nl.openweb.data.Heartbeat/versions/latest")
+    ///     .with_status(200)
+    ///     .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+    ///     .with_body(r#"{"subject":"heartbeat-value","version":1,"id":3,"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
+    ///     .create();
+    ///
+    ///  #[derive(Serialize)]
+    ///    struct Heartbeat {
+    ///        beat: i64,
+    ///    }
+    ///
+    /// let mut encoder = Encoder::new(server_address().to_string());
+    /// let strategy = SubjectNameStrategy::TopicRecordNameStrategy("heartbeat".into(), "nl.openweb.data.Heartbeat".into());
+    /// let bytes = encoder.encode_struct(Heartbeat{beat: 3}, &strategy);
+    ///
+    /// assert_eq!(bytes, Ok(vec!(0,0,0,0,3,6)))
+    /// ```
+    pub fn encode_struct(
+        &mut self,
+        item: impl Serialize,
+        subject_name_strategy: &SubjectNameStrategy,
+    ) -> Result<Vec<u8>, SRCError> {
+        let schema_and_id = self.get_schema_and_id(subject_name_strategy);
+        match schema_and_id {
+            Ok((schema, id)) => item_to_bytes(&schema, *id, item),
+            Err(e) => Err(e.clone()),
+        }
+    }
+
+    fn get_schema_and_id(
+        &mut self,
+        subject_name_strategy: &SubjectNameStrategy,
+    ) -> &mut Result<(Schema, u32), SRCError> {
         let schema_registry_url = &self.schema_registry_url;
-        let schema_and_id = self
-            .cache
+        self.cache
             .entry(get_subject(subject_name_strategy))
             .or_insert_with(|| {
                 match get_schema_by_subject(schema_registry_url, &subject_name_strategy) {
                     Ok(v) => Ok(v),
                     Err(e) => Err(e.into_cache()),
                 }
-            });
-        match schema_and_id {
-            Ok((schema, id)) => to_bytes(&schema, *id, values),
-            Err(e) => Err(e.clone()),
-        }
+            })
     }
 }
 
@@ -335,7 +385,7 @@ fn to_bytes(
                 "Could not create record from schema",
                 None,
                 false,
-            ))
+            ));
         }
     };
     for value in values {
@@ -354,7 +404,39 @@ fn to_bytes(
                 "Could not get avro bytes",
                 Some(&e.to_string()),
                 false,
-            ))
+            ));
+        }
+    }
+    Ok(payload)
+}
+
+/// Using the schema with an item implementing serialize the item will be correctly deserialized
+/// according to the avro specification.
+fn item_to_bytes(schema: &Schema, id: u32, item: impl Serialize) -> Result<Vec<u8>, SRCError> {
+    let record = match to_value(item) {
+        Ok(v) => v,
+        Err(e) => {
+            return Err(SRCError::new(
+                "Could not get avro record from struct",
+                Some(&e.to_string()),
+                false,
+            ));
+        }
+    };
+    let mut payload = vec![0u8];
+    {
+        let mut buf = [0u8; 4];
+        BigEndian::write_u32(&mut buf, id);
+        payload.extend_from_slice(&buf);
+    }
+    match to_avro_datum(schema, record) {
+        Ok(v) => payload.extend_from_slice(v.as_slice()),
+        Err(e) => {
+            return Err(SRCError::new(
+                "Could not get avro bytes",
+                Some(&e.to_string()),
+                false,
+            ));
         }
     }
     Ok(payload)
@@ -369,7 +451,7 @@ fn to_bytes_no_record() {
         Err(SRCError::new(
             "Could not create record from schema",
             None,
-            false
+            false,
         ))
     )
 }
@@ -383,18 +465,18 @@ fn to_bytes_no_tranfer_wrong() {
         Err(SRCError::new(
             "Could not get avro bytes",
             Some("Decoding error: value does not match schema"),
-            false
+            false,
         ))
     )
 }
 
 #[cfg(test)]
 mod tests {
-    use mockito::{mock, server_address};
-    use avro_rs::types::Value;
     use crate::schema_registry::{SRCError, SubjectNameStrategy, SuppliedSchema};
     use crate::Decoder;
     use crate::Encoder;
+    use avro_rs::types::Value;
+    use mockito::{mock, server_address};
 
     #[test]
     fn display_decoder() {
@@ -409,9 +491,9 @@ mod tests {
     fn test_decoder_default() {
         let _m = mock("GET", "/schemas/ids/1")
             .with_status(200)
-             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
-             .create();
+            .create();
 
         let mut decoder = Decoder::new(server_address().to_string());
         let heartbeat = decoder.decode(Some(&[0, 0, 0, 0, 1, 6]));
@@ -454,7 +536,7 @@ mod tests {
             Err(SRCError::new(
                 "Could not transform bytes using schema",
                 Some("failed to fill whole buffer"),
-                false
+                false,
             ))
         )
     }
@@ -486,8 +568,9 @@ mod tests {
             Err(SRCError::new(
                 "error performing get to schema registry",
                 Some("Couldn\'t resolve host name"),
-                true
-            ).into_cache())
+                true,
+            )
+            .into_cache())
         )
     }
 
@@ -524,8 +607,9 @@ mod tests {
             Err(SRCError::new(
                 "Could not parse schema",
                 Some("Failed to parse schema: No `fields` in record"),
-                false
-            ).into_cache())
+                false,
+            )
+            .into_cache())
         )
     }
 
@@ -545,14 +629,15 @@ mod tests {
             Err(SRCError::new(
                 "Did not get a 200 response code but 404 instead",
                 None,
-                false
-            ).into_cache())
+                false,
+            )
+            .into_cache())
         );
         let _m = mock("GET", "/schemas/ids/2")
-        .with_status(200)
-        .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-        .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
-        .create();
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
+            .create();
 
         let heartbeat = decoder.decode(Some(&bytes));
         assert_eq!(
@@ -560,8 +645,9 @@ mod tests {
             Err(SRCError::new(
                 "Did not get a 200 response code but 404 instead",
                 None,
-                false
-            ).into_cache())
+                false,
+            )
+            .into_cache())
         );
 
         decoder.remove_errors_from_cache();
@@ -620,14 +706,16 @@ mod tests {
     #[test]
     fn test_using_record_name() {
         let _m = mock("GET", "/subjects/heartbeat-nl.openweb.data.Heartbeat/versions/latest")
-         .with_status(200)
-         .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-         .with_body(r#"{"subject":"heartbeat-value","version":1,"id":3,"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
-         .create();
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(r#"{"subject":"heartbeat-value","version":1,"id":3,"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
+            .create();
 
         let mut encoder = Encoder::new(server_address().to_string());
-        let strategy =
-            SubjectNameStrategy::TopicRecordNameStrategy("heartbeat".into(), "nl.openweb.data.Heartbeat".into());
+        let strategy = SubjectNameStrategy::TopicRecordNameStrategy(
+            "heartbeat".into(),
+            "nl.openweb.data.Heartbeat".into(),
+        );
         let bytes = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
 
         assert_eq!(bytes, Ok(vec![0, 0, 0, 0, 3, 6]))
@@ -642,8 +730,10 @@ mod tests {
             .create();
 
         let mut encoder = Encoder::new(server_address().to_string());
-        let strategy =
-            SubjectNameStrategy::TopicRecordNameStrategy("heartbeat".into(), "nl.openweb.data.Heartbeat".into());
+        let strategy = SubjectNameStrategy::TopicRecordNameStrategy(
+            "heartbeat".into(),
+            "nl.openweb.data.Heartbeat".into(),
+        );
         let bytes = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
 
         assert_eq!(
@@ -655,8 +745,10 @@ mod tests {
     #[test]
     fn test_encoder_schema_registry_unavailable() {
         let mut encoder = Encoder::new("bogus".into());
-        let strategy =
-            SubjectNameStrategy::TopicRecordNameStrategy("heartbeat".into(), "nl.openweb.data.Balance".into());
+        let strategy = SubjectNameStrategy::TopicRecordNameStrategy(
+            "heartbeat".into(),
+            "nl.openweb.data.Balance".into(),
+        );
         let result = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
 
         assert_eq!(
@@ -664,8 +756,9 @@ mod tests {
             Err(SRCError::new(
                 "error performing get to schema registry",
                 Some("Couldn\'t resolve host name"),
-                true
-            ).into_cache())
+                true,
+            )
+            .into_cache())
         )
     }
 
@@ -681,8 +774,9 @@ mod tests {
             Err(SRCError::new(
                 "error performing post to schema registry",
                 Some("Couldn\'t resolve host name"),
-                true
-            ).into_cache())
+                true,
+            )
+            .into_cache())
         )
     }
 
@@ -703,8 +797,9 @@ mod tests {
             Err(SRCError::new(
                 "Did not get a 200 response code but 404 instead",
                 None,
-                false
-            ).into_cache())
+                false,
+            )
+            .into_cache())
         );
 
         let _n = mock("GET", "/subjects/nl.openweb.data.Heartbeat/versions/latest")
@@ -719,8 +814,9 @@ mod tests {
             Err(SRCError::new(
                 "Did not get a 200 response code but 404 instead",
                 None,
-                false
-            ).into_cache())
+                false,
+            )
+            .into_cache())
         );
 
         encoder.remove_errors_from_cache();
@@ -759,8 +855,11 @@ mod tests {
             ])
         );
         let heartbeat_schema = SuppliedSchema::new(r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#.into());
-        let value_strategy =
-            SubjectNameStrategy::TopicNameStrategyWithSchema("heartbeat".into(), false, heartbeat_schema);
+        let value_strategy = SubjectNameStrategy::TopicNameStrategyWithSchema(
+            "heartbeat".into(),
+            false,
+            heartbeat_schema,
+        );
         let bytes = encoder.encode(vec![("beat", Value::Long(3))], &value_strategy);
         assert_eq!(bytes, Ok(vec![0, 0, 0, 0, 4, 6]))
     }
@@ -830,8 +929,9 @@ mod tests {
             Err(SRCError::new(
                 "Did not get a 200 response code but 501 instead",
                 None,
-                false
-            ).into_cache())
+                false,
+            )
+            .into_cache())
         )
     }
 }
