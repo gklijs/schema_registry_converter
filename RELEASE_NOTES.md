@@ -1,5 +1,24 @@
 ## Release notes
 
+### 1.1.0
+
+This release makes it easier to work with structs, instead of the raw Value type in a vector.
+To use structs with avro you need to add `#[derive(Debug, Deserialize, Serialize)]` above your
+struct and also have a dependency on serde with the derive feature enabled. like:
+```toml
+[dependencies.serde]
+version = "1.0"
+features = ["derive"]
+```
+
+#### Issues
+
+- Added support for the decoder to also get the name of the schema, this
+can be used to determine witch crate to use the values for. In the [tests](https://github.com/gklijs/schema_registry_converter/blob/master/src/lib.rs#L577)
+there is an example.
+- Added support the the encoder to take a struct. To do this use the `encode_struct`
+instead of the `encode` function on the encoder.
+
 ### 1.0.0
 
 #### Issues
