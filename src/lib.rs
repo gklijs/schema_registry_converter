@@ -477,6 +477,19 @@ mod tests {
     use crate::Encoder;
     use avro_rs::types::Value;
     use mockito::{mock, server_address};
+    use avro_rs::Schema;
+    use serde::Serialize;
+    use std::collections::HashMap;
+
+    #[derive(Serialize)]
+    struct Heartbeat {
+        beat: i64,
+    }
+
+    #[derive(Serialize)]
+    struct NoWayAvro {
+        map: HashMap<u32, u32>
+    }
 
     #[test]
     fn display_decoder() {
@@ -570,7 +583,7 @@ mod tests {
                 Some("Couldn\'t resolve host name"),
                 true,
             )
-            .into_cache())
+                .into_cache())
         )
     }
 
@@ -609,7 +622,7 @@ mod tests {
                 Some("Failed to parse schema: No `fields` in record"),
                 false,
             )
-            .into_cache())
+                .into_cache())
         )
     }
 
@@ -631,7 +644,7 @@ mod tests {
                 None,
                 false,
             )
-            .into_cache())
+                .into_cache())
         );
         let _m = mock("GET", "/schemas/ids/2")
             .with_status(200)
@@ -647,7 +660,7 @@ mod tests {
                 None,
                 false,
             )
-            .into_cache())
+                .into_cache())
         );
 
         decoder.remove_errors_from_cache();
@@ -758,7 +771,7 @@ mod tests {
                 Some("Couldn\'t resolve host name"),
                 true,
             )
-            .into_cache())
+                .into_cache())
         )
     }
 
@@ -776,7 +789,7 @@ mod tests {
                 Some("Couldn\'t resolve host name"),
                 true,
             )
-            .into_cache())
+                .into_cache())
         )
     }
 
@@ -799,7 +812,7 @@ mod tests {
                 None,
                 false,
             )
-            .into_cache())
+                .into_cache())
         );
 
         let _n = mock("GET", "/subjects/nl.openweb.data.Heartbeat/versions/latest")
@@ -816,7 +829,7 @@ mod tests {
                 None,
                 false,
             )
-            .into_cache())
+                .into_cache())
         );
 
         encoder.remove_errors_from_cache();
@@ -931,7 +944,40 @@ mod tests {
                 None,
                 false,
             )
-            .into_cache())
+                .into_cache())
+        )
+    }
+
+    #[test]
+    fn item_to_bytes_no_tranfer_wrong() {
+
+        let schema = Schema::parse_str(r#"{"type":"record","name":"Name","namespace":"nl.openweb.data","fields":[{"name":"name","type":"string","avro.java.string":"String"}]}"#).unwrap();
+
+        let result = crate::item_to_bytes(&schema, 5, Heartbeat{beat: 3});
+        assert_eq!(
+            result,
+            Err(SRCError::new(
+                "Could not get avro bytes",
+                Some("Decoding error: value does not match schema"),
+                false,
+            ))
+        )
+    }
+
+    #[test]
+    fn derive_but_not_valid_avro() {
+
+        let schema = Schema::parse_str(r#"{"type":"record","name":"Name","namespace":"nl.openweb.data","fields":[{"name":"name","type":"string","avro.java.string":"String"}]}"#).unwrap();
+        let mut map = HashMap::new();
+        map.insert(1,2);
+        let result = crate::item_to_bytes(&schema, 5, NoWayAvro{ map});
+        assert_eq!(
+            result,
+            Err(SRCError::new(
+                "Could not get avro record from struct",
+                Some("map key is not a string"),
+                false,
+            ))
         )
     }
 }
