@@ -26,7 +26,7 @@ pub mod schema_registry;
 
 use avro_rs::schema::Name;
 use avro_rs::to_value;
-use avro_rs::types::{Record, Value};
+use avro_rs::types::{Record, ToAvro, Value};
 use avro_rs::{from_avro_datum, to_avro_datum, Schema};
 use byteorder::{BigEndian, ByteOrder, ReadBytesExt};
 use schema_registry::SRCError;
@@ -402,6 +402,24 @@ impl Encoder {
     }
 }
 
+fn to_payload<T: ToAvro>(schema: &Schema, id: u32, record: T) -> Result<Vec<u8>, SRCError> {
+    let mut payload = vec![0u8];
+    let mut buf = [0u8; 4];
+    BigEndian::write_u32(&mut buf, id);
+    payload.extend_from_slice(&buf);
+    match to_avro_datum(schema, record) {
+        Ok(v) => payload.extend_from_slice(v.as_slice()),
+        Err(e) => {
+            return Err(SRCError::new(
+                "Could not get avro bytes",
+                Some(&e.to_string()),
+                false,
+            ));
+        }
+    }
+    Ok(payload)
+}
+
 /// Using the schema with a vector of values the values will be correctly deserialized according to
 /// the avro specification.
 fn to_bytes(
@@ -422,23 +440,7 @@ fn to_bytes(
     for value in values {
         record.put(value.0, value.1)
     }
-    let mut payload = vec![0u8];
-    {
-        let mut buf = [0u8; 4];
-        BigEndian::write_u32(&mut buf, id);
-        payload.extend_from_slice(&buf);
-    }
-    match to_avro_datum(schema, record) {
-        Ok(v) => payload.extend_from_slice(v.as_slice()),
-        Err(e) => {
-            return Err(SRCError::new(
-                "Could not get avro bytes",
-                Some(&e.to_string()),
-                false,
-            ));
-        }
-    }
-    Ok(payload)
+    to_payload(schema, id, record)
 }
 
 /// Using the schema with an item implementing serialize the item will be correctly deserialized
@@ -454,23 +456,7 @@ fn item_to_bytes(schema: &Schema, id: u32, item: impl Serialize) -> Result<Vec<u
             ));
         }
     };
-    let mut payload = vec![0u8];
-    {
-        let mut buf = [0u8; 4];
-        BigEndian::write_u32(&mut buf, id);
-        payload.extend_from_slice(&buf);
-    }
-    match to_avro_datum(schema, record) {
-        Ok(v) => payload.extend_from_slice(v.as_slice()),
-        Err(e) => {
-            return Err(SRCError::new(
-                "Could not get avro bytes",
-                Some(&e.to_string()),
-                false,
-            ));
-        }
-    }
-    Ok(payload)
+    to_payload(schema, id, record)
 }
 
 fn get_name(schema: &Schema) -> Name {
@@ -917,7 +903,8 @@ mod tests {
     fn test_encoder_schema_registry_unavailable_with_record() {
         let mut encoder = Encoder::new("bogus".into());
         let heartbeat_schema = SuppliedSchema::new(r#"{"type":"record","name":"Balance","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#.into());
-        let strategy = SubjectNameStrategy::RecordNameStrategyWithSchema(heartbeat_schema);
+        let strategy =
+            SubjectNameStrategy::RecordNameStrategyWithSchema(Box::from(heartbeat_schema));
         let result = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
 
         assert_eq!(
@@ -993,8 +980,11 @@ mod tests {
         let mut encoder = Encoder::new(server_address().to_string());
 
         let name_schema = SuppliedSchema::new(r#"{"type":"record","name":"Name","namespace":"nl.openweb.data","fields":[{"name":"name","type":"string","avro.java.string":"String"}]}"#.into());
-        let key_strategy =
-            SubjectNameStrategy::TopicNameStrategyWithSchema("heartbeat".into(), true, name_schema);
+        let key_strategy = SubjectNameStrategy::TopicNameStrategyWithSchema(
+            "heartbeat".into(),
+            true,
+            Box::from(name_schema),
+        );
         let bytes = encoder.encode(
             vec![("name", Value::String("Some name".to_owned()))],
             &key_strategy,
@@ -1009,7 +999,7 @@ mod tests {
         let value_strategy = SubjectNameStrategy::TopicNameStrategyWithSchema(
             "heartbeat".into(),
             false,
-            heartbeat_schema,
+            Box::from(heartbeat_schema),
         );
         let bytes = encoder.encode(vec![("beat", Value::Long(3))], &value_strategy);
         assert_eq!(bytes, Ok(vec![0, 0, 0, 0, 4, 6]))
@@ -1026,7 +1016,8 @@ mod tests {
         let mut encoder = Encoder::new(server_address().to_string());
 
         let heartbeat_schema = SuppliedSchema::new(r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#.into());
-        let strategy = SubjectNameStrategy::RecordNameStrategyWithSchema(heartbeat_schema);
+        let strategy =
+            SubjectNameStrategy::RecordNameStrategyWithSchema(Box::from(heartbeat_schema));
         let bytes = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
         assert_eq!(bytes, Ok(vec![0, 0, 0, 0, 11, 6]))
     }
@@ -1042,7 +1033,8 @@ mod tests {
         let mut encoder = Encoder::new(server_address().to_string());
 
         let heartbeat_schema = SuppliedSchema::new(r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#.into());
-        let strategy = SubjectNameStrategy::RecordNameStrategyWithSchema(heartbeat_schema);
+        let strategy =
+            SubjectNameStrategy::RecordNameStrategyWithSchema(Box::from(heartbeat_schema));
         let bytes = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
         assert_eq!(
             bytes,
@@ -1061,8 +1053,10 @@ mod tests {
         let mut encoder = Encoder::new(server_address().to_string());
 
         let heartbeat_schema = SuppliedSchema::new(r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#.into());
-        let strategy =
-            SubjectNameStrategy::TopicRecordNameStrategyWithSchema("hb".into(), heartbeat_schema);
+        let strategy = SubjectNameStrategy::TopicRecordNameStrategyWithSchema(
+            "hb".into(),
+            Box::from(heartbeat_schema),
+        );
         let bytes = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
         assert_eq!(bytes, Ok(vec![0, 0, 0, 0, 23, 6]))
     }
@@ -1072,8 +1066,10 @@ mod tests {
         let mut encoder = Encoder::new(server_address().to_string());
 
         let heartbeat_schema = SuppliedSchema::new(r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#.into());
-        let strategy =
-            SubjectNameStrategy::TopicRecordNameStrategyWithSchema("hb".into(), heartbeat_schema);
+        let strategy = SubjectNameStrategy::TopicRecordNameStrategyWithSchema(
+            "hb".into(),
+            Box::from(heartbeat_schema),
+        );
         let error = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
         assert_eq!(
             error,
