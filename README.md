@@ -158,7 +158,7 @@ Due to mockito, used for mocking the schema registry responses, being run in a s
 # Integration test
 
 The integration tests require a Kafka cluster running on the default ports. It will create topics, register schema's, produce and consume some messages.
-They are marked with `kafka_test` so to include them in testing `+stable test --features kafka_test --color=always -- --nocapture --test-threads=1` need to be run.
+They are marked with `kafka_test` so to include them in testing `cargo +stable test --features kafka_test --color=always -- --nocapture --test-threads=1` need to be run.
 The easiest way to run them is with the confluent cli. The 'prepare_integration_test.sh' script can be used to create the 3 topics needed for the tests, but even without those the test pass.
 
 # License
