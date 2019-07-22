@@ -5,6 +5,7 @@ use core::fmt;
 use curl::easy::{Easy2, Handler, List, WriteError};
 use serde_json::{Map as JsonMap, Value as JsonValue};
 use std::error::Error;
+use std::fmt::Display;
 use std::ops::Deref;
 use std::str;
 use url::Url;
@@ -198,10 +199,9 @@ fn schema_from_url(url: &str, id: Option<u32>) -> Result<(Schema, u32), SRCError
     let schema = match Schema::parse_str(raw_schema) {
         Ok(v) => v,
         Err(e) => {
-            return Err(SRCError::new(
+            return Err(SRCError::non_retryable_from_err(
+                e,
                 "Could not parse schema",
-                Some(&e.to_string()),
-                false,
             ))
         }
     };
@@ -283,7 +283,6 @@ fn to_json(mut easy: Easy2<Collector>) -> Result<JsonValue, SRCError> {
                 false,
             ))
         }
-
         Err(e) => {
             return Err(SRCError::new(
                 format!("Encountered error getting http response: {}", e).as_str(),
@@ -299,10 +298,9 @@ fn to_json(mut easy: Easy2<Collector>) -> Result<JsonValue, SRCError> {
     let body = match str::from_utf8(data.as_ref()) {
         Ok(v) => v,
         Err(e) => {
-            return Err(SRCError::new(
+            return Err(SRCError::non_retryable_from_err(
+                e,
                 "Invalid UTF-8 sequence",
-                Some(e.description()),
-                false,
             ))
         }
     };
@@ -385,6 +383,9 @@ impl SRCError {
             retriable,
             cached: false,
         }
+    }
+    pub fn non_retryable_from_err<T: Display>(cause: T, error: &str) -> SRCError {
+        SRCError::new(error, Some(&cause.to_string()), false)
     }
     /// Should be called before putting the error in the cache
     pub fn into_cache(self) -> SRCError {
@@ -488,7 +489,7 @@ fn display_erro_no_cause() {
 }
 
 #[test]
-fn display_erro_with_cause() {
+fn display_error_with_cause() {
     let err = SRCError::new(
         "Could not get id from response",
         Some("error in response"),
