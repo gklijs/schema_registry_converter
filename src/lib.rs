@@ -411,15 +411,15 @@ fn to_payload<T: ToAvro>(schema: &Schema, id: u32, record: T) -> Result<Vec<u8>,
     BigEndian::write_u32(&mut buf, id);
     payload.extend_from_slice(&buf);
     match to_avro_datum(schema, record) {
-        Ok(v) => payload.extend_from_slice(v.as_slice()),
-        Err(e) => {
-            return Err(SRCError::non_retryable_from_err(
-                e,
-                "Could not get avro bytes",
-            ))
+        Ok(v) => {
+            payload.extend_from_slice(v.as_slice());
+            Ok(payload)
         }
+        Err(e) => Err(SRCError::non_retryable_from_err(
+            e,
+            "Could not get avro bytes",
+        )),
     }
-    Ok(payload)
 }
 
 /// Using the schema with a vector of values the values will be correctly deserialized according to
@@ -497,17 +497,11 @@ fn to_bytes_no_transfer_wrong() {
 
 #[cfg(test)]
 mod tests {
-    use crate::schema_registry::{SRCError, SubjectNameStrategy, SuppliedSchema};
-    use crate::Decoder;
-    use crate::Encoder;
+    use super::*;
+    use crate::schema_registry::SuppliedSchema;
     use avro_rs::from_value;
-    use avro_rs::schema::Name;
-    use avro_rs::types::Value;
-    use avro_rs::Schema;
     use mockito::{mock, server_address};
-    use serde::Deserialize;
-    use serde::Serialize;
-    use std::collections::HashMap;
+    use serde::{Deserialize, Serialize};
 
     #[derive(Debug, Deserialize, Serialize)]
     struct Heartbeat {
@@ -517,6 +511,38 @@ mod tests {
     #[derive(Serialize)]
     struct NoWayAvro {
         map: HashMap<u32, u32>,
+    }
+
+    #[derive(Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Clone, Deserialize, Serialize)]
+    pub enum Atype {
+        #[serde(rename = "AUTO")]
+        Auto,
+        #[serde(rename = "MANUAL")]
+        Manual,
+    }
+
+    impl Default for Atype {
+        fn default() -> Self {
+            Atype::Auto
+        }
+    }
+
+    pub type Uuid = [u8; 16];
+
+    #[serde(default)]
+    #[derive(Debug, PartialEq, Clone, Deserialize, Serialize)]
+    pub struct ConfirmAccountCreation {
+        pub id: Uuid,
+        pub a_type: Atype,
+    }
+
+    impl Default for ConfirmAccountCreation {
+        fn default() -> ConfirmAccountCreation {
+            ConfirmAccountCreation {
+                id: Uuid::default(),
+                a_type: Atype::Auto,
+            }
+        }
     }
 
     #[test]
@@ -1141,6 +1167,22 @@ mod tests {
                 Some("map key is not a string"),
                 false,
             ))
+        )
+    }
+
+    #[test]
+    fn item_to_bytes_proper_bytes_record_with_fixed() {
+        let schema = Schema::parse_str(r#"{"type":"record","name":"ConfirmAccountCreation","namespace":"nl.openweb.data","fields":[{"name":"id","type":{"type":"fixed","name":"Uuid","size":16}},{"name":"a_type","type":{"type":"enum","name":"Atype","symbols":["AUTO","MANUAL"]}}]}"#).unwrap();
+        let item = ConfirmAccountCreation {
+            id: [
+                204, 240, 237, 74, 227, 188, 75, 46, 183, 163, 122, 214, 178, 72, 118, 162,
+            ],
+            a_type: Atype::Manual,
+        };
+        let result = crate::item_to_bytes(&schema, 6, item);
+        assert_eq!(
+            result,
+            Ok(vec!(0, 0, 0, 0, 6, 204, 240, 237, 74, 227, 188, 75, 46, 183, 163, 122, 214, 178, 72, 118, 162, 2))
         )
     }
 }
