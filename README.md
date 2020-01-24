@@ -117,7 +117,7 @@ fn get_future_record_from_struct<'a>(
     encoder: &'a mut Encoder,
 ) -> FutureRecord<'a>{
     let subject_name_strategy = SubjectNameStrategy::TopicNameStrategy(topic, false);
-    let payload = match encoder.encode(heartbeat, &subject_name_strategy) {
+    let payload = match encoder.encode_struct(heartbeat, &subject_name_strategy) {
         Ok(v) => v,
         Err(e) => panic!("Error getting payload: {}", e),
     };
