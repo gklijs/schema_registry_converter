@@ -135,7 +135,10 @@ fn get_future_record_from_struct<'a>(
 # Example using to post schema to schema registry
 
 ```rust
-use schema_registry_converter::schema_registry::SubjectNameStrategy::post_schema;
+use schema_registry_converter::schema_registry::{
+    SubjectNameStrategy::post_schema,
+    SuppliedSchema
+};
 
 fn main(){
     let heartbeat_schema = SuppliedSchema::new(r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#.into());
