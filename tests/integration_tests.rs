@@ -21,7 +21,7 @@ fn get_heartbeat_schema() -> Box<SuppliedSchema> {
     Box::from(SuppliedSchema::new(r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#.into()))
 }
 
-fn test_beat_value(key_value: i64, value_value: i64) -> Box<Fn(DeserializedRecord) -> ()> {
+fn test_beat_value(key_value: i64, value_value: i64) -> Box<dyn Fn(DeserializedRecord) -> ()> {
     Box::new(move |rec: DeserializedRecord| {
         println!("testing record {:#?}", rec);
         let key_values = match rec.key {

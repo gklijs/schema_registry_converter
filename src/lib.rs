@@ -488,7 +488,7 @@ fn to_bytes_no_transfer_wrong() {
         result,
         Err(SRCError::new(
             "Could not get avro bytes",
-            Some("Decoding error: value does not match schema"),
+            Some("Validation error: value does not match schema"),
             false,
         ))
     )
@@ -545,7 +545,7 @@ mod tests {
 
         let item = match from_value::<Heartbeat>(&heartbeat.unwrap()) {
             Ok(h) => h,
-            Err(_) => panic!("should get heartbeat"),
+            Err(_) => unreachable!()
         };
         assert_eq!(item.beat, 3i64);
     }
@@ -571,7 +571,7 @@ mod tests {
                 },
                 name => panic!("Unexpected name {}", name),
             },
-            Err(_) => panic!("should get heartbeat"),
+            Err(_) => unreachable!()
         };
         assert_eq!(item.beat, 3i64);
     }
@@ -674,7 +674,7 @@ mod tests {
 
         assert_eq!(
             heartbeat,
-            Err(SRCError::new("Invalid json string", Some("JSON error"), false).into_cache())
+            Err(SRCError::new("Invalid json string", Some("expected `:` at line 1 column 130"), false).into_cache())
         )
     }
 
@@ -691,7 +691,7 @@ mod tests {
 
         assert_eq!(
             heartbeat,
-            Err(SRCError::new("Invalid json string", Some("JSON error"), false).into_cache())
+            Err(SRCError::new("Invalid json string", Some("expected `:` at line 1 column 130"), false).into_cache())
         )
     }
 
@@ -1091,7 +1091,7 @@ mod tests {
             result,
             Err(SRCError::new(
                 "Could not get avro bytes",
-                Some("Decoding error: value does not match schema"),
+                Some("Validation error: value does not match schema"),
                 false,
             ))
         )

@@ -1,8 +1,7 @@
 use avro_rs::types::Value;
-use futures::stream::Stream;
 use rdkafka::client::ClientContext;
 use rdkafka::config::{ClientConfig, RDKafkaLogLevel};
-use rdkafka::consumer::stream_consumer::StreamConsumer;
+use rdkafka::consumer::base_consumer::BaseConsumer;
 use rdkafka::consumer::{Consumer, ConsumerContext, Rebalance};
 use rdkafka::message::BorrowedMessage;
 use rdkafka::Message;
@@ -34,33 +33,29 @@ pub struct DeserializedRecord<'a> {
     pub offset: i64,
 }
 
-type TestConsumer = StreamConsumer<CustomContext>;
+type TestConsumer = BaseConsumer<CustomContext>;
 
 pub fn consume(
     brokers: &str,
     group_id: &str,
     registry: String,
     topics: &[&str],
-    test: Box<Fn(DeserializedRecord) -> ()>,
+    test: Box<dyn Fn(DeserializedRecord) -> ()>,
 ) {
     let mut decoder = Decoder::new(registry);
     let consumer = get_consumer(brokers, group_id, topics);
-    let message_stream = consumer.start();
 
-    for message in message_stream.wait() {
+    for message in consumer.iter() {
         match message {
-            Err(_) => {
-                assert!(false, "Got error consuming message");
+            Err(e) => {
+                assert!(false, "Got error consuming message: {}", e);
             }
-            Ok(Ok(m)) => {
+            Ok(m) => {
                 let des_r = get_deserialized_record(&m, &mut decoder);
                 test(des_r);
-            }
-            Ok(Err(e)) => {
-                assert!(false, "Kafka error: {}", e);
+                return
             }
         };
-        consumer.stop();
     }
 }
 

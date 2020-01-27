@@ -288,7 +288,7 @@ fn to_json(mut easy: Easy2<Collector>) -> Result<JsonValue, SRCError> {
         Ok(v) => Ok(v),
         Err(e) => Err(SRCError::new(
             "Invalid json string",
-            Some(e.description()),
+            Some(e.to_string().as_ref()),
             false,
         )),
     }
