@@ -7,6 +7,7 @@ use serde_json::{Map as JsonMap, Value as JsonValue};
 use std::error::Error;
 use std::ops::Deref;
 use std::str;
+use url::Url;
 
 /// Because we need both the resulting schema, as have a way of posting the schema as json, we use
 /// this struct so we keep them both together.
@@ -72,7 +73,29 @@ pub enum SubjectNameStrategy {
 /// Gets a schema by an id. This is used to get the correct schema te deserialize bytes, when the
 /// id is encoded in the bytes.
 pub fn get_schema_by_id(id: u32, schema_registry_url: &str) -> Result<Schema, SRCError> {
-    let url = schema_registry_url.to_owned() + "/schemas/ids/" + &id.to_string();
+    let url = Url::parse(schema_registry_url)
+        .map_err(|e| SRCError {
+            error: "Error parsing schema registry url".into(),
+            side: Some(format!("{}", e)),
+            retriable: false,
+            cached: false,
+        })?
+        .join("/schemas/ids/")
+        .map_err(|e| SRCError {
+            error: "Error constructing schema registry url".into(),
+            side: Some(format!("{}", e)),
+            retriable: false,
+            cached: false,
+        })?
+        .join(&id.to_string())
+        .map_err(|e| SRCError {
+            error: "Error constructing schema registry url".into(),
+            side: Some(format!("{}", e)),
+            retriable: false,
+            cached: false,
+        })?
+        .into_string();
+
     schema_from_url(&url, Option::from(id)).and_then(|t| Ok(t.0))
 }
 

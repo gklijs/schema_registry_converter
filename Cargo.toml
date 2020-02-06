@@ -32,6 +32,9 @@ features = ["derive"]
 [dependencies.serde_json]
 version = ">=0.8.0, <2.0"
 
+[dependencies.url]
+version = ">= 2.1.1"
+
 [dev-dependencies]
 mockito = "0.22.0"
 rdkafka = { version = "0.23", features = ["cmake-build"] }
