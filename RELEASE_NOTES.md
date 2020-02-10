@@ -1,5 +1,12 @@
 ## Release notes
 
+### 2.0.0
+
+This release has a breaking change in the SubjectNameStrategy where the supplied schema now is in a Box, to keep the size of the Enum smaller.
+Another breaking change is that the protocol  (http or https) needs  to be included in the schema registry url.
+
+-TODO- I hope to also add support for authentication for Confluent Cloud and Protobuf for this version.
+
 ### 1.1.0
 
 This release makes it easier to work with structs, instead of the raw Value type in a vector.
@@ -31,3 +38,4 @@ instead of the `encode` function on the encoder.
 #### Contributors
 
 - [@kitsuneninetails](https://github.com/kitsuneninetails)
+- [@j-halbert](https://github.com/j-halbert)

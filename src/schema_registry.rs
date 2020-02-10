@@ -95,7 +95,6 @@ pub fn get_schema_by_id(id: u32, schema_registry_url: &str) -> Result<Schema, SR
             cached: false,
         })?
         .into_string();
-
     schema_from_url(&url, Option::from(id)).and_then(|t| Ok(t.0))
 }
 

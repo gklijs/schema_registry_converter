@@ -10,7 +10,7 @@ use rand::Rng;
 use schema_registry_converter::schema_registry::{SubjectNameStrategy, SuppliedSchema};
 
 fn get_schema_registry_url() -> String {
-    "localhost:8081".into()
+    "http://localhost:8081".into()
 }
 
 fn get_brokers() -> &'static str {
