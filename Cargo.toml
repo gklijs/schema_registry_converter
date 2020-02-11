@@ -1,6 +1,6 @@
 [package]
 name = "schema_registry_converter"
-version = "1.1.0"
+version = "2.0.0"
 authors = ["Gerard Klijs <g.klijs@gmail.com>"]
 include = ["src/**/*", "Cargo.toml"]
 description = "Encode/decode data from/to kafka using the Confluent Schema Registry"
@@ -34,6 +34,9 @@ features = ["derive"]
 
 [dependencies.serde_json]
 version = ">=0.8.0, <2.0"
+
+[dependencies.url]
+version = ">= 2.1.1"
 
 [dev-dependencies]
 mockito = "0.22.0"

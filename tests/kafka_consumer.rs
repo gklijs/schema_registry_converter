@@ -53,7 +53,7 @@ pub fn consume(
             Ok(m) => {
                 let des_r = get_deserialized_record(&m, &mut decoder);
                 test(des_r);
-                return
+                return;
             }
         };
     }

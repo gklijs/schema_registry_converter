@@ -33,7 +33,7 @@ It is recommended to look there for the newest and more elaborate documentation.
 
 ```toml
 [dependencies]
-schema_registry_converter = "1.1.0"
+schema_registry_converter = "2.0.0"
 ```
 
 ...and see the [docs](https://docs.rs/schema_registry_converter) for how to use it.
@@ -50,8 +50,8 @@ use schema_registry_converter::{Decoder, Encoder};
 use schema_registry_converter::schema_registry::SubjectNameStrategy;
 
 fn main() {
-    let mut decoder = Decoder::new("localhost:8081".into());
-    let mut encoder = Encoder::new("localhost:8081".into());
+    let mut decoder = Decoder::new("http://localhost:8081".into());
+    let mut encoder = Encoder::new("http://localhost:8081".into());
 }
 
 fn get_value<'a>(
@@ -135,11 +135,14 @@ fn get_future_record_from_struct<'a>(
 # Example using to post schema to schema registry
 
 ```rust
-use schema_registry_converter::schema_registry::SubjectNameStrategy::post_schema;
+use schema_registry_converter::schema_registry::{
+    post_schema,
+    SuppliedSchema
+};
 
 fn main(){
     let heartbeat_schema = SuppliedSchema::new(r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#.into());
-    let result = post_schema("localhost:8081/subjects/test-value/versions");
+    let result = post_schema("http://localhost:8081/subjects/test-value/versions", heartbeat_schema);
 }
 
 ```
