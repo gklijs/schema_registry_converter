@@ -329,7 +329,7 @@ impl Handler for Collector {
 
 /// Error struct which makes it easy to know if the resulting error is also preserved in the cache
 /// or not. And whether trying it again might not cause an error.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Fail)]
 pub struct SRCError {
     error: String,
     side: Option<String>,

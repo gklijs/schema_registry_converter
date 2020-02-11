@@ -22,6 +22,8 @@
 //!
 //! [avro-rs]: https://crates.io/crates/avro-rs
 
+#[macro_use] extern crate failure;
+
 pub mod schema_registry;
 
 use avro_rs::schema::Name;
