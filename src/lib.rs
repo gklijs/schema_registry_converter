@@ -788,6 +788,20 @@ mod tests {
     }
 
     #[test]
+    fn test_decoder_fixed_with_enum() {
+        let _m = mock("GET", "/schemas/ids/6")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"ConfirmAccountCreation\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"id\",\"type\":{\"type\":\"fixed\",\"name\":\"Uuid\",\"size\":16}},{\"name\":\"a_type\",\"type\":{\"type\":\"enum\",\"name\":\"Atype\",\"symbols\":[\"AUTO\",\"MANUAL\"]}}]}"}"#)
+            .create();
+
+        let mut decoder = Decoder::new(format!("http://{}", server_address()));
+        let cac = decoder.decode(Some(&[0, 0, 0, 0, 6, 204, 240, 237, 74, 227, 188, 75, 46, 183, 163, 122, 214, 178, 72, 118, 162, 2]));
+
+        assert_eq!(cac, Ok(Value::Record(vec!(("id".to_string(), Value::Fixed(16, vec!(204, 240, 237, 74, 227, 188, 75, 46, 183, 163, 122, 214, 178, 72, 118, 162))), ("a_type".to_string(), Value::Enum(1, "MANUAL".to_string()))))));
+    }
+
+    #[test]
     fn test_decoder_cache() {
         let mut decoder = Decoder::new(format!("http://{}", server_address()));
         let bytes = [0, 0, 0, 0, 2, 6];
@@ -1147,8 +1161,8 @@ mod tests {
         assert_eq!(
             result,
             Err(SRCError::new(
-                "Could not get avro bytes",
-                Some("Validation error: value does not match schema"),
+                "error fixing record",
+                Some("missing field name in record"),
                 false,
             ))
         )
