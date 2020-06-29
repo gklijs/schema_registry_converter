@@ -5,6 +5,7 @@ use rdkafka::consumer::base_consumer::BaseConsumer;
 use rdkafka::consumer::{Consumer, ConsumerContext, Rebalance};
 use rdkafka::message::BorrowedMessage;
 use rdkafka::Message;
+use schema_registry_converter::avro::AvroDecoder;
 use schema_registry_converter::Decoder;
 
 // A context can be used to change the behavior of producers and consumers by adding callbacks
@@ -24,8 +25,10 @@ impl ConsumerContext for CustomContext {
     }
 }
 
+type TestConsumer = BaseConsumer<CustomContext>;
+
 #[derive(Debug)]
-pub struct DeserializedRecord<'a> {
+pub struct DeserializedAvroRecord<'a> {
     pub key: Value,
     pub value: Value,
     pub topic: &'a str,
@@ -33,14 +36,12 @@ pub struct DeserializedRecord<'a> {
     pub offset: i64,
 }
 
-type TestConsumer = BaseConsumer<CustomContext>;
-
-pub fn consume(
+pub fn consume_avro(
     brokers: &str,
     group_id: &str,
     registry: String,
     topics: &[&str],
-    test: Box<dyn Fn(DeserializedRecord) -> ()>,
+    test: Box<dyn Fn(DeserializedAvroRecord) -> ()>,
 ) {
     let mut decoder = Decoder::new(registry);
     let consumer = get_consumer(brokers, group_id, topics);
@@ -61,8 +62,8 @@ pub fn consume(
 
 fn get_deserialized_record<'a>(
     m: &'a BorrowedMessage,
-    decoder: &'a mut Decoder,
-) -> DeserializedRecord<'a> {
+    decoder: &'a mut AvroDecoder,
+) -> DeserializedAvroRecord<'a> {
     let key = match decoder.decode(m.key()) {
         Ok(v) => v,
         Err(e) => panic!("Error getting value: {}", e),
@@ -71,7 +72,7 @@ fn get_deserialized_record<'a>(
         Ok(v) => v,
         Err(e) => panic!("Error getting value: {}", e),
     };
-    DeserializedRecord {
+    DeserializedAvroRecord {
         key,
         value,
         topic: m.topic(),

@@ -141,7 +141,12 @@ use schema_registry_converter::schema_registry::{
 };
 
 fn main(){
-    let heartbeat_schema = SuppliedSchema::new(r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#.into());
+    let schema = SuppliedSchema {
+                                 name: String::from("nl.openweb.data.Heartbeat"),
+                                 schema_type: SchemaType::AVRO,
+                                 schema: String::from(r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#),
+                                 references: vec![],
+    };
     let result = post_schema("http://localhost:8081/subjects/test-value/versions", heartbeat_schema);
 }
 
