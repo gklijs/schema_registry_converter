@@ -1,36 +1,47 @@
 //! This module contains the code specific for the schema registry.
 
-use avro_rs::Schema;
+use crate::schema_registry::SchemaType::AVRO;
 use core::fmt;
 use curl::easy::{Easy2, Handler, List, WriteError};
+use failure::Fail;
 use serde_json::{Map as JsonMap, Value as JsonValue};
-use std::error::Error;
 use std::fmt::Display;
 use std::ops::Deref;
 use std::str;
 use url::Url;
 
-/// Because we need both the resulting schema, as have a way of posting the schema as json, we use
-/// this struct so we keep them both together.
+/// By default the schema registry supports three types. It's possible there will be more in the future
+/// or to add your own. Therefore the other is one of the schema types.
 #[derive(Clone, Debug)]
-pub struct SuppliedSchema {
-    raw: String,
-    parsed: Schema,
+pub enum SchemaType {
+    AVRO,
+    PROTOBUF,
+    JSON,
+    OTHER(String),
 }
 
-/// Will panic when the input is invalid.
-impl SuppliedSchema {
-    /// Creates a new Supplied Schema
-    pub fn new(raw: String) -> SuppliedSchema {
-        let parsed = match Schema::parse_str(raw.as_str()) {
-            Ok(v) => v,
-            Err(e) => panic!(
-                "Supplied raw value {} cant be turned into a Schema, error: {}",
-                raw, e
-            ),
-        };
-        SuppliedSchema { raw, parsed }
-    }
+/// The schema registry supports sub schema's they will be stored separately in the schema registry
+#[derive(Clone, Debug)]
+pub struct ReferredSchema {
+    name: String,
+    subject: String,
+    schema: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct SuppliedSchema {
+    pub name: String,
+    pub schema_type: SchemaType,
+    pub schema: String,
+    pub references: Vec<ReferredSchema>,
+}
+
+#[derive(Clone, Debug)]
+pub struct RegisteredSchema {
+    pub(crate) id: u32,
+    schema_type: SchemaType,
+    pub(crate) schema: String,
+    references: Vec<ReferredSchema>,
 }
 
 /// Strategy similar to the one in the Java client. By default schema's needs to be backwards
@@ -41,26 +52,6 @@ impl SuppliedSchema {
 /// compatible.
 /// Depending on the strategy, either the topic, whether the value is used as key, the fully
 /// qualified name (only for RecordNameStrategy), or the schema needs to be provided.
-///
-/// ```
-/// # use mockito::{mock, server_address};
-/// # use schema_registry_converter::Encoder;
-/// # use schema_registry_converter::schema_registry::{SRCError, SubjectNameStrategy, SuppliedSchema};
-/// # use avro_rs::types::Value;
-///
-/// # let _n = mock("POST", "/subjects/hb-nl.openweb.data.Heartbeat/versions")
-/// #    .with_status(200)
-/// #    .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-/// #    .with_body(r#"{"id":23}"#)
-/// #    .create();
-///
-/// let mut encoder = Encoder::new(server_address().to_string());
-///
-/// let heartbeat_schema = SuppliedSchema::new(r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#.into());
-/// let strategy = SubjectNameStrategy::TopicRecordNameStrategyWithSchema("hb".into(), Box::from(heartbeat_schema));
-/// let bytes = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
-/// assert_eq!(bytes, Ok(vec![0, 0, 0, 0, 23, 6]))
-/// ```
 #[derive(Clone, Debug)]
 pub enum SubjectNameStrategy {
     RecordNameStrategy(String),
@@ -71,32 +62,32 @@ pub enum SubjectNameStrategy {
     TopicRecordNameStrategyWithSchema(String, Box<SuppliedSchema>),
 }
 
-/// Gets a schema by an id. This is used to get the correct schema te deserialize bytes, when the
-/// id is encoded in the bytes.
-pub fn get_schema_by_id(id: u32, schema_registry_url: &str) -> Result<Schema, SRCError> {
+/// Gets a schema by an id. This is used to get the correct schema te deserialize bytes, with the
+/// id that is encoded in the bytes.
+pub fn get_schema_by_id(id: u32, schema_registry_url: &str) -> Result<RegisteredSchema, SRCError> {
     let url = Url::parse(schema_registry_url)
         .map_err(|e| SRCError {
             error: "Error parsing schema registry url".into(),
-            side: Some(format!("{}", e)),
+            cause: Some(format!("{}", e)),
             retriable: false,
             cached: false,
         })?
         .join("/schemas/ids/")
         .map_err(|e| SRCError {
             error: "Error constructing schema registry url".into(),
-            side: Some(format!("{}", e)),
+            cause: Some(format!("{}", e)),
             retriable: false,
             cached: false,
         })?
         .join(&id.to_string())
         .map_err(|e| SRCError {
             error: "Error constructing schema registry url".into(),
-            side: Some(format!("{}", e)),
+            cause: Some(format!("{}", e)),
             retriable: false,
             cached: false,
         })?
         .into_string();
-    schema_from_url(&url, Option::from(id)).and_then(|t| Ok(t.0))
+    schema_from_url(&url, Option::from(id)).and_then(Ok)
 }
 
 /// Gets the schema and the id by supplying a SubjectNameStrategy. This is used to correctly
@@ -104,7 +95,7 @@ pub fn get_schema_by_id(id: u32, schema_registry_url: &str) -> Result<Schema, SR
 pub fn get_schema_by_subject(
     schema_registry_url: &str,
     subject_name_strategy: &SubjectNameStrategy,
-) -> Result<(Schema, u32), SRCError> {
+) -> Result<RegisteredSchema, SRCError> {
     let schema = get_schema(subject_name_strategy);
     match schema {
         None => {
@@ -151,10 +142,7 @@ pub fn get_subject(subject_name_strategy: &SubjectNameStrategy) -> String {
             }
         }
         SubjectNameStrategy::TopicRecordNameStrategy(t, rn) => format!("{}-{}", t, rn),
-        SubjectNameStrategy::RecordNameStrategyWithSchema(s) => match s.parsed {
-            Schema::Record { ref name, .. } => name.fullname(None),
-            _ => panic!("Supplied schema is not a record"),
-        },
+        SubjectNameStrategy::RecordNameStrategyWithSchema(s) => s.name.clone(),
         SubjectNameStrategy::TopicNameStrategyWithSchema(t, is_key, _) => {
             if *is_key {
                 format!("{}-key", t)
@@ -162,48 +150,28 @@ pub fn get_subject(subject_name_strategy: &SubjectNameStrategy) -> String {
                 format!("{}-value", t)
             }
         }
-        SubjectNameStrategy::TopicRecordNameStrategyWithSchema(t, s) => match s.parsed {
-            Schema::Record { ref name, .. } => format!("{}-{}", t, name.fullname(None)),
-            _ => panic!("Supplied schema is not a record"),
-        },
+        SubjectNameStrategy::TopicRecordNameStrategyWithSchema(t, s) => {
+            format!("{}-{}", t, s.name.clone())
+        }
     }
 }
 
 /// Handles the work of doing an http call and transforming it to a schema while handling
 /// possible errors. When there is an error it might be useful to retry.
-fn schema_from_url(url: &str, id: Option<u32>) -> Result<(Schema, u32), SRCError> {
+fn schema_from_url(url: &str, id: Option<u32>) -> Result<RegisteredSchema, SRCError> {
     let easy = match perform_get(url) {
         Ok(v) => v,
         Err(e) => {
             return Err(SRCError::new(
                 "error performing get to schema registry",
-                Some(e.description()),
+                Some(format!("{}", e)),
                 true,
-            ))
+            ));
         }
     };
     let json: JsonValue = match to_json(easy) {
         Ok(v) => v,
         Err(e) => return Err(e),
-    };
-    let raw_schema = match json["schema"].as_str() {
-        Some(v) => v,
-        None => {
-            return Err(SRCError::new(
-                "Could not get raw schema from response",
-                None,
-                false,
-            ))
-        }
-    };
-    let schema = match Schema::parse_str(raw_schema) {
-        Ok(v) => v,
-        Err(e) => {
-            return Err(SRCError::non_retryable_from_err(
-                e,
-                "Could not parse schema",
-            ))
-        }
     };
     let id = match id {
         Some(v) => v,
@@ -215,16 +183,68 @@ fn schema_from_url(url: &str, id: Option<u32>) -> Result<(Schema, u32), SRCError
             id_from_response as u32
         }
     };
-    Ok((schema, id))
+    let schema_type = match json["schemaType"].as_str() {
+        Some("AVRO") => AVRO,
+        None => AVRO,
+        _ => {
+            return Err(SRCError::new(
+                "Could not get raw schema from response",
+                None,
+                false,
+            ));
+        }
+    };
+    let schema = match json["schema"].as_str() {
+        Some(v) => String::from(v),
+        None => {
+            return Err(SRCError::new(
+                "Could not get raw schema from response",
+                None,
+                false,
+            ));
+        }
+    };
+    let references = match json["references"].as_array() {
+        None => vec![],
+        _ => {
+            return Err(SRCError::new(
+                "References are not yet supported",
+                None,
+                false,
+            ));
+        }
+    };
+    Ok(RegisteredSchema {
+        id,
+        schema_type,
+        schema,
+        references,
+    })
 }
 
 /// Handles posting the schema, and getting back the id. When the schema is already in the schema
 /// registry, the matching id is returned. When it's not it depends on the settings of the schema
 /// registry. The default config will check if the schema is backwards compatible. One of the ways
 /// to do this is to add a default value for new fields.
-pub fn post_schema(url: &str, schema: SuppliedSchema) -> Result<(Schema, u32), SRCError> {
+pub fn post_schema(url: &str, schema: SuppliedSchema) -> Result<RegisteredSchema, SRCError> {
+    match schema.schema_type {
+        AVRO => (),
+        _ => {
+            return Err(SRCError::new("Only avro is supported for now", None, false));
+        }
+    };
+    match schema.references.as_slice() {
+        [] => (),
+        _ => {
+            return Err(SRCError::new(
+                "References are not supported for now",
+                None,
+                false,
+            ));
+        }
+    };
     let mut root_element = JsonMap::new();
-    root_element.insert("schema".into(), JsonValue::String(schema.raw.clone()));
+    root_element.insert("schema".into(), JsonValue::String(schema.schema.clone()));
     let schema_element = JsonValue::Object(root_element);
     let schema_str = schema_element.to_string();
 
@@ -233,9 +253,9 @@ pub fn post_schema(url: &str, schema: SuppliedSchema) -> Result<(Schema, u32), S
         Err(e) => {
             return Err(SRCError::new(
                 "error performing post to schema registry",
-                Some(e.description()),
+                Some(format!("{}", e)),
                 true,
-            ))
+            ));
         }
     };
     let json: JsonValue = match to_json(easy) {
@@ -246,7 +266,12 @@ pub fn post_schema(url: &str, schema: SuppliedSchema) -> Result<(Schema, u32), S
         Some(v) => v,
         None => return Err(SRCError::new("Could not get id from response", None, false)),
     };
-    Ok((schema.parsed, id as u32))
+    Ok(RegisteredSchema {
+        id: id as u32,
+        schema_type: schema.schema_type,
+        schema: schema.schema,
+        references: vec![],
+    })
 }
 
 /// Does the get, doing it like this makes for more compact code.
@@ -281,14 +306,14 @@ fn to_json(mut easy: Easy2<Collector>) -> Result<JsonValue, SRCError> {
                 format!("Did not get a 200 response code but {} instead", v).as_str(),
                 None,
                 false,
-            ))
+            ));
         }
         Err(e) => {
             return Err(SRCError::new(
                 format!("Encountered error getting http response: {}", e).as_str(),
-                Some(e.description()),
+                Some(format!("{}", e)),
                 true,
-            ))
+            ));
         }
     }
     let mut data = Vec::new();
@@ -301,14 +326,14 @@ fn to_json(mut easy: Easy2<Collector>) -> Result<JsonValue, SRCError> {
             return Err(SRCError::non_retryable_from_err(
                 e,
                 "Invalid UTF-8 sequence",
-            ))
+            ));
         }
     };
     match serde_json::from_str(body) {
         Ok(v) => Ok(v),
         Err(e) => Err(SRCError::new(
             "Invalid json string",
-            Some(e.to_string().as_ref()),
+            Some(e.to_string()),
             false,
         )),
     }
@@ -330,7 +355,7 @@ impl Handler for Collector {
 #[derive(Debug, PartialEq, Fail)]
 pub struct SRCError {
     error: String,
-    side: Option<String>,
+    cause: Option<String>,
     retriable: bool,
     cached: bool,
 }
@@ -338,13 +363,13 @@ pub struct SRCError {
 /// Implements clone so when an error is returned from the cache, a copy can be returned
 impl Clone for SRCError {
     fn clone(&self) -> SRCError {
-        let side = match &self.side {
+        let side = match &self.cause {
             Some(v) => Some(String::from(v.deref())),
             None => None,
         };
         SRCError {
             error: String::from(self.error.deref()),
-            side,
+            cause: side,
             retriable: self.retriable,
             cached: self.cached,
         }
@@ -354,7 +379,7 @@ impl Clone for SRCError {
 /// Gives the information from the error in a readable format.
 impl fmt::Display for SRCError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match &self.side {
+        match &self.cause {
             Some(cause) => write!(
                 f,
                 "Error: {}, was cause by {}, it's retriable: {}, it's cached: {}",
@@ -372,36 +397,26 @@ impl fmt::Display for SRCError {
 /// Specific error from which can be determined whether retrying might not lead to an error and
 /// whether the error is cashed, it's turned into the cashed variant when it's put into the cache.
 impl SRCError {
-    pub fn new(error: &str, cause: Option<&str>, retriable: bool) -> SRCError {
-        let side = match cause {
-            Some(v) => Some(v.to_owned()),
-            None => None,
-        };
+    pub fn new(error: &str, cause: Option<String>, retriable: bool) -> SRCError {
         SRCError {
             error: error.to_owned(),
-            side,
+            cause,
             retriable,
             cached: false,
         }
     }
     pub fn non_retryable_from_err<T: Display>(cause: T, error: &str) -> SRCError {
-        SRCError::new(error, Some(&cause.to_string()), false)
+        SRCError::new(error, Some(format!("{}", cause)), false)
     }
     /// Should be called before putting the error in the cache
     pub fn into_cache(self) -> SRCError {
         SRCError {
             error: self.error,
-            side: self.side,
+            cause: self.cause,
             retriable: self.retriable,
             cached: true,
         }
     }
-}
-
-#[test]
-#[should_panic]
-fn panic_when_invalid_schema() {
-    SuppliedSchema::new(r#"{"type":"record","name":"Name"}"#.into());
 }
 
 #[test]
@@ -432,43 +447,6 @@ fn display_topic_record_name_strategy() {
 }
 
 #[test]
-fn display_record_name_strategy_with_schema() {
-    let ss = SuppliedSchema::new(r#"{"type":"record","name":"Name","namespace":"nl.openweb.data","fields":[{"name":"name","type":"string","avro.java.string":"String"}]}"#.into());
-    let sns = SubjectNameStrategy::RecordNameStrategyWithSchema(Box::from(ss));
-    assert_eq!("RecordNameStrategyWithSchema(SuppliedSchema { raw: \"{\\\"type\\\":\\\"record\\\",\\\"name\\\":\\\"Name\\\",\\\"namespace\\\":\\\"nl.openweb.data\\\",\\\"fields\\\":[{\\\"name\\\":\\\"name\\\",\\\"type\\\":\\\"string\\\",\\\"avro.java.string\\\":\\\"String\\\"}]}\", parsed: Record { name: Name { name: \"Name\", namespace: Some(\"nl.openweb.data\"), aliases: None }, doc: None, fields: [RecordField { name: \"name\", doc: None, default: None, schema: String, order: Ascending, position: 0 }], lookup: {\"name\": 0} } })".to_owned(), format!("{:?}", sns))
-}
-
-#[test]
-fn display_topic_name_strategy_with_schema() {
-    let ss = SuppliedSchema::new(r#"{"type":"record","name":"Name","namespace":"nl.openweb.data","fields":[{"name":"name","type":"string","avro.java.string":"String"}]}"#.into());
-    let sns = SubjectNameStrategy::TopicNameStrategyWithSchema("bla".into(), true, Box::from(ss));
-    assert_eq!("TopicNameStrategyWithSchema(\"bla\", true, SuppliedSchema { raw: \"{\\\"type\\\":\\\"record\\\",\\\"name\\\":\\\"Name\\\",\\\"namespace\\\":\\\"nl.openweb.data\\\",\\\"fields\\\":[{\\\"name\\\":\\\"name\\\",\\\"type\\\":\\\"string\\\",\\\"avro.java.string\\\":\\\"String\\\"}]}\", parsed: Record { name: Name { name: \"Name\", namespace: Some(\"nl.openweb.data\"), aliases: None }, doc: None, fields: [RecordField { name: \"name\", doc: None, default: None, schema: String, order: Ascending, position: 0 }], lookup: {\"name\": 0} } })".to_owned(), format!("{:?}", sns))
-}
-
-#[test]
-fn display_topic_record_name_strategy_with_schema() {
-    let ss = SuppliedSchema::new(r#"{"type":"record","name":"Name","namespace":"nl.openweb.data","fields":[{"name":"name","type":"string","avro.java.string":"String"}]}"#.into());
-    let sns = SubjectNameStrategy::TopicRecordNameStrategyWithSchema("bla".into(), Box::from(ss));
-    assert_eq!("TopicRecordNameStrategyWithSchema(\"bla\", SuppliedSchema { raw: \"{\\\"type\\\":\\\"record\\\",\\\"name\\\":\\\"Name\\\",\\\"namespace\\\":\\\"nl.openweb.data\\\",\\\"fields\\\":[{\\\"name\\\":\\\"name\\\",\\\"type\\\":\\\"string\\\",\\\"avro.java.string\\\":\\\"String\\\"}]}\", parsed: Record { name: Name { name: \"Name\", namespace: Some(\"nl.openweb.data\"), aliases: None }, doc: None, fields: [RecordField { name: \"name\", doc: None, default: None, schema: String, order: Ascending, position: 0 }], lookup: {\"name\": 0} } })".to_owned(), format!("{:?}", sns))
-}
-
-#[test]
-#[should_panic]
-fn panic_when_schema_is_not_a_record() {
-    let ss = SuppliedSchema::new(r#"{"type":"boolean","value":"true"}"#.into());
-    let sns = SubjectNameStrategy::RecordNameStrategyWithSchema(Box::from(ss));
-    get_subject(&sns);
-}
-
-#[test]
-#[should_panic]
-fn panic_when_schema_is_not_a_record_2() {
-    let ss = SuppliedSchema::new(r#"{"type":"boolean","value":"true"}"#.into());
-    let sns = SubjectNameStrategy::TopicRecordNameStrategyWithSchema("bla".into(), Box::from(ss));
-    get_subject(&sns);
-}
-
-#[test]
 fn handling_http_error() {
     let easy = Easy2::new(Collector(Vec::new()));
     let result = to_json(easy);
@@ -477,7 +455,7 @@ fn handling_http_error() {
         Err(SRCError::new(
             "Did not get a 200 response code but 0 instead",
             None,
-            false
+            false,
         ))
     )
 }
@@ -492,7 +470,7 @@ fn display_erro_no_cause() {
 fn display_error_with_cause() {
     let err = SRCError::new(
         "Could not get id from response",
-        Some("error in response"),
+        Some(String::from("error in response")),
         false,
     );
     assert_eq!(format!("{}", err), "Error: Could not get id from response, was cause by error in response, it\'s retriable: false, it\'s cached: false".to_owned())
