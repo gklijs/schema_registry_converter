@@ -65,11 +65,11 @@ fn get_deserialized_record<'a>(
     decoder: &'a mut AvroDecoder,
 ) -> DeserializedAvroRecord<'a> {
     let key = match decoder.decode(m.key()) {
-        Ok(v) => v,
+        Ok(v) => v.1,
         Err(e) => panic!("Error getting value: {}", e),
     };
     let value = match decoder.decode(m.payload()) {
-        Ok(v) => v,
+        Ok(v) => v.1,
         Err(e) => panic!("Error getting value: {}", e),
     };
     DeserializedAvroRecord {
