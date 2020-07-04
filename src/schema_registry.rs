@@ -1,7 +1,7 @@
 //! This module contains the code specific for the schema registry.
 
 use crate::schema_registry::SchemaType::AVRO;
-use byteorder::{BigEndian, ReadBytesExt};
+use byteorder::{BigEndian, ByteOrder, ReadBytesExt};
 use core::fmt;
 use curl::easy::{Easy2, Handler, List, WriteError};
 use failure::Fail;
@@ -90,6 +90,15 @@ pub fn get_bytes_result(bytes: Option<&[u8]>) -> BytesResult {
         }
         Some(p) => BytesResult::Invalid(p[..].to_owned()),
     }
+}
+
+pub fn get_payload(id: u32, encoded_bytes: Vec<u8>) -> Vec<u8> {
+    let mut payload = vec![0u8];
+    let mut buf = [0u8; 4];
+    BigEndian::write_u32(&mut buf, id);
+    payload.extend_from_slice(&buf);
+    payload.extend_from_slice(encoded_bytes.as_slice());
+    payload
 }
 
 /// Gets a schema by an id. This is used to get the correct schema te deserialize bytes, with the

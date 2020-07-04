@@ -17,5 +17,5 @@ env:
 script:
   - cargo install --debug cargo-make
   - cargo build --verbose
-  - cargo test --verbose -- --test-threads=1
+  - cargo test --verbose --features avro -- --test-threads=1
   - cargo make --makefile make.toml ci-flow
