@@ -161,12 +161,12 @@ All this crate does is convert [u8] <-> avro_rs::types::Value.
 # Tests
 
 Due to mockito, used for mocking the schema registry responses, being run in a separate thread, tests have to be run using ` --test-threads=1` for example like
-`cargo +stable test --color=always -- --nocapture --test-threads=1`
+`cargo +stable test --color=always --features avro -- --nocapture --test-threads=1`
 
 # Integration test
 
 The integration tests require a Kafka cluster running on the default ports. It will create topics, register schema's, produce and consume some messages.
-They are marked with `kafka_test` so to include them in testing `cargo +stable test --features kafka_test --color=always -- --nocapture --test-threads=1` need to be run.
+They are marked with `kafka_test` so to include them in testing `cargo +stable test --all-features --color=always -- --nocapture --test-threads=1` need to be run.
 The easiest way to run them is with the confluent cli. The 'prepare_integration_test.sh' script can be used to create the 3 topics needed for the tests, but even without those the test pass.
 
 # License

@@ -23,14 +23,13 @@
 //! [avro-rs]: https://crates.io/crates/avro-rs
 
 use crate::schema_registry::{
-    get_bytes_result, get_schema_by_id, get_schema_by_subject, get_subject, BytesResult,
-    RegisteredSchema, SRCError, SchemaType, SubjectNameStrategy,
+    get_bytes_result, get_payload, get_schema_by_id, get_schema_by_subject, get_subject,
+    BytesResult, RegisteredSchema, SRCError, SchemaType, SubjectNameStrategy,
 };
 use avro_rs::schema::Name;
 use avro_rs::to_value;
 use avro_rs::types::{Record, ToAvro, Value};
 use avro_rs::{from_avro_datum, to_avro_datum, Schema};
-use byteorder::{BigEndian, ByteOrder};
 use serde::ser::Serialize;
 use std::collections::hash_map::RandomState;
 use std::collections::HashMap;
@@ -59,8 +58,8 @@ struct AvroSchema {
 ///
 /// ```
 ///  # use mockito::{mock, server_address};
-///  # use schema_registry_converter::Decoder;
 ///  # use avro_rs::types::Value;
+///  # use schema_registry_converter::avro::AvroDecoder;
 ///
 /// let _m = mock("GET", "/schemas/ids/1")
 ///     .with_status(200)
@@ -68,7 +67,7 @@ struct AvroSchema {
 ///     .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
 ///     .create();
 ///
-/// let mut decoder = Decoder::new(format!("http://{}", server_address()));
+/// let mut decoder = AvroDecoder::new(format!("http://{}", server_address()));
 /// let heartbeat = decoder.decode(Some(&[0,0,0,0,1,6])).unwrap().1;
 ///
 /// assert_eq!(heartbeat, Value::Record(vec!(("beat".to_string(), Value::Long(3)))))
@@ -98,11 +97,11 @@ impl AvroDecoder {
     ///
     /// ```
     ///  # use mockito::{mock, server_address};
-    ///  # use schema_registry_converter::Decoder;
     ///  # use schema_registry_converter::schema_registry::SRCError;
     ///  # use avro_rs::types::Value;
+    ///  # use schema_registry_converter::avro::AvroDecoder;
     ///
-    /// let mut decoder = Decoder::new(format!("http://{}", server_address()));
+    /// let mut decoder = AvroDecoder::new(format!("http://{}", server_address()));
     /// let bytes = [0,0,0,0,2,6];
     ///
     /// let _m = mock("GET", "/schemas/ids/2")
@@ -198,9 +197,9 @@ impl AvroDecoder {
 ///
 /// ```
 ///  # use mockito::{mock, server_address};
-///  # use schema_registry_converter::Encoder;
 ///  # use schema_registry_converter::schema_registry::SubjectNameStrategy;
 ///  # use avro_rs::types::Value;
+///  # use schema_registry_converter::avro::AvroEncoder;
 ///
 /// let _m = mock("GET", "/subjects/heartbeat-value/versions/latest")
 ///     .with_status(200)
@@ -214,7 +213,7 @@ impl AvroDecoder {
 ///     .with_body(r#"{"subject":"heartbeat-value","version":1,"id":4,"schema":"{\"type\":\"record\",\"name\":\"Name\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"name\",\"type\":\"string\",\"avro.java.string\":\"String\"}]}"}"#)
 ///     .create();
 ///
-/// let mut encoder = Encoder::new(server_address().to_string());
+/// let mut encoder = AvroEncoder::new(server_address().to_string());
 ///
 /// let key_strategy = SubjectNameStrategy::TopicNameStrategy("heartbeat".into(), true);
 /// let bytes = encoder.encode(vec!(("name", Value::String("Some name".to_owned()))), &key_strategy);
@@ -243,10 +242,10 @@ impl AvroEncoder {
     ///
     /// ```
     /// # use mockito::{mock, server_address};
-    /// # use schema_registry_converter::Encoder;
     /// # use schema_registry_converter::schema_registry::{SRCError, SubjectNameStrategy, SuppliedSchema, SchemaType};
     /// # use schema_registry_converter::schema_registry::SchemaType::AVRO;
     /// # use avro_rs::types::Value;
+    /// # use schema_registry_converter::avro::AvroEncoder;
     ///
     /// # let _n = mock("POST", "/subjects/hb-nl.openweb.data.Heartbeat/versions")
     /// #    .with_status(200)
@@ -254,7 +253,7 @@ impl AvroEncoder {
     /// #    .with_body(r#"{"id":23}"#)
     /// #    .create();
     ///
-    /// let mut encoder = Encoder::new(server_address().to_string());
+    /// let mut encoder = AvroEncoder::new(server_address().to_string());
     ///
     /// let strategy = SubjectNameStrategy::TopicRecordNameStrategyWithSchema("hb".into(), Box::from(SuppliedSchema {
     ///                 name: String::from("nl.openweb.data.Heartbeat"),
@@ -278,12 +277,12 @@ impl AvroEncoder {
     ///
     /// ```
     ///  # use mockito::{mock, server_address};
-    ///  # use schema_registry_converter::Encoder;
     ///  # use schema_registry_converter::schema_registry::SubjectNameStrategy;
     ///  # use schema_registry_converter::schema_registry::SRCError;
     ///  # use avro_rs::types::Value;
+    ///  # use schema_registry_converter::avro::AvroEncoder;
     ///
-    /// let mut encoder = Encoder::new(server_address().to_string());
+    /// let mut encoder = AvroEncoder::new(server_address().to_string());
     /// let strategy = SubjectNameStrategy::RecordNameStrategy("nl.openweb.data.Heartbeat".into());
     ///
     /// let _m = mock("GET", "/subjects/nl.openweb.data.Heartbeat/versions/latest")
@@ -320,9 +319,9 @@ impl AvroEncoder {
     ///
     /// ```
     ///  # use mockito::{mock, server_address};
-    ///  # use schema_registry_converter::Encoder;
     ///  # use schema_registry_converter::schema_registry::SubjectNameStrategy;
     ///  # use avro_rs::types::Value;
+    ///  # use schema_registry_converter::avro::AvroEncoder;
     ///
     /// let _m = mock("GET", "/subjects/heartbeat-nl.openweb.data.Heartbeat/versions/latest")
     ///     .with_status(200)
@@ -330,7 +329,7 @@ impl AvroEncoder {
     ///     .with_body(r#"{"subject":"heartbeat-value","version":1,"id":3,"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
     ///     .create();
     ///
-    /// let mut encoder = Encoder::new(server_address().to_string());
+    /// let mut encoder = AvroEncoder::new(server_address().to_string());
     /// let strategy = SubjectNameStrategy::TopicRecordNameStrategy("heartbeat".into(), "nl.openweb.data.Heartbeat".into());
     /// let bytes = encoder.encode(vec!(("beat", Value::Long(3))), &strategy);
     ///
@@ -342,7 +341,7 @@ impl AvroEncoder {
         subject_name_strategy: &SubjectNameStrategy,
     ) -> Result<Vec<u8>, SRCError> {
         match self.get_schema_and_id(subject_name_strategy) {
-            Ok(avro_schema) => to_bytes(&avro_schema, values),
+            Ok(avro_schema) => values_to_bytes(&avro_schema, values),
             Err(e) => Err(Clone::clone(e)),
         }
     }
@@ -355,10 +354,10 @@ impl AvroEncoder {
     ///
     /// ```
     ///  # use mockito::{mock, server_address};
-    ///  # use schema_registry_converter::Encoder;
     ///  # use schema_registry_converter::schema_registry::SubjectNameStrategy;
     ///  # use serde::Serialize;
     ///  # use avro_rs::types::Value;
+    ///  # use schema_registry_converter::avro::AvroEncoder;
     ///
     /// let _m = mock("GET", "/subjects/heartbeat-nl.openweb.data.Heartbeat/versions/latest")
     ///     .with_status(200)
@@ -371,7 +370,7 @@ impl AvroEncoder {
     ///        beat: i64,
     ///    }
     ///
-    /// let mut encoder = Encoder::new(server_address().to_string());
+    /// let mut encoder = AvroEncoder::new(server_address().to_string());
     /// let strategy = SubjectNameStrategy::TopicRecordNameStrategy("heartbeat".into(), "nl.openweb.data.Heartbeat".into());
     /// let bytes = encoder.encode_struct(Heartbeat{beat: 3}, &strategy);
     ///
@@ -431,26 +430,19 @@ fn to_avro_schema(registered_schema: RegisteredSchema) -> Result<AvroSchema, SRC
     }
 }
 
-fn to_payload<T: ToAvro>(avro_schema: &AvroSchema, record: T) -> Result<Vec<u8>, SRCError> {
-    let mut payload = vec![0u8];
-    let mut buf = [0u8; 4];
-    BigEndian::write_u32(&mut buf, avro_schema.id);
-    payload.extend_from_slice(&buf);
+fn to_bytes<T: ToAvro>(avro_schema: &AvroSchema, record: T) -> Result<Vec<u8>, SRCError> {
     match to_avro_datum(&avro_schema.parsed, record) {
-        Ok(v) => {
-            payload.extend_from_slice(v.as_slice());
-            Ok(payload)
-        }
+        Ok(v) => Ok(get_payload(avro_schema.id, v)),
         Err(e) => Err(SRCError::non_retryable_from_err(
             e,
-            "Could not get avro bytes",
+            "Could not get Avro bytes",
         )),
     }
 }
 
 /// Using the schema with a vector of values the values will be correctly deserialized according to
 /// the avro specification.
-fn to_bytes(
+fn values_to_bytes(
     avro_schema: &AvroSchema,
     values: Vec<(&'static str, Value)>,
 ) -> Result<Vec<u8>, SRCError> {
@@ -467,7 +459,7 @@ fn to_bytes(
     for value in values {
         record.put(value.0, value.1)
     }
-    to_payload(avro_schema, record)
+    to_bytes(avro_schema, record)
 }
 
 /// Using the schema with an item implementing serialize the item will be correctly deserialized
@@ -477,7 +469,7 @@ fn item_to_bytes(avro_schema: &AvroSchema, item: impl Serialize) -> Result<Vec<u
         .map_err(|e| SRCError::non_retryable_from_err(e, "Could not transform to avro_rs value"))
         .map(|r| r.resolve(&avro_schema.parsed))
     {
-        Ok(Ok(v)) => to_payload(avro_schema, v),
+        Ok(Ok(v)) => to_bytes(avro_schema, v),
         Ok(Err(e)) => Err(SRCError::non_retryable_from_err(e, "Failed to resolve")),
         Err(e) => Err(e),
     }
@@ -542,7 +534,7 @@ mod tests {
             raw: "".to_string(),
             parsed: Schema::Boolean,
         };
-        let result = to_bytes(&schema, vec![("beat", Value::Long(3))]);
+        let result = values_to_bytes(&schema, vec![("beat", Value::Long(3))]);
         assert_eq!(
             result,
             Err(SRCError::new(
@@ -560,11 +552,11 @@ mod tests {
             raw: String::from(r#"{"type":"record","name":"Name","namespace":"nl.openweb.data","fields":[{"name":"name","type":"string","avro.java.string":"String"}]}"#),
             parsed: Schema::parse_str(r#"{"type":"record","name":"Name","namespace":"nl.openweb.data","fields":[{"name":"name","type":"string","avro.java.string":"String"}]}"#).unwrap(),
         };
-        let result = to_bytes(&schema, vec![("beat", Value::Long(3))]);
+        let result = values_to_bytes(&schema, vec![("beat", Value::Long(3))]);
         assert_eq!(
             result,
             Err(SRCError::new(
-                "Could not get avro bytes",
+                "Could not get Avro bytes",
                 Some(String::from(
                     "Validation error: value does not match schema"
                 )),

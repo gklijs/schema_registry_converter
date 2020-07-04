@@ -1,4 +1,4 @@
-//! Rust encoder and decoder in order to work with the Confluent schema registry.
+//! Rust encoders and decoders in order to work with the Confluent schema registry.
 //!
 //! This crate contains ways to handle encoding and decoding of messages making use of the
 //! [confluent schema-registry]. This happens in a way that is compatible to the
@@ -25,35 +25,6 @@
 #[macro_use]
 extern crate failure;
 
+#[cfg(feature = "avro")]
 pub mod avro;
 pub mod schema_registry;
-
-use crate::avro::{AvroDecoder, AvroEncoder};
-
-#[derive(Debug)]
-pub struct Decoder {
-    schema_registry_url: String,
-}
-
-impl Decoder {
-    pub fn new(schema_registry_url: String) -> AvroDecoder {
-        AvroDecoder::new(schema_registry_url)
-    }
-    pub fn avro(schema_registry_url: String) -> AvroDecoder {
-        AvroDecoder::new(schema_registry_url)
-    }
-}
-
-#[derive(Debug)]
-pub struct Encoder {
-    schema_registry_url: String,
-}
-
-impl Encoder {
-    pub fn new(schema_registry_url: String) -> AvroEncoder {
-        AvroEncoder::new(schema_registry_url)
-    }
-    pub fn avro(schema_registry_url: String) -> AvroEncoder {
-        AvroEncoder::new(schema_registry_url)
-    }
-}

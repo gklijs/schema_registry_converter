@@ -13,11 +13,13 @@ license = "MIT/Apache-2.0"
 edition = "2018"
 
 [features]
-default = []
+avro = ["avro-rs"]
 kafka_test = []
+default = []
 
 [dependencies.avro-rs]
 version = ">= 0.10"
+optional = true
 
 [dependencies.byteorder]
 version = ">= 1.3"

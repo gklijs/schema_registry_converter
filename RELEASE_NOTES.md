@@ -4,7 +4,7 @@
 
 This release has a breaking change in the SubjectNameStrategy where the supplied schema now is in a Box, to keep the size of the Enum smaller.
 Another breaking change is that the protocol  (http or https) needs  to be included in the schema registry url.
-
+Since besides avro also other ways are supported, avro is no behind a feature flag, and in its own module.
 -TODO- I hope to also add support for authentication for Confluent Cloud and Protobuf for this version.
 
 ### 1.1.0
