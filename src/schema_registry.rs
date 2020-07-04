@@ -1,6 +1,7 @@
 //! This module contains the code specific for the schema registry.
 
 use crate::schema_registry::SchemaType::AVRO;
+use byteorder::{BigEndian, ReadBytesExt};
 use core::fmt;
 use curl::easy::{Easy2, Handler, List, WriteError};
 use failure::Fail;
@@ -23,11 +24,13 @@ pub enum SchemaType {
 /// The schema registry supports sub schema's they will be stored separately in the schema registry
 #[derive(Clone, Debug)]
 pub struct ReferredSchema {
-    name: String,
-    subject: String,
-    schema: String,
+    pub name: String,
+    pub subject: String,
+    pub schema: String,
 }
 
+/// Schema as it might be provided to create messages, they will be added to th schema registry if
+/// not already present
 #[derive(Clone, Debug)]
 pub struct SuppliedSchema {
     pub name: String,
@@ -36,12 +39,23 @@ pub struct SuppliedSchema {
     pub references: Vec<ReferredSchema>,
 }
 
+/// Schema as retrieved from the schema registry. It's close to the json received and doesn't do
+/// type specific transformations.
 #[derive(Clone, Debug)]
 pub struct RegisteredSchema {
     pub(crate) id: u32,
-    schema_type: SchemaType,
+    pub(crate) schema_type: SchemaType,
     pub(crate) schema: String,
-    references: Vec<ReferredSchema>,
+    pub(crate) references: Vec<ReferredSchema>,
+}
+
+/// Intermediate result to just handle the byte transformation. When used in a decoder just the
+/// id might me enough because the resolved schema is cashed already.
+#[derive(Debug)]
+pub enum BytesResult {
+    Null,
+    Invalid(Vec<u8>),
+    Valid(u32, Vec<u8>),
 }
 
 /// Strategy similar to the one in the Java client. By default schema's needs to be backwards
@@ -60,6 +74,22 @@ pub enum SubjectNameStrategy {
     RecordNameStrategyWithSchema(Box<SuppliedSchema>),
     TopicNameStrategyWithSchema(String, bool, Box<SuppliedSchema>),
     TopicRecordNameStrategyWithSchema(String, Box<SuppliedSchema>),
+}
+
+/// Just analyses the bytes which are contained in the key or value of an kafka record. When valid
+/// it will return the id and the data bytes. The way schema registry messages are encoded is
+/// starting with a zero, with the next 4 bytes having the id. The other bytes are the encoded
+/// message.
+pub fn get_bytes_result(bytes: Option<&[u8]>) -> BytesResult {
+    match bytes {
+        None => BytesResult::Null,
+        Some(p) if p.len() > 4 && p[0] == 0 => {
+            let mut buf = &p[1..5];
+            let id = buf.read_u32::<BigEndian>().unwrap();
+            BytesResult::Valid(id, p[5..].to_owned())
+        }
+        Some(p) => BytesResult::Invalid(p[..].to_owned()),
+    }
 }
 
 /// Gets a schema by an id. This is used to get the correct schema te deserialize bytes, with the

@@ -26,7 +26,6 @@
 extern crate failure;
 
 pub mod avro;
-mod raw;
 pub mod schema_registry;
 
 use crate::avro::{AvroDecoder, AvroEncoder};
