@@ -23,16 +23,18 @@
 //! [avro-rs]: https://crates.io/crates/avro-rs
 
 use crate::schema_registry::{
-    get_bytes_result, get_payload, get_schema_by_id, get_schema_by_subject, get_subject,
-    BytesResult, RegisteredSchema, SRCError, SchemaType, SubjectNameStrategy,
+    get_bytes_result, get_payload, get_referenced_schema, get_schema_by_id, get_schema_by_subject,
+    get_subject, BytesResult, RegisteredReference, RegisteredSchema, SRCError, SchemaType,
+    SubjectNameStrategy,
 };
 use avro_rs::schema::Name;
 use avro_rs::to_value;
 use avro_rs::types::{Record, ToAvro, Value};
 use avro_rs::{from_avro_datum, to_avro_datum, Schema};
 use serde::ser::Serialize;
+use serde_json::{Map as JsonMap, Value as JsonValue};
 use std::collections::hash_map::RandomState;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
 
 /// Because we need both the resulting schema, as have a way of posting the schema as json, we use
@@ -163,7 +165,7 @@ impl AvroDecoder {
         match schema {
             Ok(s) => match from_avro_datum(&s.parsed, &mut reader, None) {
                 Ok(v) => Ok((get_name(&s.parsed), v)),
-                Err(e) => Err(SRCError::non_retryable_from_err(
+                Err(e) => Err(SRCError::non_retryable_with_cause(
                     e,
                     "Could not transform bytes using schema",
                 )),
@@ -177,7 +179,7 @@ impl AvroDecoder {
         self.cache
             .entry(id)
             .or_insert_with(|| match get_schema_by_id(id, schema_registry_url) {
-                Ok(registered_schema) => to_avro_schema(registered_schema),
+                Ok(registered_schema) => to_avro_schema(schema_registry_url, registered_schema),
                 Err(e) => Err(e.into_cache()),
             })
     }
@@ -396,31 +398,148 @@ impl AvroEncoder {
             .entry(get_subject(subject_name_strategy))
             .or_insert_with(|| {
                 match get_schema_by_subject(schema_registry_url, &subject_name_strategy) {
-                    Ok(registered_schema) => to_avro_schema(registered_schema),
+                    Ok(registered_schema) => to_avro_schema(schema_registry_url, registered_schema),
                     Err(e) => Err(e.into_cache()),
                 }
             })
     }
 }
 
-fn to_avro_schema(registered_schema: RegisteredSchema) -> Result<AvroSchema, SRCError> {
+fn might_replace(val: JsonValue, child: &JsonValue, replace_values: &HashSet<String>) -> JsonValue {
+    match val {
+        JsonValue::Object(v) => replace_in_map(v, child, replace_values),
+        JsonValue::Array(v) => replace_in_array(&*v, child, replace_values),
+        JsonValue::String(s) if replace_values.contains(&*s) => child.clone(),
+        p => p,
+    }
+}
+
+fn replace_in_array(
+    parent_array: &[JsonValue],
+    child: &JsonValue,
+    replace_values: &HashSet<String>,
+) -> JsonValue {
+    JsonValue::Array(
+        parent_array
+            .iter()
+            .map(|v| might_replace(v.clone(), child, replace_values))
+            .collect(),
+    )
+}
+
+fn replace_in_map(
+    parent_map: JsonMap<String, JsonValue>,
+    child: &JsonValue,
+    replace_values: &HashSet<String>,
+) -> JsonValue {
+    let mut map = parent_map;
+    for val in map.values_mut() {
+        *val = might_replace(val.clone(), child, replace_values)
+    }
+    JsonValue::Object(map)
+}
+
+fn replace_reference(parent: JsonValue, child: JsonValue) -> JsonValue {
+    let (name, namespace) = match &child {
+        JsonValue::Object(v) => (v["name"].as_str(), v["namespace"].as_str()),
+        _ => return parent,
+    };
+    let mut replace_values: HashSet<String> = HashSet::new();
+    match name {
+        Some(v) => match namespace {
+            Some(u) => {
+                replace_values.insert(format!(".{}.{}", u, v));
+                if parent["namespace"].as_str() == namespace {
+                    replace_values.insert(String::from(v))
+                } else {
+                    true
+                }
+            }
+            None => replace_values.insert(String::from(v)),
+        },
+        None => return parent,
+    };
+    match parent {
+        JsonValue::Object(v) => replace_in_map(v, &child, &replace_values),
+        JsonValue::Array(v) => replace_in_array(&*v, &child, &replace_values),
+        p => p,
+    }
+}
+
+fn add_references(
+    schema_registry_url: &str,
+    json_value: JsonValue,
+    references: &[RegisteredReference],
+) -> Result<JsonValue, SRCError> {
+    let mut new_value = json_value;
+    for r in references.iter() {
+        let registered_schema = match get_referenced_schema(schema_registry_url, r) {
+            Ok(v) => v,
+            Err(e) => {
+                return Err(SRCError::non_retryable_with_cause(
+                    e,
+                    &*format!("problem with reference {:?}", r),
+                ));
+            }
+        };
+        let child: JsonValue = match serde_json::from_str(&*registered_schema.schema) {
+            Ok(v) => v,
+            Err(e) => {
+                return Err(SRCError::non_retryable_with_cause(
+                    e,
+                    &*format!("problem serializing {}", registered_schema.schema),
+                ));
+            }
+        };
+        new_value = replace_reference(new_value, child);
+        new_value = match add_references(
+            schema_registry_url,
+            new_value,
+            &registered_schema.references,
+        ) {
+            Ok(v) => v,
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(new_value)
+}
+
+fn to_avro_schema(
+    schema_registry_url: &str,
+    registered_schema: RegisteredSchema,
+) -> Result<AvroSchema, SRCError> {
     match registered_schema.schema_type {
         SchemaType::AVRO => (),
         t => {
-            return Err(SRCError::new(
-                &*format!("type {:?}, is not supported", t),
-                None,
-                false,
-            ));
+            return Err(SRCError::non_retryable_without_cause(&*format!(
+                "type {:?}, is not supported",
+                t
+            )));
         }
     }
-    match Schema::parse_str(&*registered_schema.schema) {
+    let main_schema = match serde_json::from_str(&*registered_schema.schema) {
+        Ok(v) => match add_references(
+            schema_registry_url,
+            v,
+            registered_schema.references.as_slice(),
+        ) {
+            Ok(u) => u,
+            Err(e) => return Err(e),
+        },
+        Err(e) => {
+            return Err(SRCError::non_retryable_with_cause(
+                e,
+                "failed to parse Avro schema",
+            ));
+        }
+    };
+    match Schema::parse(&main_schema) {
         Ok(parsed) => Ok(AvroSchema {
             id: registered_schema.id,
             raw: registered_schema.schema,
             parsed,
         }),
-        Err(e) => Err(SRCError::non_retryable_from_err(
+        Err(e) => Err(SRCError::non_retryable_with_cause(
             e,
             &*format!(
                 "Supplied raw value {:?} cant be turned into a Schema",
@@ -433,7 +552,7 @@ fn to_avro_schema(registered_schema: RegisteredSchema) -> Result<AvroSchema, SRC
 fn to_bytes<T: ToAvro>(avro_schema: &AvroSchema, record: T) -> Result<Vec<u8>, SRCError> {
     match to_avro_datum(&avro_schema.parsed, record) {
         Ok(v) => Ok(get_payload(avro_schema.id, v)),
-        Err(e) => Err(SRCError::non_retryable_from_err(
+        Err(e) => Err(SRCError::non_retryable_with_cause(
             e,
             "Could not get Avro bytes",
         )),
@@ -466,11 +585,11 @@ fn values_to_bytes(
 /// according to the avro specification.
 fn item_to_bytes(avro_schema: &AvroSchema, item: impl Serialize) -> Result<Vec<u8>, SRCError> {
     match to_value(item)
-        .map_err(|e| SRCError::non_retryable_from_err(e, "Could not transform to avro_rs value"))
+        .map_err(|e| SRCError::non_retryable_with_cause(e, "Could not transform to avro_rs value"))
         .map(|r| r.resolve(&avro_schema.parsed))
     {
         Ok(Ok(v)) => to_bytes(avro_schema, v),
-        Ok(Err(e)) => Err(SRCError::non_retryable_from_err(e, "Failed to resolve")),
+        Ok(Err(e)) => Err(SRCError::non_retryable_with_cause(e, "Failed to resolve")),
         Err(e) => Err(e),
     }
 }
@@ -1302,7 +1421,7 @@ mod tests {
             schema: String::from(r#"{"type":"record","name":"Name"}"#),
             references: vec![],
         };
-        let result = match to_avro_schema(registered_schema) {
+        let result = match to_avro_schema("url", registered_schema) {
             Err(e) => e,
             _ => panic!(),
         };
@@ -1326,13 +1445,55 @@ mod tests {
             ),
             references: vec![],
         };
-        let result = match to_avro_schema(registered_schema) {
+        let result = match to_avro_schema("url", registered_schema) {
             Err(e) => e,
             _ => panic!(),
         };
         assert_eq!(
             result,
-            SRCError::new("type PROTOBUF, is not supported", None, false,)
+            SRCError::new("type PROTOBUF, is not supported", None, false)
         )
+    }
+
+    #[test]
+    fn replace_referred_schema() {
+        let mut decoder = AvroDecoder::new(format!("http://{}", server_address()));
+        let bytes = [
+            0, 0, 0, 0, 5, 97, 19, 76, 118, 247, 191, 70, 148, 162, 9, 233, 76, 211, 29, 141, 180,
+            0, 2, 2, 12, 83, 116, 114, 105, 110, 103, 2, 12, 83, 84, 82, 73, 78, 71, 12, 115, 116,
+            114, 105, 110, 103, 0,
+        ];
+
+        let _m = mock("GET", "/schemas/ids/5")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"AvroTest\",\"namespace\":\"org.schema_registry_test_app.avro\",\"fields\":[{\"name\":\"id\",\"type\":{\"type\":\"fixed\",\"name\":\"Uuid\",\"size\":16}},{\"name\":\"by\",\"type\":{\"type\":\"enum\",\"name\":\"Language\",\"symbols\":[\"Java\",\"Rust\",\"Js\",\"Python\",\"Go\",\"C\"]}},{\"name\":\"counter\",\"type\":\"long\"},{\"name\":\"input\",\"type\":[\"null\",\"string\"],\"default\":null},{\"name\":\"results\",\"type\":{\"type\":\"array\",\"items\":\"Result\"}}]}","references":[{"name":"org.schema_registry_test_app.avro.Result","subject":"avro-result","version":1}]}"#)
+            .create();
+        let _m = mock("GET", "/subjects/avro-result/versions/1")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(r#"{"subject":"avro-result","version":1,"id":2,"schema":"{\"type\":\"record\",\"name\":\"Result\",\"namespace\":\"org.schema_registry_test_app.avro\",\"fields\":[{\"name\":\"up\",\"type\":\"string\"},{\"name\":\"down\",\"type\":\"string\"}]}"}"#)
+            .create();
+
+        let result = decoder.decode(Some(&bytes));
+        let value_values = match result {
+            Ok((_, Value::Record(v))) => v,
+            _ => panic!("Not a record, while only only those expected"),
+        };
+        let id_key = match &value_values[0] {
+            (_id, Value::Fixed(16, _v)) => _id,
+            _ => panic!("Not a fixed value of 16 bytes while that was expected"),
+        };
+        assert_eq!("id", id_key, "expected id key to be id");
+        let enum_value = match &value_values[1] {
+            (_id, Value::Enum(0, v)) => v,
+            _ => panic!("Not an enum value for by while that was expected"),
+        };
+        assert_eq!("Java", enum_value, "expect message from Java");
+        let counter_value = match &value_values[2] {
+            (_id, Value::Long(v)) => v,
+            _ => panic!("Not a long value for counter while that was expected"),
+        };
+        assert_eq!(&1i64, counter_value, "counter is 1");
     }
 }

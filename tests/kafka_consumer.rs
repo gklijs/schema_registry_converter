@@ -67,6 +67,7 @@ fn get_deserialized_record<'a>(
         Ok(v) => v.1,
         Err(e) => panic!("Error getting value: {}", e),
     };
+    print!("value needed for test {:?}", m.payload());
     let value = match decoder.decode(m.payload()) {
         Ok(v) => v.1,
         Err(e) => panic!("Error getting value: {}", e),
