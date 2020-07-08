@@ -1,6 +1,6 @@
 //! This module contains the code specific for the schema registry.
 
-use crate::schema_registry::SchemaType::AVRO;
+use crate::schema_registry::SchemaType::{Avro, Json, Other, Protobuf};
 use byteorder::{BigEndian, ByteOrder, ReadBytesExt};
 use core::fmt;
 use curl::easy::{Easy2, Handler, List, WriteError};
@@ -15,10 +15,10 @@ use url::Url;
 /// or to add your own. Therefore the other is one of the schema types.
 #[derive(Clone, Debug)]
 pub enum SchemaType {
-    AVRO,
-    PROTOBUF,
-    JSON,
-    OTHER(String),
+    Avro,
+    Protobuf,
+    Json,
+    Other(String),
 }
 
 /// The schema registry supports sub schema's they will be stored separately in the schema registry
@@ -33,7 +33,7 @@ pub struct SuppliedReference {
 /// not already present
 #[derive(Clone, Debug)]
 pub struct SuppliedSchema {
-    pub name: String,
+    pub name: Option<String>,
     pub schema_type: SchemaType,
     pub schema: String,
     pub references: Vec<SuppliedReference>,
@@ -148,7 +148,7 @@ pub fn get_schema_by_subject(
             let url = format!(
                 "{}/subjects/{}/versions/latest",
                 schema_registry_url,
-                get_subject(subject_name_strategy)
+                get_subject(subject_name_strategy)?
             );
             schema_from_url(&url, None)
         }
@@ -156,7 +156,7 @@ pub fn get_schema_by_subject(
             let url = format!(
                 "{}/subjects/{}/versions",
                 schema_registry_url,
-                get_subject(subject_name_strategy)
+                get_subject(subject_name_strategy)?
             );
             post_schema(&url, v)
         }
@@ -188,28 +188,36 @@ fn get_schema(subject_name_strategy: &SubjectNameStrategy) -> Option<SuppliedSch
 
 /// Gets the subject part which is also used as key to cache the results. It's constructed so that
 /// it's compatible with the Java client.
-pub fn get_subject(subject_name_strategy: &SubjectNameStrategy) -> String {
+pub fn get_subject(subject_name_strategy: &SubjectNameStrategy) -> Result<String, SRCError> {
     match subject_name_strategy {
-        SubjectNameStrategy::RecordNameStrategy(rn) => rn.clone(),
+        SubjectNameStrategy::RecordNameStrategy(rn) => Ok(rn.clone()),
         SubjectNameStrategy::TopicNameStrategy(t, is_key) => {
             if *is_key {
-                format!("{}-key", t)
+                Ok(format!("{}-key", t))
             } else {
-                format!("{}-value", t)
+                Ok(format!("{}-value", t))
             }
         }
-        SubjectNameStrategy::TopicRecordNameStrategy(t, rn) => format!("{}-{}", t, rn),
-        SubjectNameStrategy::RecordNameStrategyWithSchema(s) => s.name.clone(),
+        SubjectNameStrategy::TopicRecordNameStrategy(t, rn) => Ok(format!("{}-{}", t, rn)),
+        SubjectNameStrategy::RecordNameStrategyWithSchema(s) => match &s.name {
+            None => Err(SRCError::non_retryable_without_cause(
+                "name is mandatory in SuppliedSchema when used in TopicRecordNameStrategyWithSchema",
+            )),
+            Some(n) => Ok(n.clone()),
+        },
         SubjectNameStrategy::TopicNameStrategyWithSchema(t, is_key, _) => {
             if *is_key {
-                format!("{}-key", t)
+                Ok(format!("{}-key", t))
             } else {
-                format!("{}-value", t)
+                Ok(format!("{}-value", t))
             }
         }
-        SubjectNameStrategy::TopicRecordNameStrategyWithSchema(t, s) => {
-            format!("{}-{}", t, s.name.clone())
-        }
+        SubjectNameStrategy::TopicRecordNameStrategyWithSchema(t, s) => match &s.name {
+            None => Err(SRCError::non_retryable_without_cause(
+                "name is mandatory in SuppliedSchema when used in TopicRecordNameStrategyWithSchema",
+            )),
+            Some(n) => Ok(format!("{}-{}", t, n)),
+        },
     }
 }
 
@@ -282,15 +290,11 @@ fn schema_from_url(url: &str, id: Option<u32>) -> Result<RegisteredSchema, SRCEr
         }
     };
     let schema_type = match json["schemaType"].as_str() {
-        Some("AVRO") => AVRO,
-        None => AVRO,
-        _ => {
-            return Err(SRCError::new(
-                "Could not get raw schema from response",
-                None,
-                false,
-            ));
-        }
+        Some("AVRO") => Avro,
+        Some("PROTOBUF") => Protobuf,
+        Some("JSON") => Json,
+        Some(s) => Other(String::from(s)),
+        None => Avro,
     };
     let schema = match json["schema"].as_str() {
         Some(v) => String::from(v),
@@ -331,7 +335,7 @@ fn schema_from_url(url: &str, id: Option<u32>) -> Result<RegisteredSchema, SRCEr
 /// to do this is to add a default value for new fields.
 pub fn post_schema(url: &str, schema: SuppliedSchema) -> Result<RegisteredSchema, SRCError> {
     match schema.schema_type {
-        AVRO => (),
+        Avro => (),
         _ => {
             return Err(SRCError::new("Only avro is supported for now", None, false));
         }
@@ -528,59 +532,89 @@ impl SRCError {
     }
 }
 
-#[test]
-fn display_record_name_strategy() {
-    let sns = SubjectNameStrategy::RecordNameStrategy("bla".into());
-    assert_eq!(
-        "RecordNameStrategy(\"bla\")".to_owned(),
-        format!("{:?}", sns)
-    )
-}
+#[cfg(test)]
+mod tests {
+    use crate::schema_registry::{
+        get_subject, to_json, Collector, SRCError, SchemaType, SubjectNameStrategy, SuppliedSchema,
+    };
+    use curl::easy::Easy2;
 
-#[test]
-fn display_topic_name_strategy() {
-    let sns = SubjectNameStrategy::TopicNameStrategy("bla".into(), true);
-    assert_eq!(
-        "TopicNameStrategy(\"bla\", true)".to_owned(),
-        format!("{:?}", sns)
-    )
-}
+    #[test]
+    fn display_record_name_strategy() {
+        let sns = SubjectNameStrategy::RecordNameStrategy("bla".into());
+        assert_eq!(
+            "RecordNameStrategy(\"bla\")".to_owned(),
+            format!("{:?}", sns)
+        )
+    }
 
-#[test]
-fn display_topic_record_name_strategy() {
-    let sns = SubjectNameStrategy::TopicRecordNameStrategy("bla".into(), "foo".into());
-    assert_eq!(
-        "TopicRecordNameStrategy(\"bla\", \"foo\")".to_owned(),
-        format!("{:?}", sns)
-    )
-}
+    #[test]
+    fn display_topic_name_strategy() {
+        let sns = SubjectNameStrategy::TopicNameStrategy("bla".into(), true);
+        assert_eq!(
+            "TopicNameStrategy(\"bla\", true)".to_owned(),
+            format!("{:?}", sns)
+        )
+    }
 
-#[test]
-fn handling_http_error() {
-    let easy = Easy2::new(Collector(Vec::new()));
-    let result = to_json(easy);
-    assert_eq!(
-        result,
-        Err(SRCError::new(
-            "Did not get a 200 response code but 0 instead",
-            None,
+    #[test]
+    fn display_topic_record_name_strategy() {
+        let sns = SubjectNameStrategy::TopicRecordNameStrategy("bla".into(), "foo".into());
+        assert_eq!(
+            "TopicRecordNameStrategy(\"bla\", \"foo\")".to_owned(),
+            format!("{:?}", sns)
+        )
+    }
+
+    #[test]
+    fn handling_http_error() {
+        let easy = Easy2::new(Collector(Vec::new()));
+        let result = to_json(easy);
+        assert_eq!(
+            result,
+            Err(SRCError::new(
+                "Did not get a 200 response code but 0 instead",
+                None,
+                false,
+            ))
+        )
+    }
+
+    #[test]
+    fn display_error_no_cause() {
+        let err = SRCError::new("Could not get id from response", None, false);
+        assert_eq!(format!("{}", err), "Error: Could not get id from response had no other cause, it\'s retriable: false, it\'s cached: false".to_owned())
+    }
+
+    #[test]
+    fn display_error_with_cause() {
+        let err = SRCError::new(
+            "Could not get id from response",
+            Some(String::from("error in response")),
             false,
-        ))
-    )
-}
+        );
+        assert_eq!(format!("{}", err), "Error: Could not get id from response, was cause by error in response, it\'s retriable: false, it\'s cached: false".to_owned())
+    }
 
-#[test]
-fn display_error_no_cause() {
-    let err = SRCError::new("Could not get id from response", None, false);
-    assert_eq!(format!("{}", err), "Error: Could not get id from response had no other cause, it\'s retriable: false, it\'s cached: false".to_owned())
-}
+    #[test]
+    fn error_when_name_mandatory() {
+        let strategy = SubjectNameStrategy::TopicRecordNameStrategyWithSchema(
+            String::from("someTopic"),
+            Box::from(SuppliedSchema {
+                name: None,
+                schema_type: SchemaType::Other(String::from("foo")),
+                schema: "".to_string(),
+                references: vec![],
+            }),
+        );
 
-#[test]
-fn display_error_with_cause() {
-    let err = SRCError::new(
-        "Could not get id from response",
-        Some(String::from("error in response")),
-        false,
-    );
-    assert_eq!(format!("{}", err), "Error: Could not get id from response, was cause by error in response, it\'s retriable: false, it\'s cached: false".to_owned())
+        let result = get_subject(&strategy);
+
+        assert_eq!(
+            result,
+            Err(SRCError::non_retryable_without_cause(
+                "name is mandatory in SuppliedSchema when used in TopicRecordNameStrategyWithSchema"
+            ))
+        );
+    }
 }

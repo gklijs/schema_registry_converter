@@ -50,8 +50,8 @@ use schema_registry_converter::{Decoder, Encoder};
 use schema_registry_converter::schema_registry::SubjectNameStrategy;
 
 fn main() {
-    let mut decoder = Decoder::new("http://localhost:8081".into());
-    let mut encoder = Encoder::new("http://localhost:8081".into());
+    let mut decoder = Decoder::new(String::from("http://localhost:8081"));
+    let mut encoder = Encoder::new(String::from("http://localhost:8081"));
 }
 
 fn get_value<'a>(
