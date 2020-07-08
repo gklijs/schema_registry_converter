@@ -20,8 +20,8 @@ fn get_brokers() -> &'static str {
 
 fn get_heartbeat_schema() -> Box<SuppliedSchema> {
     Box::from(SuppliedSchema {
-        name: String::from("nl.openweb.data.Heartbeat"),
-        schema_type: SchemaType::AVRO,
+        name: Some(String::from("nl.openweb.data.Heartbeat")),
+        schema_type: SchemaType::Avro,
         schema: String::from(
             r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#,
         ),

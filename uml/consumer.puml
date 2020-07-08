@@ -2,8 +2,8 @@
 title Consumer activity flow
 
 (*) -> "Create decoder"
-(*) -> "Create Kafka client"
-"Create Kafka client" -> "Get a Kafka message"
+(*) -> "Create Kafka consumer"
+"Create Kafka consumer" -> "Get a Kafka message"
 "Get a Kafka message" -> "Either Key or Value"
 
 if "Magic byte in place?" then
@@ -11,22 +11,22 @@ if "Magic byte in place?" then
   if "Id in cache?" then
   -> [yes] "Apply schema to bytes"
   else
-  --> [no] "Get schema and add to cache"
-  "Get schema and add to cache" --> "Apply schema to bytes"
+  --> [no] "Get schema and add to cache, might\nneed to resolve references"
+  "Get schema and add to cache, might\nneed to resolve references" --> "Apply schema to bytes"
   endif
 else
   -->[no] if "Message  empty?" then
-    --> [yes] "Value::Null"
+    --> [yes] "Null"
   else
-    -->[no] "Value::Bytes"
+    -->[no] "Bytes"
   endif
 endif
 
-"Create decoder" --> "Get schema and add to cache"
+"Create decoder" --> "Get schema and add to cache, might\nneed to resolve references"
 "Create decoder" --> "Get id"
 
-"Apply schema to bytes" -> "Value::Record"
-"Value::Record" -> "Do something with the Value"
-"Value::Bytes" --> "Do something with the Value"
-"Value::Null" --> "Do something with the Value"
+"Apply schema to bytes" -> "Serialised data"
+"Serialised data" -> "Do something with the Value"
+"Bytes" --> "Do something with the Value"
+"Null" --> "Do something with the Value"
 @enduml

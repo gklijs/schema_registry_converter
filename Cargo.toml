@@ -32,14 +32,14 @@ version = "^2.15"
 features = ["with-bytes"]
 
 [dependencies.failure]
-version = "^0.1.0"
+version = "^0.1"
 
 [dependencies.serde]
 version = "^1.0"
 features = ["derive"]
 
 [dependencies.serde_json]
-version = ">=0.8.0, <2.0"
+version = "^1.0"
 
 [dependencies.url]
 version = "^2.1.1"
