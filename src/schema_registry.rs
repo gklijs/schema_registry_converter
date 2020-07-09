@@ -9,7 +9,7 @@ use serde_json::{Map, Value};
 use std::fmt::Display;
 use std::ops::Deref;
 use std::str;
-use url::Url;
+use url::{ParseError, Url};
 
 /// By default the schema registry supports three types. It's possible there will be more in the future
 /// or to add your own. Therefore the other is one of the schema types.
@@ -41,19 +41,19 @@ pub struct SuppliedSchema {
 
 #[derive(Clone, Debug)]
 pub struct RegisteredReference {
-    pub(crate) name: String,
-    pub(crate) subject: String,
-    pub(crate) version: u32,
+    pub name: String,
+    pub subject: String,
+    pub version: u32,
 }
 
 /// Schema as retrieved from the schema registry. It's close to the json received and doesn't do
 /// type specific transformations.
 #[derive(Clone, Debug)]
 pub struct RegisteredSchema {
-    pub(crate) id: u32,
-    pub(crate) schema_type: SchemaType,
-    pub(crate) schema: String,
-    pub(crate) references: Vec<RegisteredReference>,
+    pub id: u32,
+    pub schema_type: SchemaType,
+    pub schema: String,
+    pub references: Vec<RegisteredReference>,
 }
 
 /// Intermediate result to just handle the byte transformation. When used in a decoder just the
@@ -99,6 +99,7 @@ pub fn get_bytes_result(bytes: Option<&[u8]>) -> BytesResult {
     }
 }
 
+/// Creates payload that can be included as a key or value on a kafka record
 pub fn get_payload(id: u32, encoded_bytes: Vec<u8>) -> Vec<u8> {
     let mut payload = vec![0u8];
     let mut buf = [0u8; 4];
@@ -108,31 +109,25 @@ pub fn get_payload(id: u32, encoded_bytes: Vec<u8>) -> Vec<u8> {
     payload
 }
 
+fn get_id_url_string(id: u32, schema_registry_url: &str) -> Result<String, ParseError> {
+    Ok(Url::parse(schema_registry_url)?
+        .join("/schemas/ids/")?
+        .join(&id.to_string())?
+        .into_string())
+}
+
 /// Gets a schema by an id. This is used to get the correct schema te deserialize bytes, with the
 /// id that is encoded in the bytes.
 pub fn get_schema_by_id(id: u32, schema_registry_url: &str) -> Result<RegisteredSchema, SRCError> {
-    let url = Url::parse(schema_registry_url)
-        .map_err(|e| SRCError {
-            error: "Error parsing schema registry url".into(),
-            cause: Some(format!("{}", e)),
-            retriable: false,
-            cached: false,
-        })?
-        .join("/schemas/ids/")
-        .map_err(|e| SRCError {
-            error: "Error constructing schema registry url".into(),
-            cause: Some(format!("{}", e)),
-            retriable: false,
-            cached: false,
-        })?
-        .join(&id.to_string())
-        .map_err(|e| SRCError {
-            error: "Error constructing schema registry url".into(),
-            cause: Some(format!("{}", e)),
-            retriable: false,
-            cached: false,
-        })?
-        .into_string();
+    let url = match get_id_url_string(id, schema_registry_url) {
+        Ok(v) => v,
+        Err(e) => {
+            return Err(SRCError::non_retryable_with_cause(
+                e,
+                "Error constructing schema registry url",
+            ))
+        }
+    };
     schema_from_url(&url, Option::from(id)).and_then(Ok)
 }
 
@@ -221,42 +216,12 @@ pub fn get_subject(subject_name_strategy: &SubjectNameStrategy) -> Result<String
     }
 }
 
-fn to_registered_reference(
-    reference: Option<&Map<String, Value>>,
-) -> Result<RegisteredReference, SRCError> {
-    let ref_present = match reference {
-        Some(v) => v,
-        None => {
-            return Err(SRCError::non_retryable_without_cause(
-                "One of the references from the response was not an object",
-            ))
-        }
-    };
-    let name = match ref_present["name"].as_str() {
-        Some(v) => String::from(v),
-        None => {
-            return Err(SRCError::non_retryable_without_cause(
-                "Failed get name as str",
-            ))
-        }
-    };
-    let subject = match ref_present["subject"].as_str() {
-        Some(v) => String::from(v),
-        None => {
-            return Err(SRCError::non_retryable_without_cause(
-                "Failed get subject as str",
-            ))
-        }
-    };
-    let version = match ref_present["version"].as_u64() {
-        Some(v) => v as u32,
-        None => {
-            return Err(SRCError::non_retryable_without_cause(
-                "Failed get version as u64",
-            ))
-        }
-    };
-    Ok(RegisteredReference {
+fn to_registered_reference(reference: Option<&Map<String, Value>>) -> Option<RegisteredReference> {
+    let ref_present = reference?;
+    let name = String::from(ref_present["name"].as_str()?);
+    let subject = String::from(ref_present["subject"].as_str()?);
+    let version = ref_present["version"].as_u64()? as u32;
+    Some(RegisteredReference {
         name,
         subject,
         version,
@@ -308,18 +273,12 @@ fn schema_from_url(url: &str, id: Option<u32>) -> Result<RegisteredSchema, SRCEr
     };
     let references = match json["references"].as_array() {
         None => vec![],
-        Some(v) => {
-            match v
-                .iter()
-                .map(|j| to_registered_reference(j.as_object()))
-                .collect()
-            {
-                Ok(v) => v,
-                Err(e) => {
-                    return Err(e);
-                }
-            }
-        }
+        Some(v) => v
+            .iter()
+            .map(|j| to_registered_reference(j.as_object()))
+            .filter(|x| x.is_some())
+            .map(|x| x.unwrap())
+            .collect(),
     };
     Ok(RegisteredSchema {
         id,
@@ -343,10 +302,8 @@ pub fn post_schema(url: &str, schema: SuppliedSchema) -> Result<RegisteredSchema
     match schema.references.as_slice() {
         [] => (),
         _ => {
-            return Err(SRCError::new(
+            return Err(SRCError::non_retryable_without_cause(
                 "References are not supported for now",
-                None,
-                false,
             ));
         }
     };
@@ -358,17 +315,13 @@ pub fn post_schema(url: &str, schema: SuppliedSchema) -> Result<RegisteredSchema
     let easy = match perform_post(url, schema_str.as_str()) {
         Ok(v) => v,
         Err(e) => {
-            return Err(SRCError::new(
+            return Err(SRCError::retryable_with_cause(
+                e,
                 "error performing post to schema registry",
-                Some(format!("{}", e)),
-                true,
             ));
         }
     };
-    let json: Value = match to_json(easy) {
-        Ok(v) => v,
-        Err(e) => return Err(e),
-    };
+    let json: Value = to_json(easy)?;
     let id = match json["id"].as_i64() {
         Some(v) => v,
         None => return Err(SRCError::new("Could not get id from response", None, false)),
@@ -409,17 +362,15 @@ fn to_json(mut easy: Easy2<Collector>) -> Result<Value, SRCError> {
     match easy.response_code() {
         Ok(200) => (),
         Ok(v) => {
-            return Err(SRCError::new(
-                format!("Did not get a 200 response code but {} instead", v).as_str(),
-                None,
-                false,
-            ));
+            return Err(SRCError::non_retryable_without_cause(&*format!(
+                "Did not get a 200 response code but {} instead",
+                v
+            )));
         }
         Err(e) => {
-            return Err(SRCError::new(
-                format!("Encountered error getting http response: {}", e).as_str(),
-                Some(format!("{}", e)),
-                true,
+            return Err(SRCError::retryable_with_cause(
+                e,
+                "Encountered error getting http response",
             ));
         }
     }
@@ -438,11 +389,7 @@ fn to_json(mut easy: Easy2<Collector>) -> Result<Value, SRCError> {
     };
     match serde_json::from_str(body) {
         Ok(v) => Ok(v),
-        Err(e) => Err(SRCError::new(
-            "Invalid json string",
-            Some(e.to_string()),
-            false,
-        )),
+        Err(e) => Err(SRCError::non_retryable_with_cause(e, "Invalid json string")),
     }
 }
 
