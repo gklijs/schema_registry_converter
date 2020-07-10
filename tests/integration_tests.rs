@@ -76,6 +76,7 @@ fn do_avro_test(
         "test",
         get_schema_registry_url(),
         &vec![topic],
+        true,
         test_beat_value(key_value, value_value),
     )
 }
@@ -222,6 +223,7 @@ fn test7_test_avro_from_java_test_app() {
         "test",
         get_schema_registry_url(),
         &vec![topic],
+        false,
         test,
     )
 }

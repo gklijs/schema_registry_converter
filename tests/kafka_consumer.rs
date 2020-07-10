@@ -40,10 +40,11 @@ pub fn consume_avro(
     group_id: &str,
     registry: String,
     topics: &[&str],
+    auto_commit: bool,
     test: Box<dyn Fn(DeserializedAvroRecord) -> ()>,
 ) {
     let mut decoder = AvroDecoder::new(registry);
-    let consumer = get_consumer(brokers, group_id, topics);
+    let consumer = get_consumer(brokers, group_id, topics, auto_commit);
 
     for message in consumer.iter() {
         match message {
@@ -81,14 +82,15 @@ fn get_deserialized_record<'a>(
     }
 }
 
-fn get_consumer(brokers: &str, group_id: &str, topics: &[&str]) -> TestConsumer {
+fn get_consumer(brokers: &str, group_id: &str, topics: &[&str], auto_commit: bool) -> TestConsumer {
     let context = CustomContext;
+    let auto_commit_value = if auto_commit {"true"} else {"false"};
     let consumer: TestConsumer = ClientConfig::new()
         .set("group.id", group_id)
         .set("bootstrap.servers", brokers)
         .set("enable.partition.eof", "false")
         .set("session.timeout.ms", "6000")
-        .set("enable.auto.commit", "true")
+        .set("enable.auto.commit", auto_commit_value)
         .set("statistics.interval.ms", "30000")
         .set("auto.offset.reset", "earliest")
         .set_log_level(RDKafkaLogLevel::Warning)
