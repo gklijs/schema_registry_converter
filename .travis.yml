@@ -19,5 +19,6 @@ script:
   - cargo install --debug cargo-make
   - cargo build --verbose
   - docker-compose up -d
+  - timeout 60 bash -c 'while [[ "$(curl -s -o /dev/null -w ''%{http_code}'' http://localhost:8081/subjects)" != "200" ]]; do sleep 3; done' || false
   - cargo test --verbose --all-features -- --test-threads=1
   - cargo make --makefile make.toml ci-flow
