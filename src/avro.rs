@@ -23,9 +23,9 @@
 //! [avro-rs]: https://crates.io/crates/avro-rs
 
 use crate::schema_registry::{
-    get_bytes_result, get_payload, get_referenced_schema, get_schema_by_id, get_schema_by_subject,
-    get_subject, BytesResult, RegisteredReference, RegisteredSchema, SRCError, SchemaType,
-    SubjectNameStrategy, SuppliedSchema,
+    get_bytes_result, get_payload, get_referenced_schema, get_schema_by_id_and_type,
+    get_schema_by_subject, get_subject, BytesResult, RegisteredReference, RegisteredSchema,
+    SRCError, SchemaType, SubjectNameStrategy, SuppliedSchema,
 };
 use avro_rs::schema::Name;
 use avro_rs::to_value;
@@ -179,12 +179,12 @@ impl AvroDecoder {
 
     fn get_schema(&mut self, id: u32) -> &mut Result<AvroSchema, SRCError> {
         let schema_registry_url = &self.schema_registry_url;
-        self.cache
-            .entry(id)
-            .or_insert_with(|| match get_schema_by_id(id, schema_registry_url) {
+        self.cache.entry(id).or_insert_with(|| {
+            match get_schema_by_id_and_type(id, schema_registry_url, SchemaType::Avro) {
                 Ok(registered_schema) => to_avro_schema(schema_registry_url, registered_schema),
                 Err(e) => Err(e.into_cache()),
-            })
+            }
+        })
     }
 }
 
@@ -933,7 +933,6 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
     fn test_decoder_default_wrong_schema_in_response() {
         let _m = mock("GET", "/schemas/ids/1")
             .with_status(200)
@@ -952,8 +951,7 @@ mod tests {
                     "Failed to parse schema: No `fields` in record"
                 )),
                 false,
-            )
-            .into_cache())
+            ))
         )
     }
 

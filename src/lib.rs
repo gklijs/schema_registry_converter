@@ -27,4 +27,8 @@ extern crate failure;
 
 #[cfg(feature = "avro")]
 pub mod avro;
+#[cfg(feature = "proto_fish")]
+mod proto;
+#[cfg(feature = "proto_fish")]
+pub mod proto_fish;
 pub mod schema_registry;

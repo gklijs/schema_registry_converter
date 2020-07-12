@@ -84,7 +84,7 @@ fn get_deserialized_record<'a>(
 
 fn get_consumer(brokers: &str, group_id: &str, topics: &[&str], auto_commit: bool) -> TestConsumer {
     let context = CustomContext;
-    let auto_commit_value = if auto_commit {"true"} else {"false"};
+    let auto_commit_value = if auto_commit { "true" } else { "false" };
     let consumer: TestConsumer = ClientConfig::new()
         .set("group.id", group_id)
         .set("bootstrap.servers", brokers)

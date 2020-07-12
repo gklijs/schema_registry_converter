@@ -13,7 +13,7 @@ use url::{ParseError, Url};
 
 /// By default the schema registry supports three types. It's possible there will be more in the future
 /// or to add your own. Therefore the other is one of the schema types.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum SchemaType {
     Avro,
     Protobuf,
@@ -129,6 +129,21 @@ pub fn get_schema_by_id(id: u32, schema_registry_url: &str) -> Result<Registered
         }
     };
     schema_from_url(&url, Option::from(id)).and_then(Ok)
+}
+
+pub fn get_schema_by_id_and_type(
+    id: u32,
+    schema_registry_url: &str,
+    schema_type: SchemaType,
+) -> Result<RegisteredSchema, SRCError> {
+    match get_schema_by_id(id, schema_registry_url) {
+        Ok(v) if v.schema_type == schema_type => Ok(v),
+        Ok(v) => Err(SRCError::non_retryable_without_cause(&*format!(
+            "type {:?}, is not correct",
+            v.schema_type
+        ))),
+        Err(e) => Err(e),
+    }
 }
 
 /// Gets the schema and the id by supplying a SubjectNameStrategy. This is used to correctly
