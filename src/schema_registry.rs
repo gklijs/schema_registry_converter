@@ -5,7 +5,8 @@ use byteorder::{BigEndian, ByteOrder, ReadBytesExt};
 use core::fmt;
 use curl::easy::{Easy2, Handler, List, WriteError};
 use failure::Fail;
-use serde_json::{Map, Value};
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Error, Map, Value};
 use std::fmt::Display;
 use std::ops::Deref;
 use std::str;
@@ -39,7 +40,7 @@ pub struct SuppliedSchema {
     pub references: Vec<SuppliedReference>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RegisteredReference {
     pub name: String,
     pub subject: String,
@@ -146,10 +147,7 @@ pub fn get_schema_by_subject(
             );
             schema_from_url(&url, None)
         }
-        Some(v) => {
-            let url = format!("{}/subjects/{}/versions", schema_registry_url, subject);
-            post_schema(&url, v)
-        }
+        Some(v) => post_schema(&schema_registry_url, subject, v),
     }
 }
 
@@ -211,16 +209,8 @@ pub fn get_subject(subject_name_strategy: &SubjectNameStrategy) -> Result<String
     }
 }
 
-fn to_registered_reference(reference: Option<&Map<String, Value>>) -> Option<RegisteredReference> {
-    let ref_present = reference?;
-    let name = String::from(ref_present["name"].as_str()?);
-    let subject = String::from(ref_present["subject"].as_str()?);
-    let version = ref_present["version"].as_u64()? as u32;
-    Some(RegisteredReference {
-        name,
-        subject,
-        version,
-    })
+fn to_registered_reference(reference: &Value) -> Result<RegisteredReference, Error> {
+    serde_json::from_value(reference.clone())
 }
 
 /// Handles the work of doing an http call and transforming it to a schema while handling
@@ -263,12 +253,15 @@ fn schema_from_url(url: &str, id: Option<u32>) -> Result<RegisteredSchema, SRCEr
     };
     let references = match json["references"].as_array() {
         None => vec![],
-        Some(v) => v
-            .iter()
-            .map(|j| to_registered_reference(j.as_object()))
-            .filter(|x| x.is_some())
-            .map(|x| x.unwrap())
-            .collect(),
+        Some(v) => match v.iter().map(|j| to_registered_reference(j)).collect() {
+            Ok(v) => v,
+            Err(e) => {
+                return Err(SRCError::non_retryable_with_cause(
+                    e,
+                    "Error parsing reference",
+                ))
+            }
+        },
     };
     Ok(RegisteredSchema {
         id,
@@ -282,45 +275,126 @@ fn schema_from_url(url: &str, id: Option<u32>) -> Result<RegisteredSchema, SRCEr
 /// registry, the matching id is returned. When it's not it depends on the settings of the schema
 /// registry. The default config will check if the schema is backwards compatible. One of the ways
 /// to do this is to add a default value for new fields.
-pub fn post_schema(url: &str, schema: SuppliedSchema) -> Result<RegisteredSchema, SRCError> {
-    match schema.schema_type {
-        Avro => (),
-        _ => {
-            return Err(SRCError::new("Only avro is supported for now", None, false));
+pub fn post_schema(
+    schema_registry_url: &str,
+    subject: String,
+    schema: SuppliedSchema,
+) -> Result<RegisteredSchema, SRCError> {
+    let schema_type = match &schema.schema_type {
+        Avro => String::from("AVRO"),
+        Protobuf => String::from("PROTOBUF"),
+        Json => String::from("JSON"),
+        Other(v) => v.clone(),
+    };
+    let references: Vec<RegisteredReference> = match schema
+        .references
+        .into_iter()
+        .map(|r| post_reference(schema_registry_url, &*schema_type, r))
+        .collect()
+    {
+        Ok(v) => v,
+        Err(e) => {
+            return Err(SRCError::non_retryable_with_cause(
+                e,
+                "Error posting a reference",
+            ))
         }
     };
-    match schema.references.as_slice() {
-        [] => (),
-        _ => {
-            return Err(SRCError::non_retryable_without_cause(
-                "References are not supported for now",
-            ));
-        }
-    };
-    let mut root_element = Map::new();
-    root_element.insert(String::from("schema"), Value::String(schema.schema.clone()));
-    let schema_element = Value::Object(root_element);
-    let schema_str = schema_element.to_string();
+    let url = format!("{}/subjects/{}/versions", schema_registry_url, subject);
+    let body = get_body(&*schema_type, &*schema.schema, &*references);
+    let id = post_and_get_id(&*url, &*body)?;
+    Ok(RegisteredSchema {
+        id,
+        schema_type: schema.schema_type,
+        schema: schema.schema,
+        references,
+    })
+}
 
-    let easy = match perform_post(url, schema_str.as_str()) {
+fn get_body(schema_type: &str, schema: &str, references: &[RegisteredReference]) -> String {
+    let mut root_element = Map::new();
+    root_element.insert(String::from("schema"), Value::String(String::from(schema)));
+    root_element.insert(
+        String::from("schemaType"),
+        Value::String(String::from(schema_type)),
+    );
+    if !references.is_empty() {
+        let values: Vec<Value> = references.iter().map(|x| json!(x)).collect();
+        root_element.insert(String::from("references"), Value::Array(values));
+    }
+    let schema_element = Value::Object(root_element);
+    schema_element.to_string()
+}
+
+fn post_and_get_id(url: &str, body: &str) -> Result<u32, SRCError> {
+    let easy = match perform_post(url, body) {
         Ok(v) => v,
         Err(e) => {
             return Err(SRCError::retryable_with_cause(
                 e,
-                "error performing post to schema registry",
-            ));
+                "error performing post to schema registry to get id",
+            ))
         }
     };
     let json: Value = to_json(easy)?;
-    let id = match json["id"].as_i64() {
-        Some(v) => v,
-        None => return Err(SRCError::new("Could not get id from response", None, false)),
+    match json["id"].as_i64() {
+        Some(v) => Ok(v as u32),
+        None => Err(SRCError::non_retryable_without_cause(
+            "Could not get id from response",
+        )),
+    }
+}
+
+fn post_and_get_version(url: &str, body: &str) -> Result<u32, SRCError> {
+    let easy = match perform_post(url, body) {
+        Ok(v) => v,
+        Err(e) => {
+            return Err(SRCError::retryable_with_cause(
+                e,
+                "error performing post to schema registry to get version",
+            ))
+        }
     };
-    Ok(RegisteredSchema {
-        id: id as u32,
-        schema_type: schema.schema_type,
-        schema: schema.schema,
-        references: vec![],
+    let json: Value = to_json(easy)?;
+    match json["version"].as_i64() {
+        Some(v) => Ok(v as u32),
+        None => Err(SRCError::non_retryable_without_cause(
+            "Could not get version from response",
+        )),
+    }
+}
+
+fn post_reference(
+    schema_registry_url: &str,
+    schema_type: &str,
+    reference: SuppliedReference,
+) -> Result<RegisteredReference, SRCError> {
+    let references: Vec<RegisteredReference> = match reference
+        .references
+        .into_iter()
+        .map(|r| post_reference(schema_registry_url, &*schema_type, r))
+        .collect()
+    {
+        Ok(v) => v,
+        Err(e) => {
+            return Err(SRCError::non_retryable_with_cause(
+                e,
+                "Error posting a reference",
+            ))
+        }
+    };
+    let url = format!(
+        "{}/subjects/{}/versions",
+        schema_registry_url, reference.subject
+    );
+    let body = get_body(schema_type, &*reference.schema, &*references);
+    post_and_get_id(&*url, &*body)?;
+    let version_url = format!("{}/subjects/{}", schema_registry_url, reference.subject);
+    let version = post_and_get_version(&*version_url, &*body)?;
+    Ok(RegisteredReference {
+        name: reference.name,
+        subject: reference.subject,
+        version,
     })
 }
 
@@ -334,11 +408,11 @@ fn perform_get(url: &str) -> Result<Easy2<Collector>, curl::Error> {
 }
 
 /// Does the post, setting the headers correctly
-fn perform_post(url: &str, schema_raw: &str) -> Result<Easy2<Collector>, curl::Error> {
+fn perform_post(url: &str, body: &str) -> Result<Easy2<Collector>, curl::Error> {
     let mut easy = Easy2::new(Collector(Vec::new()));
     easy.post(true)?;
     easy.url(url)?;
-    easy.post_fields_copy(schema_raw.as_bytes())?;
+    easy.post_fields_copy(body.as_bytes())?;
     let mut list = List::new();
     list.append("Content-Type: application/vnd.schemaregistry.v1+json")?;
     list.append("Accept: application/vnd.schemaregistry.v1+json")?;
