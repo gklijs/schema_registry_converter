@@ -1178,7 +1178,7 @@ mod tests {
         assert_eq!(
             result,
             Err(SRCError::new(
-                "error performing post to schema registry",
+                "error performing post to schema registry to get id",
                 Some(String::from("[6] Couldn\'t resolve host name")),
                 true,
             )
@@ -1547,6 +1547,7 @@ mod tests {
         let result = decoder.decode(Some(&bytes));
         let value_values = match result {
             Ok((_, Value::Record(v))) => v,
+            Err(e) => panic!("Some kind of error: {}", e),
             _ => panic!("Not a record, while only only those expected"),
         };
         let id_key = match &value_values[0] {
