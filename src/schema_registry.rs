@@ -9,7 +9,6 @@ use serde_json::{Map, Value};
 use std::fmt::Display;
 use std::ops::Deref;
 use std::str;
-use url::{ParseError, Url};
 
 /// By default the schema registry supports three types. It's possible there will be more in the future
 /// or to add your own. Therefore the other is one of the schema types.
@@ -27,6 +26,7 @@ pub struct SuppliedReference {
     pub name: String,
     pub subject: String,
     pub schema: String,
+    pub references: Vec<SuppliedReference>,
 }
 
 /// Schema as it might be provided to create messages, they will be added to th schema registry if
@@ -109,25 +109,10 @@ pub fn get_payload(id: u32, encoded_bytes: Vec<u8>) -> Vec<u8> {
     payload
 }
 
-fn get_id_url_string(id: u32, schema_registry_url: &str) -> Result<String, ParseError> {
-    Ok(Url::parse(schema_registry_url)?
-        .join("/schemas/ids/")?
-        .join(&id.to_string())?
-        .into_string())
-}
-
 /// Gets a schema by an id. This is used to get the correct schema te deserialize bytes, with the
 /// id that is encoded in the bytes.
 pub fn get_schema_by_id(id: u32, schema_registry_url: &str) -> Result<RegisteredSchema, SRCError> {
-    let url = match get_id_url_string(id, schema_registry_url) {
-        Ok(v) => v,
-        Err(e) => {
-            return Err(SRCError::non_retryable_with_cause(
-                e,
-                "Error constructing schema registry url",
-            ))
-        }
-    };
+    let url = format!("{}/schemas/ids/{}", schema_registry_url, id);
     schema_from_url(&url, Option::from(id)).and_then(Ok)
 }
 
@@ -152,22 +137,17 @@ pub fn get_schema_by_subject(
     schema_registry_url: &str,
     subject_name_strategy: &SubjectNameStrategy,
 ) -> Result<RegisteredSchema, SRCError> {
-    let schema = get_schema(subject_name_strategy);
-    match schema {
+    let subject = get_subject(subject_name_strategy)?;
+    match get_schema(subject_name_strategy) {
         None => {
             let url = format!(
                 "{}/subjects/{}/versions/latest",
-                schema_registry_url,
-                get_subject(subject_name_strategy)?
+                schema_registry_url, subject
             );
             schema_from_url(&url, None)
         }
         Some(v) => {
-            let url = format!(
-                "{}/subjects/{}/versions",
-                schema_registry_url,
-                get_subject(subject_name_strategy)?
-            );
+            let url = format!("{}/subjects/{}/versions", schema_registry_url, subject);
             post_schema(&url, v)
         }
     }
@@ -255,10 +235,7 @@ fn schema_from_url(url: &str, id: Option<u32>) -> Result<RegisteredSchema, SRCEr
             ))
         }
     };
-    let json: Value = match to_json(easy) {
-        Ok(v) => v,
-        Err(e) => return Err(e),
-    };
+    let json: Value = to_json(easy)?;
     let id = match id {
         Some(v) => v,
         None => {
@@ -279,11 +256,9 @@ fn schema_from_url(url: &str, id: Option<u32>) -> Result<RegisteredSchema, SRCEr
     let schema = match json["schema"].as_str() {
         Some(v) => String::from(v),
         None => {
-            return Err(SRCError::new(
+            return Err(SRCError::non_retryable_without_cause(
                 "Could not get raw schema from response",
-                None,
-                false,
-            ));
+            ))
         }
     };
     let references = match json["references"].as_array() {
@@ -323,7 +298,7 @@ pub fn post_schema(url: &str, schema: SuppliedSchema) -> Result<RegisteredSchema
         }
     };
     let mut root_element = Map::new();
-    root_element.insert("schema".into(), Value::String(schema.schema.clone()));
+    root_element.insert(String::from("schema"), Value::String(schema.schema.clone()));
     let schema_element = Value::Object(root_element);
     let schema_str = schema_element.to_string();
 
@@ -503,7 +478,7 @@ mod tests {
 
     #[test]
     fn display_record_name_strategy() {
-        let sns = SubjectNameStrategy::RecordNameStrategy("bla".into());
+        let sns = SubjectNameStrategy::RecordNameStrategy(String::from("bla"));
         assert_eq!(
             "RecordNameStrategy(\"bla\")".to_owned(),
             format!("{:?}", sns)
@@ -512,7 +487,7 @@ mod tests {
 
     #[test]
     fn display_topic_name_strategy() {
-        let sns = SubjectNameStrategy::TopicNameStrategy("bla".into(), true);
+        let sns = SubjectNameStrategy::TopicNameStrategy(String::from("bla"), true);
         assert_eq!(
             "TopicNameStrategy(\"bla\", true)".to_owned(),
             format!("{:?}", sns)
@@ -521,7 +496,8 @@ mod tests {
 
     #[test]
     fn display_topic_record_name_strategy() {
-        let sns = SubjectNameStrategy::TopicRecordNameStrategy("bla".into(), "foo".into());
+        let sns =
+            SubjectNameStrategy::TopicRecordNameStrategy(String::from("bla"), String::from("foo"));
         assert_eq!(
             "TopicRecordNameStrategy(\"bla\", \"foo\")".to_owned(),
             format!("{:?}", sns)

@@ -220,12 +220,12 @@ impl AvroDecoder {
 ///
 /// let mut encoder = AvroEncoder::new(server_address().to_string());
 ///
-/// let key_strategy = SubjectNameStrategy::TopicNameStrategy("heartbeat".into(), true);
+/// let key_strategy = SubjectNameStrategy::TopicNameStrategy(String::from("heartbeat"), true);
 /// let bytes = encoder.encode(vec!(("name", Value::String("Some name".to_owned()))), &key_strategy);
 ///
 /// assert_eq!(bytes, Ok(vec!(0, 0, 0, 0, 4, 18, 83, 111, 109, 101, 32, 110, 97, 109, 101)));
 ///
-/// let value_strategy = SubjectNameStrategy::TopicNameStrategy("heartbeat".into(), false);
+/// let value_strategy = SubjectNameStrategy::TopicNameStrategy(String::from("heartbeat"), false);
 /// let bytes = encoder.encode(vec!(("beat", Value::Long(3))), &value_strategy);
 ///
 /// assert_eq!(bytes, Ok(vec!(0,0,0,0,3,6)))
@@ -260,7 +260,7 @@ impl AvroEncoder {
     ///
     /// let mut encoder = AvroEncoder::new(server_address().to_string());
     ///
-    /// let strategy = SubjectNameStrategy::TopicRecordNameStrategyWithSchema("hb".into(), Box::from(SuppliedSchema {
+    /// let strategy = SubjectNameStrategy::TopicRecordNameStrategyWithSchema(String::from("hb"), Box::from(SuppliedSchema {
     ///                 name: Some(String::from("nl.openweb.data.Heartbeat")),
     ///                 schema_type: SchemaType::Avro,
     ///                 schema: String::from(r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#),
@@ -288,7 +288,7 @@ impl AvroEncoder {
     ///  # use schema_registry_converter::avro::AvroEncoder;
     ///
     /// let mut encoder = AvroEncoder::new(server_address().to_string());
-    /// let strategy = SubjectNameStrategy::RecordNameStrategy("nl.openweb.data.Heartbeat".into());
+    /// let strategy = SubjectNameStrategy::RecordNameStrategy(String::from("nl.openweb.data.Heartbeat"));
     ///
     /// let _m = mock("GET", "/subjects/nl.openweb.data.Heartbeat/versions/latest")
     ///     .with_status(404)
@@ -334,7 +334,7 @@ impl AvroEncoder {
     ///     .create();
     ///
     /// let mut encoder = AvroEncoder::new(server_address().to_string());
-    /// let strategy = SubjectNameStrategy::TopicRecordNameStrategy("heartbeat".into(), "nl.openweb.data.Heartbeat".into());
+    /// let strategy = SubjectNameStrategy::TopicRecordNameStrategy(String::from("heartbeat"), String::from("nl.openweb.data.Heartbeat"));
     /// let bytes = encoder.encode(vec!(("beat", Value::Long(3))), &strategy);
     ///
     /// assert_eq!(bytes, Ok(vec!(0,0,0,0,3,6)))
@@ -377,7 +377,7 @@ impl AvroEncoder {
     ///    }
     ///
     /// let mut encoder = AvroEncoder::new(server_address().to_string());
-    /// let existing_schema_strategy = SubjectNameStrategy::TopicRecordNameStrategy("heartbeat".into(), "nl.openweb.data.Heartbeat".into());
+    /// let existing_schema_strategy = SubjectNameStrategy::TopicRecordNameStrategy(String::from("heartbeat"), String::from("nl.openweb.data.Heartbeat"));
     /// let bytes = encoder.encode_struct(Heartbeat{beat: 3}, &existing_schema_strategy);
     ///
     /// assert_eq!(bytes, Ok(vec!(0,0,0,0,3,6)));
@@ -388,7 +388,7 @@ impl AvroEncoder {
     ///      .with_body(r#"{"id":4}"#)
     ///      .create();
     ///
-    /// let primitive_schema_strategy = SubjectNameStrategy::TopicNameStrategyWithSchema("heartbeat".into(), true, get_supplied_schema(&Schema::String));
+    /// let primitive_schema_strategy = SubjectNameStrategy::TopicNameStrategyWithSchema(String::from("heartbeat"), true, get_supplied_schema(&Schema::String));
     /// let bytes = encoder.encode_struct("key-value", &primitive_schema_strategy);
     ///
     /// assert_eq!(bytes, Ok(vec!(0, 0, 0, 0, 4, 18, 107, 101, 121, 45, 118, 97, 108, 117, 101)));
@@ -1061,7 +1061,7 @@ mod tests {
 
         let mut encoder = AvroEncoder::new(format!("http://{}", server_address()));
 
-        let key_strategy = SubjectNameStrategy::TopicNameStrategy("heartbeat".into(), true);
+        let key_strategy = SubjectNameStrategy::TopicNameStrategy(String::from("heartbeat"), true);
         let bytes = encoder.encode(
             vec![("name", Value::String("Some name".to_owned()))],
             &key_strategy,
@@ -1074,7 +1074,8 @@ mod tests {
             ])
         );
 
-        let value_strategy = SubjectNameStrategy::TopicNameStrategy("heartbeat".into(), false);
+        let value_strategy =
+            SubjectNameStrategy::TopicNameStrategy(String::from("heartbeat"), false);
         let bytes = encoder.encode(vec![("beat", Value::Long(3))], &value_strategy);
 
         assert_eq!(bytes, Ok(vec![0, 0, 0, 0, 3, 6]))
@@ -1090,8 +1091,8 @@ mod tests {
 
         let mut encoder = AvroEncoder::new(format!("http://{}", server_address()));
         let strategy = SubjectNameStrategy::TopicRecordNameStrategy(
-            "heartbeat".into(),
-            "nl.openweb.data.Heartbeat".into(),
+            String::from("heartbeat"),
+            String::from("nl.openweb.data.Heartbeat"),
         );
         let bytes = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
 
@@ -1108,8 +1109,8 @@ mod tests {
 
         let mut encoder = AvroEncoder::new(format!("http://{}", server_address()));
         let strategy = SubjectNameStrategy::TopicRecordNameStrategy(
-            "heartbeat".into(),
-            "nl.openweb.data.Heartbeat".into(),
+            String::from("heartbeat"),
+            String::from("nl.openweb.data.Heartbeat"),
         );
         let bytes = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
 
@@ -1121,10 +1122,10 @@ mod tests {
 
     #[test]
     fn test_encoder_schema_registry_unavailable() {
-        let mut encoder = AvroEncoder::new("http://bogus".into());
+        let mut encoder = AvroEncoder::new(String::from("http://bogus"));
         let strategy = SubjectNameStrategy::TopicRecordNameStrategy(
-            "heartbeat".into(),
-            "nl.openweb.data.Balance".into(),
+            String::from("heartbeat"),
+            String::from("nl.openweb.data.Balance"),
         );
         let result = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
 
@@ -1141,10 +1142,10 @@ mod tests {
 
     #[test]
     fn test_encoder_unknown_protocol() {
-        let mut encoder = AvroEncoder::new("hxxx://bogus".into());
+        let mut encoder = AvroEncoder::new(String::from("hxxx://bogus"));
         let strategy = SubjectNameStrategy::TopicRecordNameStrategy(
-            "heartbeat".into(),
-            "nl.openweb.data.Balance".into(),
+            String::from("heartbeat"),
+            String::from("nl.openweb.data.Balance"),
         );
         let result = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
 
@@ -1161,7 +1162,7 @@ mod tests {
 
     #[test]
     fn test_encoder_schema_registry_unavailable_with_record() {
-        let mut encoder = AvroEncoder::new("http://bogus".into());
+        let mut encoder = AvroEncoder::new(String::from("http://bogus"));
         let strategy = SubjectNameStrategy::RecordNameStrategyWithSchema(Box::from(
             SuppliedSchema {
                 name: Some(String::from("nl.openweb.data.Balance")),
@@ -1188,7 +1189,8 @@ mod tests {
     #[test]
     fn test_encode_cache() {
         let mut encoder = AvroEncoder::new(format!("http://{}", server_address()));
-        let strategy = SubjectNameStrategy::RecordNameStrategy("nl.openweb.data.Heartbeat".into());
+        let strategy =
+            SubjectNameStrategy::RecordNameStrategy(String::from("nl.openweb.data.Heartbeat"));
 
         let _m = mock("GET", "/subjects/nl.openweb.data.Heartbeat/versions/latest")
             .with_status(404)
@@ -1247,7 +1249,7 @@ mod tests {
         let mut encoder = AvroEncoder::new(format!("http://{}", server_address()));
 
         let key_strategy = SubjectNameStrategy::TopicNameStrategyWithSchema(
-            "heartbeat".into(),
+            String::from("heartbeat"),
             true,
             Box::from(SuppliedSchema {
                 name: Some(String::from("nl.openweb.data.Name")),
@@ -1269,7 +1271,7 @@ mod tests {
             ])
         );
         let value_strategy = SubjectNameStrategy::TopicNameStrategyWithSchema(
-            "heartbeat".into(),
+            String::from("heartbeat"),
             false,
             Box::from(SuppliedSchema {
                 name: Some(String::from("nl.openweb.data.Heartbeat")),
@@ -1346,7 +1348,7 @@ mod tests {
         let mut encoder = AvroEncoder::new(format!("http://{}", server_address()));
 
         let strategy = SubjectNameStrategy::TopicRecordNameStrategyWithSchema(
-            "hb".into(),
+            String::from("hb"),
             Box::from(SuppliedSchema {
                 name: Some(String::from("nl.openweb.data.Heartbeat")),
                 schema_type: SchemaType::Avro,
@@ -1492,7 +1494,7 @@ mod tests {
             .create();
 
         let primitive_schema_strategy = SubjectNameStrategy::TopicNameStrategyWithSchema(
-            "heartbeat".into(),
+            String::from("heartbeat"),
             true,
             get_supplied_schema(&Schema::String),
         );
