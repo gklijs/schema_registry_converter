@@ -11,7 +11,7 @@ use rdkafka::message::FromBytes;
 use schema_registry_converter::schema_registry::{SchemaType, SubjectNameStrategy, SuppliedSchema};
 
 fn get_schema_registry_url() -> String {
-    "http://localhost:8081".into()
+    String::from("http://localhost:8081")
 }
 
 fn get_brokers() -> &'static str {
@@ -86,12 +86,12 @@ fn do_avro_test(
 fn test1_topic_name_strategy_with_schema() {
     let topic = "topicnamestrategy";
     let key_strategy = SubjectNameStrategy::TopicNameStrategyWithSchema(
-        topic.into(),
+        String::from(topic),
         true,
         get_heartbeat_schema(),
     );
     let value_strategy = SubjectNameStrategy::TopicNameStrategyWithSchema(
-        topic.into(),
+        String::from(topic),
         false,
         get_heartbeat_schema(),
     );
@@ -112,11 +112,11 @@ fn test2_record_name_strategy_with_schema() {
 fn test3_topic_record_name_strategy_with_schema() {
     let topic = "topicrecordnamestrategy";
     let key_strategy = SubjectNameStrategy::TopicRecordNameStrategyWithSchema(
-        topic.into(),
+        String::from(topic),
         get_heartbeat_schema(),
     );
     let value_strategy = SubjectNameStrategy::TopicRecordNameStrategyWithSchema(
-        topic.into(),
+        String::from(topic),
         get_heartbeat_schema(),
     );
     do_avro_test(topic, key_strategy, value_strategy)
@@ -126,8 +126,8 @@ fn test3_topic_record_name_strategy_with_schema() {
 #[cfg_attr(not(feature = "kafka_test"), ignore)]
 fn test4_topic_name_strategy_schema_now_available() {
     let topic = "topicnamestrategy";
-    let key_strategy = SubjectNameStrategy::TopicNameStrategy(topic.into(), true);
-    let value_strategy = SubjectNameStrategy::TopicNameStrategy(topic.into(), false);
+    let key_strategy = SubjectNameStrategy::TopicNameStrategy(String::from(topic), true);
+    let value_strategy = SubjectNameStrategy::TopicNameStrategy(String::from(topic), false);
     do_avro_test(topic, key_strategy, value_strategy)
 }
 
@@ -135,9 +135,10 @@ fn test4_topic_name_strategy_schema_now_available() {
 #[cfg_attr(not(feature = "kafka_test"), ignore)]
 fn test5_record_name_strategy_schema_now_available() {
     let topic = "recordnamestrategy";
-    let key_strategy = SubjectNameStrategy::RecordNameStrategy("nl.openweb.data.Heartbeat".into());
+    let key_strategy =
+        SubjectNameStrategy::RecordNameStrategy(String::from("nl.openweb.data.Heartbeat"));
     let value_strategy =
-        SubjectNameStrategy::RecordNameStrategy("nl.openweb.data.Heartbeat".into());
+        SubjectNameStrategy::RecordNameStrategy(String::from("nl.openweb.data.Heartbeat"));
     do_avro_test(topic, key_strategy, value_strategy)
 }
 
@@ -146,12 +147,12 @@ fn test5_record_name_strategy_schema_now_available() {
 fn test6_topic_record_name_strategy_schema_now_available() {
     let topic = "topicrecordnamestrategy";
     let key_strategy = SubjectNameStrategy::TopicRecordNameStrategy(
-        topic.into(),
-        "nl.openweb.data.Heartbeat".into(),
+        String::from(topic),
+        String::from("nl.openweb.data.Heartbeat"),
     );
     let value_strategy = SubjectNameStrategy::TopicRecordNameStrategy(
-        topic.into(),
-        "nl.openweb.data.Heartbeat".into(),
+        String::from(topic),
+        String::from("nl.openweb.data.Heartbeat"),
     );
     do_avro_test(topic, key_strategy, value_strategy)
 }
