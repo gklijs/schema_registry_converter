@@ -1,4 +1,7 @@
 @startuml
+skinparam shadowing false
+skinparam defaultFontName Roboto
+skinparam defaultFontSize 20
 title Consumer activity flow
 
 (*) -> "Create decoder"

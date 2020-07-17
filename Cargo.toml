@@ -14,7 +14,8 @@ edition = "2018"
 
 [features]
 avro = ["avro-rs"]
-proto_fish = ["protofish", "bytes", "logos"]
+proto_decoder = ["protofish", "bytes", "logos"]
+proto_raw_encoder = ["logos"]
 kafka_test = []
 default = []
 

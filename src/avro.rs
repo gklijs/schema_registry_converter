@@ -72,7 +72,7 @@ struct AvroSchema {
 /// let mut decoder = AvroDecoder::new(format!("http://{}", server_address()));
 /// let heartbeat = decoder.decode(Some(&[0,0,0,0,1,6])).unwrap().1;
 ///
-/// assert_eq!(heartbeat, Value::Record(vec!(("beat".to_string(), Value::Long(3)))))
+/// assert_eq!(heartbeat, Value::Record(vec![("beat".to_string(), Value::Long(3))]))
 /// ```
 #[derive(Debug)]
 pub struct AvroDecoder {
@@ -128,7 +128,7 @@ impl AvroDecoder {
     /// decoder.remove_errors_from_cache();
     ///
     /// let heartbeat = decoder.decode(Some(&bytes)).unwrap().1;
-    /// assert_eq!(heartbeat, Value::Record(vec!(("beat".to_string(), Value::Long(3)))))
+    /// assert_eq!(heartbeat, Value::Record(vec![("beat".to_string(), Value::Long(3))]))
     /// ```
     pub fn remove_errors_from_cache(&mut self) {
         self.cache.retain(|_, v| v.is_ok());
@@ -221,14 +221,14 @@ impl AvroDecoder {
 /// let mut encoder = AvroEncoder::new(server_address().to_string());
 ///
 /// let key_strategy = SubjectNameStrategy::TopicNameStrategy(String::from("heartbeat"), true);
-/// let bytes = encoder.encode(vec!(("name", Value::String("Some name".to_owned()))), &key_strategy);
+/// let bytes = encoder.encode(vec![("name", Value::String("Some name".to_owned()))], &key_strategy);
 ///
-/// assert_eq!(bytes, Ok(vec!(0, 0, 0, 0, 4, 18, 83, 111, 109, 101, 32, 110, 97, 109, 101)));
+/// assert_eq!(bytes, Ok(vec![0, 0, 0, 0, 4, 18, 83, 111, 109, 101, 32, 110, 97, 109, 101]));
 ///
 /// let value_strategy = SubjectNameStrategy::TopicNameStrategy(String::from("heartbeat"), false);
-/// let bytes = encoder.encode(vec!(("beat", Value::Long(3))), &value_strategy);
+/// let bytes = encoder.encode(vec![("beat", Value::Long(3))], &value_strategy);
 ///
-/// assert_eq!(bytes, Ok(vec!(0,0,0,0,3,6)))
+/// assert_eq!(bytes, Ok(vec![0,0,0,0,3,6]))
 /// ```
 #[derive(Debug)]
 pub struct AvroEncoder {
@@ -296,7 +296,7 @@ impl AvroEncoder {
     ///     .with_body(r#"{"error_code":40403,"message":"Schema not found"}"#)
     ///     .create();
     ///
-    /// let bytes = encoder.encode(vec!(("beat", Value::Long(3))), &strategy);
+    /// let bytes = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
     /// assert_eq!(bytes, Err(SRCError::new("Did not get a 200 response code but 404 instead", None, false).into_cache()));
     ///
     /// let _m = mock("GET", "/subjects/nl.openweb.data.Heartbeat/versions/latest")
@@ -305,13 +305,13 @@ impl AvroEncoder {
     ///     .with_body(r#"{"subject":"heartbeat-value","version":1,"id":4,"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
     ///     .create();
     ///
-    /// let bytes = encoder.encode(vec!(("beat", Value::Long(3))), &strategy);
+    /// let bytes = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
     /// assert_eq!(bytes, Err(SRCError::new("Did not get a 200 response code but 404 instead", None, false).into_cache()));
     ///
     /// encoder.remove_errors_from_cache();
     ///
-    /// let bytes = encoder.encode(vec!(("beat", Value::Long(3))), &strategy);
-    /// assert_eq!(bytes, Ok(vec!(0,0,0,0,4,6)))
+    /// let bytes = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
+    /// assert_eq!(bytes, Ok(vec![0,0,0,0,4,6]))
     /// ```
     pub fn remove_errors_from_cache(&mut self) {
         self.cache.retain(|_, v| v.is_ok());
@@ -335,9 +335,9 @@ impl AvroEncoder {
     ///
     /// let mut encoder = AvroEncoder::new(server_address().to_string());
     /// let strategy = SubjectNameStrategy::TopicRecordNameStrategy(String::from("heartbeat"), String::from("nl.openweb.data.Heartbeat"));
-    /// let bytes = encoder.encode(vec!(("beat", Value::Long(3))), &strategy);
+    /// let bytes = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
     ///
-    /// assert_eq!(bytes, Ok(vec!(0,0,0,0,3,6)))
+    /// assert_eq!(bytes, Ok(vec![0,0,0,0,3,6]))
     /// ```
     pub fn encode(
         &mut self,
@@ -380,7 +380,7 @@ impl AvroEncoder {
     /// let existing_schema_strategy = SubjectNameStrategy::TopicRecordNameStrategy(String::from("heartbeat"), String::from("nl.openweb.data.Heartbeat"));
     /// let bytes = encoder.encode_struct(Heartbeat{beat: 3}, &existing_schema_strategy);
     ///
-    /// assert_eq!(bytes, Ok(vec!(0,0,0,0,3,6)));
+    /// assert_eq!(bytes, Ok(vec![0,0,0,0,3,6]));
     ///
     ///  let _n = mock("POST", "/subjects/heartbeat-key/versions")
     ///      .with_status(200)
@@ -391,7 +391,7 @@ impl AvroEncoder {
     /// let primitive_schema_strategy = SubjectNameStrategy::TopicNameStrategyWithSchema(String::from("heartbeat"), true, get_supplied_schema(&Schema::String));
     /// let bytes = encoder.encode_struct("key-value", &primitive_schema_strategy);
     ///
-    /// assert_eq!(bytes, Ok(vec!(0, 0, 0, 0, 4, 18, 107, 101, 121, 45, 118, 97, 108, 117, 101)));
+    /// assert_eq!(bytes, Ok(vec![0, 0, 0, 0, 4, 18, 107, 101, 121, 45, 118, 97, 108, 117, 101]));
     /// ```
     pub fn encode_struct(
         &mut self,
@@ -974,19 +974,19 @@ mod tests {
 
         assert_eq!(
             cac,
-            Value::Record(vec!(
+            Value::Record(vec![
                 (
                     "id".to_string(),
                     Value::Fixed(
                         16,
-                        vec!(
+                        vec![
                             204, 240, 237, 74, 227, 188, 75, 46, 183, 163, 122, 214, 178, 72, 118,
                             162
-                        ),
+                        ],
                     )
                 ),
                 ("a_type".to_string(), Value::Enum(1, "MANUAL".to_string()))
-            ))
+            ])
         );
     }
 
@@ -1502,9 +1502,9 @@ mod tests {
 
         assert_eq!(
             bytes,
-            Ok(vec!(
+            Ok(vec![
                 0, 0, 0, 0, 4, 18, 107, 101, 121, 45, 118, 97, 108, 117, 101
-            ))
+            ])
         );
     }
 

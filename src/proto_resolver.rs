@@ -15,12 +15,10 @@ pub(crate) struct IndexResolver {
 impl MessageResolver {
     pub(crate) fn new(s: &str) -> MessageResolver {
         let helper = ResolverHelper::new(s);
-
         let mut map = HashMap::new();
         for i in &helper.indexes {
             map.insert(i.clone(), find_name(&*i, &helper));
         }
-
         MessageResolver { map }
     }
 
@@ -32,12 +30,10 @@ impl MessageResolver {
 impl IndexResolver {
     pub(crate) fn new(s: &str) -> IndexResolver {
         let helper = ResolverHelper::new(s);
-
         let mut map = HashMap::new();
         for i in &helper.indexes {
             map.insert(find_name(&*i, &helper), i.clone());
         }
-
         IndexResolver { map }
     }
 
@@ -95,7 +91,7 @@ impl ResolverHelper {
                     let message = String::from(slice[8..slice.len()].trim());
                     for i in &indexes {
                         if same_vec(i, &*index) {
-                            *index.last_mut().unwrap() += 1;
+                            *index.last_mut().unwrap() += 2;
                         }
                     }
                     indexes.push(index.clone());
@@ -162,7 +158,7 @@ fn same_vec(first: &[u8], second: &[u8]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use crate::proto::{IndexResolver, MessageResolver};
+    use crate::proto_resolver::{IndexResolver, MessageResolver};
 
     fn get_proto_simple() -> &'static str {
         r#"syntax = "proto3";package nl.openweb.data; message Heartbeat{uint64 beat = 1;}"#
@@ -177,10 +173,10 @@ mod tests {
         let resolver = MessageResolver::new(get_proto_simple());
 
         assert_eq!(
-            resolver.find_name(&vec!(0)),
+            resolver.find_name(&vec![0]),
             Some(&String::from("nl.openweb.data.Heartbeat"))
         );
-        assert_eq!(resolver.find_name(&vec!(1)), None)
+        assert_eq!(resolver.find_name(&vec![1]), None)
     }
 
     #[test]
@@ -189,7 +185,7 @@ mod tests {
 
         assert_eq!(
             resolver.find_index("nl.openweb.data.Heartbeat"),
-            Some(&vec!(0))
+            Some(&vec![0])
         );
         assert_eq!(resolver.find_index("nl.openweb.data.Foo"), None)
     }
@@ -199,15 +195,15 @@ mod tests {
         let resolver = MessageResolver::new(get_proto_complex());
 
         assert_eq!(
-            resolver.find_name(&vec!(0)),
+            resolver.find_name(&vec![0]),
             Some(&String::from("org.schema_registry_test_app.proto.A"))
         );
         assert_eq!(
-            resolver.find_name(&vec!(2, 0)),
+            resolver.find_name(&vec![4, 0]),
             Some(&String::from("org.schema_registry_test_app.proto.C.D"))
         );
         assert_eq!(
-            resolver.find_name(&vec!(3)),
+            resolver.find_name(&vec![6]),
             Some(&String::from(
                 "org.schema_registry_test_app.proto.ProtoTest"
             ))
@@ -220,15 +216,15 @@ mod tests {
 
         assert_eq!(
             resolver.find_index("org.schema_registry_test_app.proto.A"),
-            Some(&vec!(0))
+            Some(&vec![0])
         );
         assert_eq!(
             resolver.find_index("org.schema_registry_test_app.proto.C.D"),
-            Some(&vec!(2, 0))
+            Some(&vec![4, 0])
         );
         assert_eq!(
             resolver.find_index("org.schema_registry_test_app.proto.ProtoTest"),
-            Some(&vec!(3))
+            Some(&vec![6])
         );
     }
 }
