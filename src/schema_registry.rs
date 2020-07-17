@@ -114,7 +114,7 @@ pub fn get_payload(id: u32, encoded_bytes: Vec<u8>) -> Vec<u8> {
 /// id that is encoded in the bytes.
 pub fn get_schema_by_id(id: u32, schema_registry_url: &str) -> Result<RegisteredSchema, SRCError> {
     let url = format!("{}/schemas/ids/{}", schema_registry_url, id);
-    schema_from_url(&url, Option::from(id)).and_then(Ok)
+    schema_from_url(&url, Option::from(id))
 }
 
 pub fn get_schema_by_id_and_type(
@@ -429,13 +429,13 @@ fn to_json(mut easy: Easy2<Collector>) -> Result<Value, SRCError> {
             return Err(SRCError::non_retryable_without_cause(&*format!(
                 "Did not get a 200 response code but {} instead",
                 v
-            )));
+            )))
         }
         Err(e) => {
             return Err(SRCError::retryable_with_cause(
                 e,
                 "Encountered error getting http response",
-            ));
+            ))
         }
     }
     let mut data = Vec::new();
@@ -448,7 +448,7 @@ fn to_json(mut easy: Easy2<Collector>) -> Result<Value, SRCError> {
             return Err(SRCError::non_retryable_with_cause(
                 e,
                 "Invalid UTF-8 sequence",
-            ));
+            ))
         }
     };
     match serde_json::from_str(body) {
