@@ -14,8 +14,8 @@ edition = "2018"
 
 [features]
 avro = ["avro-rs"]
-proto_decoder = ["protofish", "bytes", "logos"]
-proto_raw_encoder = ["logos"]
+proto_decoder = ["protofish", "bytes", "logos", "integer-encoding"]
+proto_raw_encoder = ["logos", "integer-encoding"]
 kafka_test = []
 default = []
 
@@ -35,6 +35,10 @@ version = "^0.4"
 
 [dependencies.failure]
 version = "^0.1"
+
+[dependencies.integer-encoding]
+version = "^1.1"
+optional = true
 
 [dependencies.logos]
 version = "^0.11"

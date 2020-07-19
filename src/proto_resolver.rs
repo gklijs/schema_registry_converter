@@ -4,12 +4,12 @@ use std::collections::HashMap;
 
 #[derive(Debug)]
 pub(crate) struct MessageResolver {
-    map: HashMap<Vec<u8>, String, RandomState>,
+    map: HashMap<Vec<i32>, String, RandomState>,
 }
 
 #[derive(Debug)]
 pub(crate) struct IndexResolver {
-    map: HashMap<String, Vec<u8>, RandomState>,
+    map: HashMap<String, Vec<i32>, RandomState>,
 }
 
 impl MessageResolver {
@@ -22,7 +22,7 @@ impl MessageResolver {
         MessageResolver { map }
     }
 
-    pub(crate) fn find_name(&self, index: &[u8]) -> Option<&String> {
+    pub(crate) fn find_name(&self, index: &[i32]) -> Option<&String> {
         self.map.get(index)
     }
 }
@@ -37,14 +37,14 @@ impl IndexResolver {
         IndexResolver { map }
     }
 
-    pub(crate) fn find_index(&self, name: &str) -> Option<&Vec<u8>> {
+    pub(crate) fn find_index(&self, name: &str) -> Option<&Vec<i32>> {
         self.map.get(name)
     }
 }
 
 struct ResolverHelper {
     package: Option<String>,
-    indexes: Vec<Vec<u8>>,
+    indexes: Vec<Vec<i32>>,
     names: Vec<String>,
 }
 
@@ -72,9 +72,9 @@ enum Token {
 
 impl ResolverHelper {
     fn new(s: &str) -> ResolverHelper {
-        let mut index: Vec<u8> = vec![0];
+        let mut index: Vec<i32> = vec![0];
         let mut package: Option<String> = None;
-        let mut indexes: Vec<Vec<u8>> = Vec::new();
+        let mut indexes: Vec<Vec<i32>> = Vec::new();
         let mut names: Vec<String> = Vec::new();
 
         let mut lex = Token::lexer(s);
@@ -91,7 +91,7 @@ impl ResolverHelper {
                     let message = String::from(slice[8..slice.len()].trim());
                     for i in &indexes {
                         if same_vec(i, &*index) {
-                            *index.last_mut().unwrap() += 2;
+                            *index.last_mut().unwrap() += 1;
                         }
                     }
                     indexes.push(index.clone());
@@ -116,35 +116,31 @@ impl ResolverHelper {
     }
 }
 
-fn find_part<'a>(index: &'a [u8], helper: &'a ResolverHelper) -> Option<&'a str> {
+fn find_part<'a>(index: &'a [i32], helper: &'a ResolverHelper) -> &'a str {
     for i in 0..helper.indexes.len() {
         if same_vec(index, &helper.indexes[i]) {
-            return Some(&helper.names[i]);
+            return &helper.names[i];
         }
     }
-    None
+    unreachable!()
 }
 
-fn find_name(index: &[u8], helper: &ResolverHelper) -> String {
+fn find_name(index: &[i32], helper: &ResolverHelper) -> String {
     let mut result = match &helper.package {
         None => String::new(),
         Some(v) => String::from(v),
     };
     for i in 1..index.len() + 1 {
-        match find_part(&index[..i], helper) {
-            Some(v) => {
-                if !result.is_empty() {
-                    result.push('.')
-                }
-                result.push_str(v)
-            }
-            None => unreachable!(),
+        let part = find_part(&index[..i], helper);
+        if !result.is_empty() {
+            result.push('.')
         }
+        result.push_str(part)
     }
     result
 }
 
-fn same_vec(first: &[u8], second: &[u8]) -> bool {
+fn same_vec(first: &[i32], second: &[i32]) -> bool {
     if first.len() != second.len() {
         return false;
     };
@@ -199,11 +195,11 @@ mod tests {
             Some(&String::from("org.schema_registry_test_app.proto.A"))
         );
         assert_eq!(
-            resolver.find_name(&vec![4, 0]),
+            resolver.find_name(&vec![2, 0]),
             Some(&String::from("org.schema_registry_test_app.proto.C.D"))
         );
         assert_eq!(
-            resolver.find_name(&vec![6]),
+            resolver.find_name(&vec![3]),
             Some(&String::from(
                 "org.schema_registry_test_app.proto.ProtoTest"
             ))
@@ -220,11 +216,11 @@ mod tests {
         );
         assert_eq!(
             resolver.find_index("org.schema_registry_test_app.proto.C.D"),
-            Some(&vec![4, 0])
+            Some(&vec![2, 0])
         );
         assert_eq!(
             resolver.find_index("org.schema_registry_test_app.proto.ProtoTest"),
-            Some(&vec![6])
+            Some(&vec![3])
         );
     }
 }
