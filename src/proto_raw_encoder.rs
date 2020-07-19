@@ -2,6 +2,7 @@ use crate::proto_resolver::IndexResolver;
 use crate::schema_registry::{
     get_payload, get_schema_by_subject, get_subject, SRCError, SubjectNameStrategy,
 };
+use integer_encoding::VarInt;
 use std::collections::hash_map::RandomState;
 use std::collections::HashMap;
 
@@ -67,10 +68,12 @@ fn to_bytes(
     full_name: &str,
 ) -> Result<Vec<u8>, SRCError> {
     let mut index_bytes = match encode_context.resolver.find_index(full_name) {
-        Some(v) if v.len() == 1 && v[0] == 0u8 => vec![0u8],
+        Some(v) if v.len() == 1 && v[0] == 0i32 => vec![0u8],
         Some(v) => {
-            let mut result = vec![v.len() as u8 + 1];
-            result.extend(v);
+            let mut result = (v.len() as i32).encode_var_vec();
+            for i in v {
+                result.append(&mut i.encode_var_vec())
+            }
             result
         }
         None => {
@@ -93,7 +96,9 @@ struct EncodeContext {
 #[cfg(test)]
 mod tests {
     use crate::proto_raw_encoder::ProtoRawEncoder;
-    use crate::schema_registry::{SubjectNameStrategy, SuppliedReference, SuppliedSchema, SchemaType};
+    use crate::schema_registry::{
+        SchemaType, SubjectNameStrategy, SuppliedReference, SuppliedSchema,
+    };
     use mockito::{mock, server_address};
 
     fn get_proto_hb_schema() -> &'static str {
@@ -179,19 +184,20 @@ mod tests {
             .create();
 
         let mut encoder = ProtoRawEncoder::new(format!("http://{}", server_address()));
-        let result_reference = SuppliedReference{
+        let result_reference = SuppliedReference {
             name: String::from("result.proto"),
             subject: String::from("result.proto"),
             schema: String::from(get_proto_result()),
-            references: vec![]
+            references: vec![],
         };
-        let supplied_schema = SuppliedSchema{
+        let supplied_schema = SuppliedSchema {
             name: Some(String::from("test.proto")),
             schema_type: SchemaType::Protobuf,
             schema: String::from(get_proto_complex()),
-            references: vec![result_reference]
+            references: vec![result_reference],
         };
-        let strategy = SubjectNameStrategy::RecordNameStrategyWithSchema(Box::from(supplied_schema));
+        let strategy =
+            SubjectNameStrategy::RecordNameStrategyWithSchema(Box::from(supplied_schema));
 
         let encoded_data = encoder
             .encode(

@@ -4,9 +4,11 @@ use crate::schema_registry::{
     RegisteredSchema, SRCError, SchemaType,
 };
 use bytes::Bytes;
+use integer_encoding::VarIntReader;
 use protofish::{Context, MessageValue, Value};
 use std::collections::hash_map::RandomState;
 use std::collections::HashMap;
+use std::io::BufReader;
 
 #[derive(Debug)]
 struct ResolveContext {
@@ -59,7 +61,7 @@ impl ProtoDecoder {
         match self.get_context(id) {
             Ok(s) => {
                 let (index, data) = to_index_and_data(bytes);
-                let full_name = match s.resolver.find_name(index) {
+                let full_name = match s.resolver.find_name(&index) {
                     Some(n) => n,
                     None => {
                         return Err(SRCError::non_retryable_without_cause(&*format!(
@@ -69,7 +71,7 @@ impl ProtoDecoder {
                     }
                 };
                 let message_info = s.context.get_message(full_name).unwrap();
-                Ok(message_info.decode(data, &s.context))
+                Ok(message_info.decode(&data, &s.context))
             }
             Err(e) => Err(Clone::clone(e)),
         }
@@ -124,13 +126,17 @@ fn to_resolve_context(
     }
 }
 
-fn to_index_and_data(bytes: &[u8]) -> (&[u8], &[u8]) {
-    match bytes[0] {
-        0 => (&[0], &bytes[1..]),
-        i => {
-            let count = i as usize;
-            (&bytes[1..count], &bytes[count..])
+fn to_index_and_data(bytes: &[u8]) -> (Vec<i32>, Vec<u8>) {
+    if bytes[0] == 0 {
+        (vec![0], bytes[1..].to_vec())
+    } else {
+        let mut reader = BufReader::new(bytes);
+        let count: i32 = reader.read_varint().unwrap();
+        let mut index = Vec::new();
+        for _ in 0..count {
+            index.push(reader.read_varint().unwrap())
         }
+        (index, reader.buffer().to_vec())
     }
 }
 
