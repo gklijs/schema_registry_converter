@@ -159,7 +159,7 @@ mod tests {
     }
 
     fn get_complex_references() -> &'static str {
-        r#"[{\"name\": \"result.proto\", \"subject\": \"result.proto\", \"version\": 1}]"#
+        r#"{"name": "result.proto", "subject": "result.proto", "version": 1}"#
     }
 
     fn get_proto_hb_101() -> &'static [u8] {
@@ -174,14 +174,17 @@ mod tests {
         ]
     }
 
-    fn get_proto_body(schema: &str) -> String {
-        format!("{{\"schema\":\"{}\", \"schemaType\":\"PROTOBUF\"}}", schema)
+    fn get_proto_body(schema: &str, id: u32) -> String {
+        format!(
+            "{{\"schema\":\"{}\", \"schemaType\":\"PROTOBUF\", \"id\":{}}}",
+            schema, id
+        )
     }
 
-    fn get_proto_body_with_references(schema: &str, references: &str) -> String {
+    fn get_proto_body_with_reference(schema: &str, id: u32, reference: &str) -> String {
         format!(
-            "{{\"schema\":\"{}\", \"schemaType\":\"PROTOBUF\", \"references\":\"{}\"}}",
-            schema, references
+            "{{\"schema\":\"{}\", \"schemaType\":\"PROTOBUF\", \"id\":{}, \"references\":[{}]}}",
+            schema, id, reference
         )
     }
 
@@ -190,7 +193,7 @@ mod tests {
         let _m = mock("GET", "/schemas/ids/7")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_proto_body(get_proto_hb_schema()))
+            .with_body(&get_proto_body(get_proto_hb_schema(), 1))
             .create();
 
         let mut decoder = ProtoDecoder::new(format!("http://{}", server_address()));
@@ -210,8 +213,9 @@ mod tests {
         let _m = mock("GET", "/schemas/ids/6")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_proto_body_with_references(
+            .with_body(&get_proto_body_with_reference(
                 get_proto_complex(),
+                2,
                 get_complex_references(),
             ))
             .create();
@@ -219,7 +223,7 @@ mod tests {
         let _m = mock("GET", "/subjects/result.proto/versions/1")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_proto_body(get_proto_result()))
+            .with_body(&get_proto_body(get_proto_result(), 1))
             .create();
 
         let mut decoder = ProtoDecoder::new(format!("http://{}", server_address()));

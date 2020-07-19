@@ -114,7 +114,7 @@ impl AvroDecoder {
     ///
     /// let heartbeat = decoder.decode(Some(&bytes));
     ///
-    /// assert_eq!(heartbeat, Err(SRCError::new("Did not get a 200 response code but 404 instead", None, false).into_cache()));
+    /// assert_eq!(heartbeat, Err(SRCError::new("Could not get raw schema from response", None, false).into_cache()));
     ///
     /// let _m = mock("GET", "/schemas/ids/2")
     ///     .with_status(200)
@@ -123,7 +123,7 @@ impl AvroDecoder {
     ///     .create();
     ///
     /// let heartbeat = decoder.decode(Some(&bytes));
-    /// assert_eq!(heartbeat, Err(SRCError::new("Did not get a 200 response code but 404 instead", None, false).into_cache()));
+    /// assert_eq!(heartbeat, Err(SRCError::new("Could not get raw schema from response", None, false).into_cache()));
     ///
     /// decoder.remove_errors_from_cache();
     ///
@@ -218,7 +218,7 @@ impl AvroDecoder {
 ///     .with_body(r#"{"subject":"heartbeat-value","version":1,"id":4,"schema":"{\"type\":\"record\",\"name\":\"Name\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"name\",\"type\":\"string\",\"avro.java.string\":\"String\"}]}"}"#)
 ///     .create();
 ///
-/// let mut encoder = AvroEncoder::new(server_address().to_string());
+/// let mut encoder = AvroEncoder::new(format!("http://{}", server_address()));
 ///
 /// let key_strategy = SubjectNameStrategy::TopicNameStrategy(String::from("heartbeat"), true);
 /// let bytes = encoder.encode(vec![("name", Value::String("Some name".to_owned()))], &key_strategy);
@@ -258,7 +258,7 @@ impl AvroEncoder {
     /// #    .with_body(r#"{"id":23}"#)
     /// #    .create();
     ///
-    /// let mut encoder = AvroEncoder::new(server_address().to_string());
+    /// let mut encoder = AvroEncoder::new(format!("http://{}", server_address()));
     ///
     /// let strategy = SubjectNameStrategy::TopicRecordNameStrategyWithSchema(String::from("hb"), Box::from(SuppliedSchema {
     ///                 name: Some(String::from("nl.openweb.data.Heartbeat")),
@@ -287,7 +287,7 @@ impl AvroEncoder {
     ///  # use avro_rs::types::Value;
     ///  # use schema_registry_converter::avro::AvroEncoder;
     ///
-    /// let mut encoder = AvroEncoder::new(server_address().to_string());
+    /// let mut encoder = AvroEncoder::new(format!("http://{}", server_address()));
     /// let strategy = SubjectNameStrategy::RecordNameStrategy(String::from("nl.openweb.data.Heartbeat"));
     ///
     /// let _m = mock("GET", "/subjects/nl.openweb.data.Heartbeat/versions/latest")
@@ -297,7 +297,7 @@ impl AvroEncoder {
     ///     .create();
     ///
     /// let bytes = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
-    /// assert_eq!(bytes, Err(SRCError::new("Did not get a 200 response code but 404 instead", None, false).into_cache()));
+    /// assert_eq!(bytes, Err(SRCError::new("Could not get id from response", None, false).into_cache()));
     ///
     /// let _m = mock("GET", "/subjects/nl.openweb.data.Heartbeat/versions/latest")
     ///     .with_status(200)
@@ -306,7 +306,7 @@ impl AvroEncoder {
     ///     .create();
     ///
     /// let bytes = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
-    /// assert_eq!(bytes, Err(SRCError::new("Did not get a 200 response code but 404 instead", None, false).into_cache()));
+    /// assert_eq!(bytes, Err(SRCError::new("Could not get id from response", None, false).into_cache()));
     ///
     /// encoder.remove_errors_from_cache();
     ///
@@ -333,7 +333,7 @@ impl AvroEncoder {
     ///     .with_body(r#"{"subject":"heartbeat-value","version":1,"id":3,"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
     ///     .create();
     ///
-    /// let mut encoder = AvroEncoder::new(server_address().to_string());
+    /// let mut encoder = AvroEncoder::new(format!("http://{}", server_address()));
     /// let strategy = SubjectNameStrategy::TopicRecordNameStrategy(String::from("heartbeat"), String::from("nl.openweb.data.Heartbeat"));
     /// let bytes = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
     ///
@@ -376,7 +376,7 @@ impl AvroEncoder {
     ///        beat: i64,
     ///    }
     ///
-    /// let mut encoder = AvroEncoder::new(server_address().to_string());
+    /// let mut encoder = AvroEncoder::new(format!("http://{}", server_address()));
     /// let existing_schema_strategy = SubjectNameStrategy::TopicRecordNameStrategy(String::from("heartbeat"), String::from("nl.openweb.data.Heartbeat"));
     /// let bytes = encoder.encode_struct(Heartbeat{beat: 3}, &existing_schema_strategy);
     ///
@@ -869,8 +869,10 @@ mod tests {
         assert_eq!(
             heartbeat,
             Err(SRCError::new(
-                "Invalid json string",
-                Some(String::from("expected `:` at line 1 column 130")),
+                "could not parse to RawRegisteredSchema",
+                Some(String::from(
+                    "error decoding response body: expected `:` at line 1 column 130"
+                )),
                 false,
             )
             .into_cache())
@@ -891,8 +893,10 @@ mod tests {
         assert_eq!(
             heartbeat,
             Err(SRCError::new(
-                "Invalid json string",
-                Some(String::from("expected `:` at line 1 column 130")),
+                "could not parse to RawRegisteredSchema",
+                Some(String::from(
+                    "error decoding response body: expected `:` at line 1 column 130"
+                )),
                 false,
             )
             .into_cache())
@@ -902,17 +906,12 @@ mod tests {
     #[test]
     fn test_decoder_schema_registry_unavailable() {
         let mut decoder = AvroDecoder::new("http://bogus".to_string());
-        let heartbeat = decoder.decode(Some(&[0, 0, 0, 10, 1, 6]));
+        let result = decoder.decode(Some(&[0, 0, 0, 10, 1, 6]));
 
-        assert_eq!(
-            heartbeat,
-            Err(SRCError::new(
-                "error performing get to schema registry",
-                Some(String::from("[6] Couldn\'t resolve host name")),
-                true,
-            )
-            .into_cache())
-        )
+        match result {
+            Err(e) => assert_eq!(e.error, "http get to schema registry failed"),
+            _ => panic!(),
+        }
     }
 
     #[test]
@@ -1003,12 +1002,7 @@ mod tests {
         let heartbeat = decoder.decode(Some(&bytes));
         assert_eq!(
             heartbeat,
-            Err(SRCError::new(
-                "Did not get a 200 response code but 404 instead",
-                None,
-                false,
-            )
-            .into_cache())
+            Err(SRCError::new("Could not get raw schema from response", None, false,).into_cache())
         );
         let _m = mock("GET", "/schemas/ids/2")
             .with_status(200)
@@ -1019,12 +1013,7 @@ mod tests {
         let heartbeat = decoder.decode(Some(&bytes));
         assert_eq!(
             heartbeat,
-            Err(SRCError::new(
-                "Did not get a 200 response code but 404 instead",
-                None,
-                false,
-            )
-            .into_cache())
+            Err(SRCError::new("Could not get raw schema from response", None, false,).into_cache())
         );
 
         decoder.remove_errors_from_cache();
@@ -1038,9 +1027,9 @@ mod tests {
 
     #[test]
     fn display_encode() {
-        let decoder = AvroEncoder::new(server_address().to_string());
+        let decoder = AvroEncoder::new(format!("http://{}", server_address()));
         assert_eq!(
-            "AvroEncoder { schema_registry_url: \"127.0.0.1:1234\", cache: {} }".to_owned(),
+            "AvroEncoder { schema_registry_url: \"http://127.0.0.1:1234\", cache: {} }".to_owned(),
             format!("{:?}", decoder)
         )
     }
@@ -1129,15 +1118,10 @@ mod tests {
         );
         let result = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
 
-        assert_eq!(
-            result,
-            Err(SRCError::new(
-                "error performing get to schema registry",
-                Some(String::from("[6] Couldn\'t resolve host name")),
-                true,
-            )
-            .into_cache())
-        )
+        match result {
+            Err(e) => assert_eq!(e.error, "http get to schema registry failed"),
+            _ => panic!(),
+        }
     }
 
     #[test]
@@ -1152,8 +1136,8 @@ mod tests {
         assert_eq!(
             result,
             Err(SRCError::new(
-                "error performing get to schema registry",
-                Some(String::from("[1] Unsupported protocol")),
+                "http get to schema registry failed",
+                Some(String::from("builder error for url (hxxx://bogus/subjects/heartbeat-nl.openweb.data.Balance/versions/latest): URL scheme is not allowed")),
                 true,
             )
             .into_cache())
@@ -1175,15 +1159,10 @@ mod tests {
         ));
         let result = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
 
-        assert_eq!(
-            result,
-            Err(SRCError::new(
-                "error performing post to schema registry to get id",
-                Some(String::from("[6] Couldn\'t resolve host name")),
-                true,
-            )
-            .into_cache())
-        )
+        match result {
+            Err(e) => assert_eq!(e.error, "http post to schema registry failed"),
+            _ => panic!()
+        }
     }
 
     #[test]
@@ -1201,12 +1180,7 @@ mod tests {
         let bytes = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
         assert_eq!(
             bytes,
-            Err(SRCError::new(
-                "Did not get a 200 response code but 404 instead",
-                None,
-                false,
-            )
-            .into_cache())
+            Err(SRCError::new("Could not get id from response", None, false,).into_cache())
         );
 
         let _n = mock("GET", "/subjects/nl.openweb.data.Heartbeat/versions/latest")
@@ -1218,12 +1192,10 @@ mod tests {
         let bytes = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
         assert_eq!(
             bytes,
-            Err(SRCError::new(
-                "Did not get a 200 response code but 404 instead",
-                None,
-                false,
+            Err(
+                SRCError::non_retryable_without_cause("Could not get id from response")
+                    .into_cache()
             )
-            .into_cache())
         );
 
         encoder.remove_errors_from_cache();
@@ -1330,10 +1302,13 @@ mod tests {
                 references: vec![],
             },
         ));
-        let bytes = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
+        let result = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
         assert_eq!(
-            bytes,
-            Err(SRCError::new("Could not get id from response", None, false).into_cache())
+            result,
+            Err(
+                SRCError::non_retryable_without_cause("Could not get id from response")
+                    .into_cache()
+            )
         )
     }
 
@@ -1381,8 +1356,10 @@ mod tests {
         assert_eq!(
             error,
             Err(SRCError::new(
-                "Did not get a 200 response code but 501 instead",
-                None,
+                "could not parse to RawRegisteredSchema",
+                Some(String::from(
+                    "error decoding response body: EOF while parsing a value at line 1 column 0"
+                )),
                 false,
             )
             .into_cache())

@@ -3,10 +3,10 @@
 use crate::schema_registry::SchemaType::{Avro, Json, Other, Protobuf};
 use byteorder::{BigEndian, ByteOrder, ReadBytesExt};
 use core::fmt;
-use curl::easy::{Easy2, Handler, List, WriteError};
 use failure::Fail;
+use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Error, Map, Value};
+use serde_json::{json, Map, Value};
 use std::fmt::Display;
 use std::ops::Deref;
 use std::str;
@@ -55,6 +55,17 @@ pub struct RegisteredSchema {
     pub schema_type: SchemaType,
     pub schema: String,
     pub references: Vec<RegisteredReference>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawRegisteredSchema {
+    subject: Option<String>,
+    version: Option<u32>,
+    id: Option<u32>,
+    schema_type: Option<String>,
+    references: Option<Vec<RegisteredReference>>,
+    schema: Option<String>,
 }
 
 /// Intermediate result to just handle the byte transformation. When used in a decoder just the
@@ -209,59 +220,55 @@ pub fn get_subject(subject_name_strategy: &SubjectNameStrategy) -> Result<String
     }
 }
 
-fn to_registered_reference(reference: &Value) -> Result<RegisteredReference, Error> {
-    serde_json::from_value(reference.clone())
-}
-
 /// Handles the work of doing an http call and transforming it to a schema while handling
 /// possible errors. When there is an error it might be useful to retry.
 fn schema_from_url(url: &str, id: Option<u32>) -> Result<RegisteredSchema, SRCError> {
-    let easy = match perform_get(url) {
-        Ok(v) => v,
-        Err(e) => {
-            return Err(SRCError::retryable_with_cause(
-                e,
-                "error performing get to schema registry",
-            ))
-        }
-    };
-    let json: Value = to_json(easy)?;
-    let id = match id {
-        Some(v) => v,
-        None => {
-            let id_from_response = match json["id"].as_u64() {
-                Some(v) => v,
-                None => return Err(SRCError::new("Could not get id from response", None, false)),
-            };
-            id_from_response as u32
-        }
-    };
-    let schema_type = match json["schemaType"].as_str() {
-        Some("AVRO") => Avro,
-        Some("PROTOBUF") => Protobuf,
-        Some("JSON") => Json,
-        Some(s) => Other(String::from(s)),
-        None => Avro,
-    };
-    let schema = match json["schema"].as_str() {
-        Some(v) => String::from(v),
-        None => {
-            return Err(SRCError::non_retryable_without_cause(
-                "Could not get raw schema from response",
-            ))
-        }
-    };
-    let references = match json["references"].as_array() {
-        None => vec![],
-        Some(v) => match v.iter().map(|j| to_registered_reference(j)).collect() {
-            Ok(v) => v,
+    let raw_schema = match reqwest::blocking::get(url) {
+        Ok(v) => match v.json::<RawRegisteredSchema>() {
+            Ok(r) => r,
             Err(e) => {
                 return Err(SRCError::non_retryable_with_cause(
                     e,
-                    "Error parsing reference",
+                    "could not parse to RawRegisteredSchema",
                 ))
             }
         },
+        Err(e) => {
+            return Err(SRCError::retryable_with_cause(
+                e,
+                "http get to schema registry failed",
+            ))
+        }
+    };
+    let id = match id {
+        Some(v) => v,
+        None => match raw_schema.id {
+            Some(v) => v,
+            None => {
+                return Err(SRCError::non_retryable_without_cause(
+                    "Could not get id from response",
+                ))
+            }
+        },
+    };
+    let schema_type = match raw_schema.schema_type {
+        Some(s) if s == "AVRO" => Avro,
+        Some(s) if s == "PROTOBUF" => Protobuf,
+        Some(s) if s == "JSON" => Json,
+        Some(s) => Other(s),
+        None => Avro,
+    };
+    let schema = match raw_schema.schema {
+        Some(v) => v,
+        None => {
+            return Err(SRCError::non_retryable_without_cause(
+                "Could not get raw schema from response",
+            ));
+        }
+    };
+    let references = match raw_schema.references {
+        None => Vec::new(),
+        Some(v) => v,
     };
     Ok(RegisteredSchema {
         id,
@@ -297,12 +304,12 @@ pub fn post_schema(
             return Err(SRCError::non_retryable_with_cause(
                 e,
                 "Error posting a reference",
-            ))
+            ));
         }
     };
     let url = format!("{}/subjects/{}/versions", schema_registry_url, subject);
     let body = get_body(&*schema_type, &*schema.schema, &*references);
-    let id = post_and_get_id(&*url, &*body)?;
+    let id = post_and_get_id(&*url, body)?;
     Ok(RegisteredSchema {
         id,
         schema_type: schema.schema_type,
@@ -326,38 +333,20 @@ fn get_body(schema_type: &str, schema: &str, references: &[RegisteredReference])
     schema_element.to_string()
 }
 
-fn post_and_get_id(url: &str, body: &str) -> Result<u32, SRCError> {
-    let easy = match perform_post(url, body) {
-        Ok(v) => v,
-        Err(e) => {
-            return Err(SRCError::retryable_with_cause(
-                e,
-                "error performing post to schema registry to get id",
-            ))
-        }
-    };
-    let json: Value = to_json(easy)?;
-    match json["id"].as_i64() {
-        Some(v) => Ok(v as u32),
+fn post_and_get_id(url: &str, body: String) -> Result<u32, SRCError> {
+    let raw_schema = perform_post(url, body)?;
+    match raw_schema.id {
+        Some(v) => Ok(v),
         None => Err(SRCError::non_retryable_without_cause(
             "Could not get id from response",
         )),
     }
 }
 
-fn post_and_get_version(url: &str, body: &str) -> Result<u32, SRCError> {
-    let easy = match perform_post(url, body) {
-        Ok(v) => v,
-        Err(e) => {
-            return Err(SRCError::retryable_with_cause(
-                e,
-                "error performing post to schema registry to get version",
-            ))
-        }
-    };
-    let json: Value = to_json(easy)?;
-    match json["version"].as_i64() {
-        Some(v) => Ok(v as u32),
+fn post_and_get_version(url: &str, body: String) -> Result<u32, SRCError> {
+    let raw_schema = perform_post(url, body)?;
+    match raw_schema.version {
+        Some(v) => Ok(v),
         None => Err(SRCError::non_retryable_without_cause(
             "Could not get version from response",
         )),
@@ -380,7 +369,7 @@ fn post_reference(
             return Err(SRCError::non_retryable_with_cause(
                 e,
                 "Error posting a reference",
-            ))
+            ));
         }
     };
     let url = format!(
@@ -388,9 +377,9 @@ fn post_reference(
         schema_registry_url, reference.subject
     );
     let body = get_body(schema_type, &*reference.schema, &*references);
-    post_and_get_id(&*url, &*body)?;
+    post_and_get_id(&*url, body.clone())?;
     let version_url = format!("{}/subjects/{}", schema_registry_url, reference.subject);
-    let version = post_and_get_version(&*version_url, &*body)?;
+    let version = post_and_get_version(&*version_url, body)?;
     Ok(RegisteredReference {
         name: reference.name,
         subject: reference.subject,
@@ -398,73 +387,27 @@ fn post_reference(
     })
 }
 
-/// Does the get, doing it like this makes for more compact code.
-fn perform_get(url: &str) -> Result<Easy2<Collector>, curl::Error> {
-    let mut easy = Easy2::new(Collector(Vec::new()));
-    easy.get(true)?;
-    easy.url(url)?;
-    easy.perform()?;
-    Ok(easy)
-}
-
 /// Does the post, setting the headers correctly
-fn perform_post(url: &str, body: &str) -> Result<Easy2<Collector>, curl::Error> {
-    let mut easy = Easy2::new(Collector(Vec::new()));
-    easy.post(true)?;
-    easy.url(url)?;
-    easy.post_fields_copy(body.as_bytes())?;
-    let mut list = List::new();
-    list.append("Content-Type: application/vnd.schemaregistry.v1+json")?;
-    list.append("Accept: application/vnd.schemaregistry.v1+json")?;
-    easy.http_headers(list)?;
-    easy.perform()?;
-    Ok(easy)
-}
-
-/// If the response code was 200, tries to format the payload as json
-fn to_json(mut easy: Easy2<Collector>) -> Result<Value, SRCError> {
-    match easy.response_code() {
-        Ok(200) => (),
-        Ok(v) => {
-            return Err(SRCError::non_retryable_without_cause(&*format!(
-                "Did not get a 200 response code but {} instead",
-                v
-            )))
-        }
-        Err(e) => {
-            return Err(SRCError::retryable_with_cause(
+fn perform_post(url: &str, body: String) -> Result<RawRegisteredSchema, SRCError> {
+    let client = reqwest::blocking::Client::new();
+    match client
+        .post(url)
+        .body(body)
+        .header(CONTENT_TYPE, "application/vnd.schemaregistry.v1+json")
+        .header(ACCEPT, "application/vnd.schemaregistry.v1+json")
+        .send()
+    {
+        Ok(v) => match v.json::<RawRegisteredSchema>() {
+            Ok(r) => Ok(r),
+            Err(e) => Err(SRCError::non_retryable_with_cause(
                 e,
-                "Encountered error getting http response",
-            ))
-        }
-    }
-    let mut data = Vec::new();
-    match easy.get_ref() {
-        Collector(b) => data.extend_from_slice(b),
-    }
-    let body = match str::from_utf8(data.as_ref()) {
-        Ok(v) => v,
-        Err(e) => {
-            return Err(SRCError::non_retryable_with_cause(
-                e,
-                "Invalid UTF-8 sequence",
-            ))
-        }
-    };
-    match serde_json::from_str(body) {
-        Ok(v) => Ok(v),
-        Err(e) => Err(SRCError::non_retryable_with_cause(e, "Invalid json string")),
-    }
-}
-
-/// Struct to store the payload in
-struct Collector(Vec<u8>);
-
-/// Used to easily get the payload from a http call.
-impl Handler for Collector {
-    fn write(&mut self, data: &[u8]) -> Result<usize, WriteError> {
-        self.0.extend_from_slice(data);
-        Ok(data.len())
+                "could not parse to RawRegisteredSchema",
+            )),
+        },
+        Err(e) => Err(SRCError::retryable_with_cause(
+            e,
+            "http post to schema registry failed",
+        )),
     }
 }
 
@@ -472,10 +415,10 @@ impl Handler for Collector {
 /// or not. And whether trying it again might not cause an error.
 #[derive(Debug, PartialEq, Fail)]
 pub struct SRCError {
-    error: String,
-    cause: Option<String>,
-    retriable: bool,
-    cached: bool,
+    pub error: String,
+    pub cause: Option<String>,
+    pub retriable: bool,
+    pub cached: bool,
 }
 
 /// Implements clone so when an error is returned from the cache, a copy can be returned
@@ -546,9 +489,8 @@ impl SRCError {
 #[cfg(test)]
 mod tests {
     use crate::schema_registry::{
-        get_subject, to_json, Collector, SRCError, SchemaType, SubjectNameStrategy, SuppliedSchema,
+        get_subject, SRCError, SchemaType, SubjectNameStrategy, SuppliedSchema,
     };
-    use curl::easy::Easy2;
 
     #[test]
     fn display_record_name_strategy() {
@@ -575,20 +517,6 @@ mod tests {
         assert_eq!(
             "TopicRecordNameStrategy(\"bla\", \"foo\")".to_owned(),
             format!("{:?}", sns)
-        )
-    }
-
-    #[test]
-    fn handling_http_error() {
-        let easy = Easy2::new(Collector(Vec::new()));
-        let result = to_json(easy);
-        assert_eq!(
-            result,
-            Err(SRCError::new(
-                "Did not get a 200 response code but 0 instead",
-                None,
-                false,
-            ))
         )
     }
 
