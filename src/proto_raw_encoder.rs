@@ -1,9 +1,9 @@
 use crate::proto_resolver::IndexResolver;
 use crate::schema_registry::{
-    get_payload, get_schema_by_subject, get_subject, SRCError, SubjectNameStrategy,
+    get_payload, get_schema_by_subject, get_subject, SRCError, SrSettings, SubjectNameStrategy,
 };
 use integer_encoding::VarInt;
-use std::collections::hash_map::RandomState;
+use std::collections::hash_map::{Entry, RandomState};
 use std::collections::HashMap;
 
 /// Encoder that works by prepending the correct bytes in order to make it valid schema registry
@@ -12,17 +12,16 @@ use std::collections::HashMap;
 /// prost don't support that at the moment.
 #[derive(Debug)]
 pub struct ProtoRawEncoder {
-    schema_registry_url: String,
-    cache: &'static mut HashMap<String, Result<EncodeContext, SRCError>, RandomState>,
+    sr_settings: SrSettings,
+    cache: HashMap<String, Result<EncodeContext, SRCError>, RandomState>,
 }
 
 impl ProtoRawEncoder {
     /// Creates a new encoder
-    pub fn new(schema_registry_url: String) -> ProtoRawEncoder {
-        let new_cache = Box::new(HashMap::new());
+    pub fn new(sr_settings: SrSettings) -> ProtoRawEncoder {
         ProtoRawEncoder {
-            schema_registry_url,
-            cache: Box::leak(new_cache),
+            sr_settings,
+            cache: HashMap::new(),
         }
     }
     /// Removes errors from the cache, can be usefull to retry failed encodings.
@@ -49,16 +48,19 @@ impl ProtoRawEncoder {
         key: String,
         subject_name_strategy: &SubjectNameStrategy,
     ) -> &mut Result<EncodeContext, SRCError> {
-        let schema_registry_url = &self.schema_registry_url;
-        self.cache.entry(key).or_insert_with(|| {
-            match get_schema_by_subject(schema_registry_url, &subject_name_strategy) {
-                Ok(registered_schema) => Ok(EncodeContext {
-                    id: registered_schema.id,
-                    resolver: IndexResolver::new(&*registered_schema.schema),
-                }),
-                Err(e) => Err(e.into_cache()),
+        match self.cache.entry(key) {
+            Entry::Occupied(e) => e.into_mut(),
+            Entry::Vacant(e) => {
+                let v = match get_schema_by_subject(&self.sr_settings, &subject_name_strategy) {
+                    Ok(registered_schema) => Ok(EncodeContext {
+                        id: registered_schema.id,
+                        resolver: IndexResolver::new(&*registered_schema.schema),
+                    }),
+                    Err(e) => Err(e.into_cache()),
+                };
+                e.insert(v)
             }
-        })
+        }
     }
 }
 
@@ -97,7 +99,7 @@ struct EncodeContext {
 mod tests {
     use crate::proto_raw_encoder::ProtoRawEncoder;
     use crate::schema_registry::{
-        SchemaType, SubjectNameStrategy, SuppliedReference, SuppliedSchema,
+        SchemaType, SrSettings, SubjectNameStrategy, SuppliedReference, SuppliedSchema,
     };
     use mockito::{mock, server_address};
 
@@ -148,7 +150,8 @@ mod tests {
             .with_body(&get_proto_body(get_proto_hb_schema(), 7))
             .create();
 
-        let mut encoder = ProtoRawEncoder::new(format!("http://{}", server_address()));
+        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let mut encoder = ProtoRawEncoder::new(sr_settings);
         let strategy =
             SubjectNameStrategy::RecordNameStrategy(String::from("nl.openweb.data.Heartbeat"));
 
@@ -183,7 +186,8 @@ mod tests {
             .with_body(&get_proto_body(get_proto_result(), 6))
             .create();
 
-        let mut encoder = ProtoRawEncoder::new(format!("http://{}", server_address()));
+        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let mut encoder = ProtoRawEncoder::new(sr_settings);
         let result_reference = SuppliedReference {
             name: String::from("result.proto"),
             subject: String::from("result.proto"),

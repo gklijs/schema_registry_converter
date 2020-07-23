@@ -11,6 +11,19 @@ use std::fmt::Display;
 use std::ops::Deref;
 use std::str;
 
+/// Client tt do the calls to schema registry. Will in ttime have options like setting headers or
+/// proxies
+#[derive(Debug)]
+pub struct SrSettings {
+    url: String,
+}
+
+impl SrSettings {
+    pub fn new(url: String) -> SrSettings {
+        SrSettings { url }
+    }
+}
+
 /// By default the schema registry supports three types. It's possible there will be more in the future
 /// or to add your own. Therefore the other is one of the schema types.
 #[derive(Clone, Debug, PartialEq)]
@@ -123,17 +136,17 @@ pub fn get_payload(id: u32, encoded_bytes: Vec<u8>) -> Vec<u8> {
 
 /// Gets a schema by an id. This is used to get the correct schema te deserialize bytes, with the
 /// id that is encoded in the bytes.
-pub fn get_schema_by_id(id: u32, schema_registry_url: &str) -> Result<RegisteredSchema, SRCError> {
-    let url = format!("{}/schemas/ids/{}", schema_registry_url, id);
+pub fn get_schema_by_id(id: u32, sr_settings: &SrSettings) -> Result<RegisteredSchema, SRCError> {
+    let url = format!("{}/schemas/ids/{}", sr_settings.url, id);
     schema_from_url(&url, Option::from(id))
 }
 
 pub fn get_schema_by_id_and_type(
     id: u32,
-    schema_registry_url: &str,
+    sr_settings: &SrSettings,
     schema_type: SchemaType,
 ) -> Result<RegisteredSchema, SRCError> {
-    match get_schema_by_id(id, schema_registry_url) {
+    match get_schema_by_id(id, sr_settings) {
         Ok(v) if v.schema_type == schema_type => Ok(v),
         Ok(v) => Err(SRCError::non_retryable_without_cause(&*format!(
             "type {:?}, is not correct",
@@ -146,29 +159,26 @@ pub fn get_schema_by_id_and_type(
 /// Gets the schema and the id by supplying a SubjectNameStrategy. This is used to correctly
 /// transform a vector to bytes.
 pub fn get_schema_by_subject(
-    schema_registry_url: &str,
+    sr_settings: &SrSettings,
     subject_name_strategy: &SubjectNameStrategy,
 ) -> Result<RegisteredSchema, SRCError> {
     let subject = get_subject(subject_name_strategy)?;
     match get_schema(subject_name_strategy) {
         None => {
-            let url = format!(
-                "{}/subjects/{}/versions/latest",
-                schema_registry_url, subject
-            );
+            let url = format!("{}/subjects/{}/versions/latest", sr_settings.url, subject);
             schema_from_url(&url, None)
         }
-        Some(v) => post_schema(&schema_registry_url, subject, v),
+        Some(v) => post_schema(sr_settings, subject, v),
     }
 }
 
 pub fn get_referenced_schema(
-    schema_registry_url: &str,
+    sr_settings: &SrSettings,
     registered_reference: &RegisteredReference,
 ) -> Result<RegisteredSchema, SRCError> {
     let url = format!(
         "{}/subjects/{}/versions/{}",
-        schema_registry_url, registered_reference.subject, registered_reference.version
+        sr_settings.url, registered_reference.subject, registered_reference.version
     );
     schema_from_url(&url, None)
 }
@@ -283,7 +293,7 @@ fn schema_from_url(url: &str, id: Option<u32>) -> Result<RegisteredSchema, SRCEr
 /// registry. The default config will check if the schema is backwards compatible. One of the ways
 /// to do this is to add a default value for new fields.
 pub fn post_schema(
-    schema_registry_url: &str,
+    sr_settings: &SrSettings,
     subject: String,
     schema: SuppliedSchema,
 ) -> Result<RegisteredSchema, SRCError> {
@@ -296,7 +306,7 @@ pub fn post_schema(
     let references: Vec<RegisteredReference> = match schema
         .references
         .into_iter()
-        .map(|r| post_reference(schema_registry_url, &*schema_type, r))
+        .map(|r| post_reference(sr_settings, &*schema_type, r))
         .collect()
     {
         Ok(v) => v,
@@ -307,7 +317,7 @@ pub fn post_schema(
             ));
         }
     };
-    let url = format!("{}/subjects/{}/versions", schema_registry_url, subject);
+    let url = format!("{}/subjects/{}/versions", sr_settings.url, subject);
     let body = get_body(&*schema_type, &*schema.schema, &*references);
     let id = post_and_get_id(&*url, body)?;
     Ok(RegisteredSchema {
@@ -354,14 +364,14 @@ fn post_and_get_version(url: &str, body: String) -> Result<u32, SRCError> {
 }
 
 fn post_reference(
-    schema_registry_url: &str,
+    sr_settings: &SrSettings,
     schema_type: &str,
     reference: SuppliedReference,
 ) -> Result<RegisteredReference, SRCError> {
     let references: Vec<RegisteredReference> = match reference
         .references
         .into_iter()
-        .map(|r| post_reference(schema_registry_url, &*schema_type, r))
+        .map(|r| post_reference(sr_settings, &*schema_type, r))
         .collect()
     {
         Ok(v) => v,
@@ -374,11 +384,11 @@ fn post_reference(
     };
     let url = format!(
         "{}/subjects/{}/versions",
-        schema_registry_url, reference.subject
+        sr_settings.url, reference.subject
     );
     let body = get_body(schema_type, &*reference.schema, &*references);
     post_and_get_id(&*url, body.clone())?;
-    let version_url = format!("{}/subjects/{}", schema_registry_url, reference.subject);
+    let version_url = format!("{}/subjects/{}", sr_settings.url, reference.subject);
     let version = post_and_get_version(&*version_url, body)?;
     Ok(RegisteredReference {
         name: reference.name,
