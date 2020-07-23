@@ -2,7 +2,7 @@ use avro_rs::types::Value;
 use rdkafka::config::ClientConfig;
 use rdkafka::producer::{FutureProducer, FutureRecord};
 use schema_registry_converter::avro::AvroEncoder;
-use schema_registry_converter::schema_registry::SubjectNameStrategy;
+use schema_registry_converter::schema_registry::{SrSettings, SubjectNameStrategy};
 
 pub struct RecordProducer {
     producer: FutureProducer,
@@ -46,7 +46,9 @@ pub fn get_producer(brokers: &str, schema_registry_url: String) -> RecordProduce
         .set("queue.buffering.max.messages", "10")
         .create()
         .expect("Producer creation error");
-    let avro_encoder = AvroEncoder::new(schema_registry_url);
+
+    let sr_settings = SrSettings::new(schema_registry_url);
+    let avro_encoder = AvroEncoder::new(sr_settings);
     RecordProducer {
         producer,
         avro_encoder,

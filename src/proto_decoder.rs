@@ -1,12 +1,12 @@
 use crate::proto_resolver::MessageResolver;
 use crate::schema_registry::{
     get_bytes_result, get_referenced_schema, get_schema_by_id_and_type, BytesResult,
-    RegisteredSchema, SRCError, SchemaType,
+    RegisteredSchema, SRCError, SchemaType, SrSettings,
 };
 use bytes::Bytes;
 use integer_encoding::VarIntReader;
 use protofish::{Context, MessageValue, Value};
-use std::collections::hash_map::RandomState;
+use std::collections::hash_map::{Entry, RandomState};
 use std::collections::HashMap;
 use std::io::BufReader;
 
@@ -18,8 +18,8 @@ struct ResolveContext {
 
 #[derive(Debug)]
 pub struct ProtoDecoder {
-    schema_registry_url: String,
-    cache: &'static mut HashMap<u32, Result<ResolveContext, SRCError>, RandomState>,
+    sr_settings: SrSettings,
+    cache: HashMap<u32, Result<ResolveContext, SRCError>, RandomState>,
 }
 
 impl ProtoDecoder {
@@ -28,11 +28,10 @@ impl ProtoDecoder {
     /// additional data. It's possible for recoverable errors to stay in the cash, when a result
     /// comes back as an error you can use remove_errors_from_cache to clean the cache, keeping the
     /// correctly fetched schema's
-    pub fn new(schema_registry_url: String) -> ProtoDecoder {
-        let new_cache = Box::new(HashMap::new());
+    pub fn new(sr_settings: SrSettings) -> ProtoDecoder {
         ProtoDecoder {
-            schema_registry_url,
-            cache: Box::leak(new_cache),
+            sr_settings,
+            cache: HashMap::new(),
         }
     }
     /// Remove al the errors from the cache, you might need to/want to run this when a recoverable
@@ -78,24 +77,28 @@ impl ProtoDecoder {
     }
     /// Gets the Context object, either from the cache, or from the schema registry and then putting
     /// it into the cache.
-    fn get_context(&mut self, id: u32) -> &mut Result<ResolveContext, SRCError> {
-        let schema_registry_url = &self.schema_registry_url;
-        self.cache.entry(id).or_insert_with(|| {
-            match get_schema_by_id_and_type(id, schema_registry_url, SchemaType::Protobuf) {
-                Ok(registered_schema) => to_resolve_context(schema_registry_url, registered_schema),
-                Err(e) => Err(e.into_cache()),
+    fn get_context(&mut self, id: u32) -> &Result<ResolveContext, SRCError> {
+        match self.cache.entry(id) {
+            Entry::Occupied(e) => &*e.into_mut(),
+            Entry::Vacant(e) => {
+                let v = match get_schema_by_id_and_type(id, &self.sr_settings, SchemaType::Protobuf)
+                {
+                    Ok(v) => to_resolve_context(&self.sr_settings, v),
+                    Err(e) => Err(e.into_cache()),
+                };
+                &*e.insert(v)
             }
-        })
+        }
     }
 }
 
 fn add_files(
-    schema_registry_url: &str,
+    sr_settings: &SrSettings,
     registered_schema: RegisteredSchema,
     files: &mut Vec<String>,
 ) -> Result<(), SRCError> {
     for r in registered_schema.references {
-        let child_schema = match get_referenced_schema(schema_registry_url, &r) {
+        let child_schema = match get_referenced_schema(sr_settings, &r) {
             Ok(v) => v,
             Err(e) => {
                 return Err(SRCError::retryable_with_cause(
@@ -104,19 +107,19 @@ fn add_files(
                 ))
             }
         };
-        add_files(schema_registry_url, child_schema, files)?;
+        add_files(sr_settings, child_schema, files)?;
     }
     files.push(registered_schema.schema);
     Ok(())
 }
 
 fn to_resolve_context(
-    schema_registry_url: &str,
+    sr_settings: &SrSettings,
     registered_schema: RegisteredSchema,
 ) -> Result<ResolveContext, SRCError> {
     let resolver = MessageResolver::new(&registered_schema.schema);
     let mut files = Vec::new();
-    add_files(schema_registry_url, registered_schema, &mut files)?;
+    add_files(sr_settings, registered_schema, &mut files)?;
     match Context::parse(&files) {
         Ok(context) => Ok(ResolveContext { resolver, context }),
         Err(e) => Err(SRCError::non_retryable_with_cause(
@@ -143,6 +146,7 @@ fn to_index_and_data(bytes: &[u8]) -> (Vec<i32>, Vec<u8>) {
 #[cfg(test)]
 mod tests {
     use crate::proto_decoder::ProtoDecoder;
+    use crate::schema_registry::SrSettings;
     use mockito::{mock, server_address};
     use protofish::Value;
 
@@ -196,7 +200,8 @@ mod tests {
             .with_body(&get_proto_body(get_proto_hb_schema(), 1))
             .create();
 
-        let mut decoder = ProtoDecoder::new(format!("http://{}", server_address()));
+        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let mut decoder = ProtoDecoder::new(sr_settings);
         let heartbeat = decoder.decode(Some(get_proto_hb_101()));
 
         let message = match heartbeat {
@@ -226,7 +231,8 @@ mod tests {
             .with_body(&get_proto_body(get_proto_result(), 1))
             .create();
 
-        let mut decoder = ProtoDecoder::new(format!("http://{}", server_address()));
+        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let mut decoder = ProtoDecoder::new(sr_settings);
         let proto_test = decoder.decode(Some(get_proto_complex_proto_test_message()));
 
         let message = match proto_test {

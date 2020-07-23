@@ -6,6 +6,7 @@ use rdkafka::consumer::{Consumer, ConsumerContext, Rebalance};
 use rdkafka::message::BorrowedMessage;
 use rdkafka::Message;
 use schema_registry_converter::avro::AvroDecoder;
+use schema_registry_converter::schema_registry::SrSettings;
 
 // A context can be used to change the behavior of producers and consumers by adding callbacks
 // that will be executed by librdkafka.
@@ -43,7 +44,8 @@ pub fn consume_avro(
     auto_commit: bool,
     test: Box<dyn Fn(DeserializedAvroRecord) -> ()>,
 ) {
-    let mut decoder = AvroDecoder::new(registry);
+    let sr_settings = SrSettings::new(registry);
+    let mut decoder = AvroDecoder::new(sr_settings);
     let consumer = get_consumer(brokers, group_id, topics, auto_commit);
 
     for message in consumer.iter() {
