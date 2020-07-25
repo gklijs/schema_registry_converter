@@ -213,4 +213,15 @@ mod tests {
 
         assert_eq!(encoded_data, get_proto_complex_proto_test_message())
     }
+
+    #[test]
+    fn display_rew_decoder() {
+        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let decoder = ProtoRawEncoder::new(sr_settings);
+        assert_eq!(
+            "ProtoRawEncoder { sr_settings: SrSettings { urls: [\"http://127.0.0.1:1234\"], client: Client }, cache: {} }"
+                .to_owned(),
+            format!("{:?}", decoder)
+        )
+    }
 }

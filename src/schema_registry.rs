@@ -1,26 +1,149 @@
 //! This module contains the code specific for the schema registry.
 
-use crate::schema_registry::SchemaType::{Avro, Json, Other, Protobuf};
 use byteorder::{BigEndian, ByteOrder, ReadBytesExt};
 use core::fmt;
 use failure::Fail;
-use reqwest::header::{ACCEPT, CONTENT_TYPE};
+use reqwest::blocking::Client;
+use reqwest::header;
+use reqwest::header::{HeaderName, ACCEPT, AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
+use std::collections::hash_map::RandomState;
+use std::collections::HashMap;
 use std::fmt::Display;
 use std::ops::Deref;
 use std::str;
+use std::time::Duration;
 
-/// Client tt do the calls to schema registry. Will in ttime have options like setting headers or
-/// proxies
+/// Settings used to do the calls to schema registry. For simple cases you can use `SrSettings::new`
+/// or the `SrSettingsBuilder`. But you can also use it directly so you can all the available
+/// settings from reqwest.
 #[derive(Debug)]
 pub struct SrSettings {
-    url: String,
+    urls: Vec<String>,
+    client: Client,
 }
 
+/// Struct to create an SrSettings when used with multiple url's, authorization, custom headers, or
+/// custom timeout.
+pub struct SrSettingsBuilder {
+    urls: Vec<String>,
+    authorization: Option<String>,
+    headers: HashMap<String, String, RandomState>,
+    proxy: Option<String>,
+    timeout: Duration,
+}
+
+/// Creates a new SrSettings struct that is needed to make calls to the schema registry
+/// ```
+/// use schema_registry_converter::schema_registry::SrSettings;
+/// let sr_settings = SrSettings::new(String::from("http://localhost:8081"));
+/// ```
 impl SrSettings {
+    /// Will create a new SrSettings with default values, the url should be fully qualified like
+    /// `"http://localhost:8081"`.
     pub fn new(url: String) -> SrSettings {
-        SrSettings { url }
+        SrSettings {
+            urls: vec![url],
+            client: Client::new(),
+        }
+    }
+}
+
+/// Builder for SrSettings
+/// ```
+/// use schema_registry_converter::schema_registry::SrSettingsBuilder;
+/// use std::time::Duration;
+/// let sr_settings = SrSettingsBuilder::new(String::from("http://localhost:8081"))
+///     .add_url(String::from("http://localhost:8082"))
+///     .set_authorization("Bearer some_json_web_token_for_example")
+///     .add_header("foo", "bar")
+///     .set_proxy("http://localhost:8888")
+///     .set_timeout(Duration::from_secs(5))
+///     .build().unwrap();
+/// ```
+impl SrSettingsBuilder {
+    /// Wil create a new SrSettingsBuilder with default values, the url should be fully qualified
+    /// like `"http://localhost:8081"`.
+    pub fn new(url: String) -> SrSettingsBuilder {
+        SrSettingsBuilder {
+            urls: vec![url],
+            authorization: None,
+            headers: HashMap::new(),
+            proxy: None,
+            timeout: Duration::from_secs(30),
+        }
+    }
+
+    /// Adds an url. For any call urls will be tried in order. the one used to create the settings
+    /// struct first. All urls should be fully qualified.
+    pub fn add_url(&mut self, url: String) -> &mut SrSettingsBuilder {
+        self.urls.push(url);
+        self
+    }
+
+    /// Sets authorization that will be added to the header. Make sure you add the value how it
+    /// should and up in the header. See if its a token, use `Bearer {token}` and not just the token.
+    pub fn set_authorization(&mut self, authorization: &str) -> &mut SrSettingsBuilder {
+        self.authorization = Some(String::from(authorization));
+        self
+    }
+
+    /// Adds a custom header that will be added to every call.
+    pub fn add_header(&mut self, key: &str, value: &str) -> &mut SrSettingsBuilder {
+        self.headers.insert(String::from(key), String::from(value));
+        self
+    }
+
+    /// Sets a proxy that will be used for every call.
+    pub fn set_proxy(&mut self, proxy_url: &str) -> &mut SrSettingsBuilder {
+        self.proxy = Some(String::from(proxy_url));
+        self
+    }
+
+    /// Set a timeout, it will be used for the connect and the read.
+    pub fn set_timeout(&mut self, duration: Duration) -> &mut SrSettingsBuilder {
+        self.timeout = duration;
+        self
+    }
+
+    pub fn build(&mut self) -> Result<SrSettings, SRCError> {
+        let mut builder = Client::builder();
+        let mut header_map = header::HeaderMap::new();
+        for (k, v) in self.headers.iter() {
+            let header_name = match HeaderName::from_bytes(k.as_bytes()) {
+                Ok(h) => h,
+                Err(e) => {
+                    return Err(SRCError::non_retryable_with_cause(
+                        e,
+                        &*format!("could not create headername from {}", k),
+                    ));
+                }
+            };
+            header_map.insert(header_name, v.parse().unwrap());
+        }
+        if self.authorization.is_some() {
+            header_map.insert(
+                AUTHORIZATION,
+                self.authorization.as_ref().unwrap().parse().unwrap(),
+            );
+        }
+        builder = builder.default_headers(header_map);
+        if self.proxy.is_some() {
+            match reqwest::Proxy::all(self.proxy.as_ref().unwrap()) {
+                Ok(v) => builder = builder.proxy(v),
+                Err(e) => return Err(SRCError::non_retryable_with_cause(e, "invalid proxy value")),
+            };
+        }
+        builder = builder.timeout(self.timeout);
+        let urls = self.urls.clone();
+        match builder.build() {
+            Ok(client) => Ok(SrSettings { urls, client }),
+            Err(e) => Err(SRCError::non_retryable_with_cause(
+                e,
+                "could not create new client",
+            )),
+        }
     }
 }
 
@@ -137,8 +260,8 @@ pub fn get_payload(id: u32, encoded_bytes: Vec<u8>) -> Vec<u8> {
 /// Gets a schema by an id. This is used to get the correct schema te deserialize bytes, with the
 /// id that is encoded in the bytes.
 pub fn get_schema_by_id(id: u32, sr_settings: &SrSettings) -> Result<RegisteredSchema, SRCError> {
-    let url = format!("{}/schemas/ids/{}", sr_settings.url, id);
-    schema_from_url(&url, Option::from(id))
+    let raw_schema = perform_sr_call(sr_settings, SrCall::GetById(id))?;
+    raw_to_registered_schema(raw_schema, Option::from(id))
 }
 
 pub fn get_schema_by_id_and_type(
@@ -165,8 +288,8 @@ pub fn get_schema_by_subject(
     let subject = get_subject(subject_name_strategy)?;
     match get_schema(subject_name_strategy) {
         None => {
-            let url = format!("{}/subjects/{}/versions/latest", sr_settings.url, subject);
-            schema_from_url(&url, None)
+            let raw_schema = perform_sr_call(sr_settings, SrCall::GetLatest(&*subject))?;
+            raw_to_registered_schema(raw_schema, None)
         }
         Some(v) => post_schema(sr_settings, subject, v),
     }
@@ -176,11 +299,14 @@ pub fn get_referenced_schema(
     sr_settings: &SrSettings,
     registered_reference: &RegisteredReference,
 ) -> Result<RegisteredSchema, SRCError> {
-    let url = format!(
-        "{}/subjects/{}/versions/{}",
-        sr_settings.url, registered_reference.subject, registered_reference.version
-    );
-    schema_from_url(&url, None)
+    let raw_schema = perform_sr_call(
+        sr_settings,
+        SrCall::GetBySubjectAndVersion(
+            &*registered_reference.subject,
+            registered_reference.version,
+        ),
+    )?;
+    raw_to_registered_schema(raw_schema, None)
 }
 
 /// Helper function to get the schema from the strategy.
@@ -230,26 +356,10 @@ pub fn get_subject(subject_name_strategy: &SubjectNameStrategy) -> Result<String
     }
 }
 
-/// Handles the work of doing an http call and transforming it to a schema while handling
-/// possible errors. When there is an error it might be useful to retry.
-fn schema_from_url(url: &str, id: Option<u32>) -> Result<RegisteredSchema, SRCError> {
-    let raw_schema = match reqwest::blocking::get(url) {
-        Ok(v) => match v.json::<RawRegisteredSchema>() {
-            Ok(r) => r,
-            Err(e) => {
-                return Err(SRCError::non_retryable_with_cause(
-                    e,
-                    "could not parse to RawRegisteredSchema",
-                ))
-            }
-        },
-        Err(e) => {
-            return Err(SRCError::retryable_with_cause(
-                e,
-                "http get to schema registry failed",
-            ))
-        }
-    };
+fn raw_to_registered_schema(
+    raw_schema: RawRegisteredSchema,
+    id: Option<u32>,
+) -> Result<RegisteredSchema, SRCError> {
     let id = match id {
         Some(v) => v,
         None => match raw_schema.id {
@@ -257,16 +367,16 @@ fn schema_from_url(url: &str, id: Option<u32>) -> Result<RegisteredSchema, SRCEr
             None => {
                 return Err(SRCError::non_retryable_without_cause(
                     "Could not get id from response",
-                ))
+                ));
             }
         },
     };
     let schema_type = match raw_schema.schema_type {
-        Some(s) if s == "AVRO" => Avro,
-        Some(s) if s == "PROTOBUF" => Protobuf,
-        Some(s) if s == "JSON" => Json,
-        Some(s) => Other(s),
-        None => Avro,
+        Some(s) if s == "AVRO" => SchemaType::Avro,
+        Some(s) if s == "PROTOBUF" => SchemaType::Protobuf,
+        Some(s) if s == "JSON" => SchemaType::Json,
+        Some(s) => SchemaType::Other(s),
+        None => SchemaType::Avro,
     };
     let schema = match raw_schema.schema {
         Some(v) => v,
@@ -298,10 +408,10 @@ pub fn post_schema(
     schema: SuppliedSchema,
 ) -> Result<RegisteredSchema, SRCError> {
     let schema_type = match &schema.schema_type {
-        Avro => String::from("AVRO"),
-        Protobuf => String::from("PROTOBUF"),
-        Json => String::from("JSON"),
-        Other(v) => v.clone(),
+        SchemaType::Avro => String::from("AVRO"),
+        SchemaType::Protobuf => String::from("PROTOBUF"),
+        SchemaType::Json => String::from("JSON"),
+        SchemaType::Other(v) => v.clone(),
     };
     let references: Vec<RegisteredReference> = match schema
         .references
@@ -317,9 +427,8 @@ pub fn post_schema(
             ));
         }
     };
-    let url = format!("{}/subjects/{}/versions", sr_settings.url, subject);
     let body = get_body(&*schema_type, &*schema.schema, &*references);
-    let id = post_and_get_id(&*url, body)?;
+    let id = call_and_get_id(sr_settings, SrCall::PostNew(&*subject, &*body))?;
     Ok(RegisteredSchema {
         id,
         schema_type: schema.schema_type,
@@ -343,23 +452,25 @@ fn get_body(schema_type: &str, schema: &str, references: &[RegisteredReference])
     schema_element.to_string()
 }
 
-fn post_and_get_id(url: &str, body: String) -> Result<u32, SRCError> {
-    let raw_schema = perform_post(url, body)?;
+fn call_and_get_id(sr_setting: &SrSettings, sr_call: SrCall) -> Result<u32, SRCError> {
+    let raw_schema = perform_sr_call(sr_setting, sr_call)?;
     match raw_schema.id {
         Some(v) => Ok(v),
-        None => Err(SRCError::non_retryable_without_cause(
-            "Could not get id from response",
-        )),
+        None => Err(SRCError::non_retryable_without_cause(&*format!(
+            "Could not get id from response for {:?}",
+            sr_call
+        ))),
     }
 }
 
-fn post_and_get_version(url: &str, body: String) -> Result<u32, SRCError> {
-    let raw_schema = perform_post(url, body)?;
+fn call_and_get_version(sr_setting: &SrSettings, sr_call: SrCall) -> Result<u32, SRCError> {
+    let raw_schema = perform_sr_call(sr_setting, sr_call)?;
     match raw_schema.version {
         Some(v) => Ok(v),
-        None => Err(SRCError::non_retryable_without_cause(
-            "Could not get version from response",
-        )),
+        None => Err(SRCError::non_retryable_without_cause(&*format!(
+            "Could not get version from response for {:?}",
+            sr_call
+        ))),
     }
 }
 
@@ -382,14 +493,12 @@ fn post_reference(
             ));
         }
     };
-    let url = format!(
-        "{}/subjects/{}/versions",
-        sr_settings.url, reference.subject
-    );
     let body = get_body(schema_type, &*reference.schema, &*references);
-    post_and_get_id(&*url, body.clone())?;
-    let version_url = format!("{}/subjects/{}", sr_settings.url, reference.subject);
-    let version = post_and_get_version(&*version_url, body)?;
+    perform_sr_call(sr_settings, SrCall::PostNew(&*reference.subject, &*body))?;
+    let version = call_and_get_version(
+        sr_settings,
+        SrCall::PostForVersion(&*reference.subject, &*body),
+    )?;
     Ok(RegisteredReference {
         name: reference.name,
         subject: reference.subject,
@@ -397,16 +506,60 @@ fn post_reference(
     })
 }
 
-/// Does the post, setting the headers correctly
-fn perform_post(url: &str, body: String) -> Result<RawRegisteredSchema, SRCError> {
-    let client = reqwest::blocking::Client::new();
-    match client
-        .post(url)
-        .body(body)
-        .header(CONTENT_TYPE, "application/vnd.schemaregistry.v1+json")
-        .header(ACCEPT, "application/vnd.schemaregistry.v1+json")
-        .send()
-    {
+#[derive(Debug, Clone, Copy)]
+enum SrCall<'a> {
+    GetById(u32),
+    GetLatest(&'a str),
+    GetBySubjectAndVersion(&'a str, u32),
+    PostNew(&'a str, &'a str),
+    PostForVersion(&'a str, &'a str),
+}
+
+fn url_for_call(call: &SrCall, base_url: &str) -> String {
+    match call {
+        SrCall::GetById(id) => format!("{}/schemas/ids/{}", base_url, id),
+        SrCall::GetLatest(subject) => format!("{}/subjects/{}/versions/latest", base_url, subject),
+        SrCall::GetBySubjectAndVersion(subject, version) => {
+            format!("{}/subjects/{}/versions/{}", base_url, subject, version)
+        }
+        SrCall::PostNew(subject, _) => format!("{}/subjects/{}/versions", base_url, subject),
+        SrCall::PostForVersion(subject, _) => format!("{}/subjects/{}", base_url, subject),
+    }
+}
+
+fn perform_sr_call(
+    sr_settings: &SrSettings,
+    sr_call: SrCall,
+) -> Result<RawRegisteredSchema, SRCError> {
+    let url_count = sr_settings.urls.len();
+    let mut n = 0;
+    loop {
+        let result = perform_single_sr_call(&sr_settings.urls[n], &sr_settings.client, sr_call);
+        if result.is_ok() || n + 1 == url_count {
+            break result;
+        }
+        n += 1
+    }
+}
+
+fn perform_single_sr_call(
+    base_url: &str,
+    client: &Client,
+    sr_call: SrCall,
+) -> Result<RawRegisteredSchema, SRCError> {
+    let url = url_for_call(&sr_call, base_url);
+    let call = match sr_call {
+        SrCall::GetById(_) | SrCall::GetLatest(_) | SrCall::GetBySubjectAndVersion(_, _) => {
+            client.get(&url).send()
+        }
+        SrCall::PostNew(_, body) | SrCall::PostForVersion(_, body) => client
+            .post(&url)
+            .body(String::from(body))
+            .header(CONTENT_TYPE, "application/vnd.schemaregistry.v1+json")
+            .header(ACCEPT, "application/vnd.schemaregistry.v1+json")
+            .send(),
+    };
+    match call {
         Ok(v) => match v.json::<RawRegisteredSchema>() {
             Ok(r) => Ok(r),
             Err(e) => Err(SRCError::non_retryable_with_cause(
@@ -416,7 +569,7 @@ fn perform_post(url: &str, body: String) -> Result<RawRegisteredSchema, SRCError
         },
         Err(e) => Err(SRCError::retryable_with_cause(
             e,
-            "http post to schema registry failed",
+            "http call to schema registry failed",
         )),
     }
 }
@@ -498,9 +651,9 @@ impl SRCError {
 
 #[cfg(test)]
 mod tests {
-    use crate::schema_registry::{
-        get_subject, SRCError, SchemaType, SubjectNameStrategy, SuppliedSchema,
-    };
+    use crate::schema_registry::{get_subject, SRCError, SchemaType, SrSettingsBuilder, SubjectNameStrategy, SuppliedSchema, get_schema_by_id};
+    use mockito::{mock, server_address};
+    use std::time::Duration;
 
     #[test]
     fn display_record_name_strategy() {
@@ -566,5 +719,31 @@ mod tests {
                 "name is mandatory in SuppliedSchema when used in TopicRecordNameStrategyWithSchema"
             ))
         );
+    }
+
+    #[test]
+    fn put_correct_url_as_second_check_header_set() {
+        let _m = mock("GET", "/schemas/ids/1")
+            .match_header("foo", "bar")
+            .match_header("authorization", "Bearer some_json_web_token_for_example")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
+            .create();
+
+        let sr_settings = SrSettingsBuilder::new(String::from("bogus://test"))
+            .add_url((&*format!("http://{}", server_address())).parse().unwrap())
+            .set_authorization("Bearer some_json_web_token_for_example")
+            .add_header("foo", "bar")
+            .set_timeout(Duration::from_secs(5))
+            .build()
+            .unwrap();
+
+        let result = get_schema_by_id(1, &sr_settings);
+
+        match result {
+            Ok(v) => assert_eq!(v.schema, String::from(r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#)),
+            _ => panic!()
+        }
     }
 }
