@@ -5,7 +5,7 @@ use core::fmt;
 use failure::Fail;
 use reqwest::blocking::Client;
 use reqwest::header;
-use reqwest::header::{HeaderName, ACCEPT, AUTHORIZATION, CONTENT_TYPE};
+use reqwest::header::{HeaderName, ACCEPT, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::collections::hash_map::RandomState;
@@ -22,13 +22,31 @@ use std::time::Duration;
 pub struct SrSettings {
     urls: Vec<String>,
     client: Client,
+    authorization: SrAuthorization,
+}
+
+#[derive(Clone)]
+enum SrAuthorization {
+    None,
+    Token(String),
+    Basic(String, Option<String>),
+}
+
+impl fmt::Debug for SrAuthorization {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            SrAuthorization::None => write!(f, "None"),
+            SrAuthorization::Token(_) => write!(f, "Token"),
+            SrAuthorization::Basic(_, _) => write!(f, "Basic"),
+        }
+    }
 }
 
 /// Struct to create an SrSettings when used with multiple url's, authorization, custom headers, or
 /// custom timeout.
 pub struct SrSettingsBuilder {
     urls: Vec<String>,
-    authorization: Option<String>,
+    authorization: SrAuthorization,
     headers: HashMap<String, String, RandomState>,
     proxy: Option<String>,
     timeout: Duration,
@@ -46,35 +64,36 @@ impl SrSettings {
         SrSettings {
             urls: vec![url],
             client: Client::new(),
+            authorization: SrAuthorization::None,
+        }
+    }
+
+    /// Wil create a new SrSettingsBuilder with default values, the url should be fully qualified
+    /// like `"http://localhost:8081"`.
+    pub fn new_builder(url: String) -> SrSettingsBuilder {
+        SrSettingsBuilder {
+            urls: vec![url],
+            authorization: SrAuthorization::None,
+            headers: HashMap::new(),
+            proxy: None,
+            timeout: Duration::from_secs(30),
         }
     }
 }
 
 /// Builder for SrSettings
 /// ```
-/// use schema_registry_converter::schema_registry::SrSettingsBuilder;
+/// use schema_registry_converter::schema_registry::{SrSettings};
 /// use std::time::Duration;
-/// let sr_settings = SrSettingsBuilder::new(String::from("http://localhost:8081"))
+/// let sr_settings = SrSettings::new_builder(String::from("http://localhost:8081"))
 ///     .add_url(String::from("http://localhost:8082"))
-///     .set_authorization("Bearer some_json_web_token_for_example")
+///     .set_token_authorization("some_json_web_token_for_example")
 ///     .add_header("foo", "bar")
 ///     .set_proxy("http://localhost:8888")
 ///     .set_timeout(Duration::from_secs(5))
 ///     .build().unwrap();
 /// ```
 impl SrSettingsBuilder {
-    /// Wil create a new SrSettingsBuilder with default values, the url should be fully qualified
-    /// like `"http://localhost:8081"`.
-    pub fn new(url: String) -> SrSettingsBuilder {
-        SrSettingsBuilder {
-            urls: vec![url],
-            authorization: None,
-            headers: HashMap::new(),
-            proxy: None,
-            timeout: Duration::from_secs(30),
-        }
-    }
-
     /// Adds an url. For any call urls will be tried in order. the one used to create the settings
     /// struct first. All urls should be fully qualified.
     pub fn add_url(&mut self, url: String) -> &mut SrSettingsBuilder {
@@ -82,10 +101,23 @@ impl SrSettingsBuilder {
         self
     }
 
-    /// Sets authorization that will be added to the header. Make sure you add the value how it
-    /// should and up in the header. See if its a token, use `Bearer {token}` and not just the token.
-    pub fn set_authorization(&mut self, authorization: &str) -> &mut SrSettingsBuilder {
-        self.authorization = Some(String::from(authorization));
+    /// Sets the token that needs to be used to authenticate
+    pub fn set_token_authorization(&mut self, token: &str) -> &mut SrSettingsBuilder {
+        self.authorization = SrAuthorization::Token(String::from(token));
+        self
+    }
+
+    /// Sets basic authentication, for confluent cloud, the username is the API Key and the password
+    /// is the API Secret.
+    pub fn set_basic_authorization(
+        &mut self,
+        username: &str,
+        password: Option<&str>,
+    ) -> &mut SrSettingsBuilder {
+        self.authorization = match password {
+            None => SrAuthorization::Basic(String::from(username), None),
+            Some(p) => SrAuthorization::Basic(String::from(username), Some(String::from(p))),
+        };
         self
     }
 
@@ -109,26 +141,22 @@ impl SrSettingsBuilder {
 
     pub fn build(&mut self) -> Result<SrSettings, SRCError> {
         let mut builder = Client::builder();
-        let mut header_map = header::HeaderMap::new();
-        for (k, v) in self.headers.iter() {
-            let header_name = match HeaderName::from_bytes(k.as_bytes()) {
-                Ok(h) => h,
-                Err(e) => {
-                    return Err(SRCError::non_retryable_with_cause(
-                        e,
-                        &*format!("could not create headername from {}", k),
-                    ));
-                }
-            };
-            header_map.insert(header_name, v.parse().unwrap());
+        if !self.headers.is_empty() {
+            let mut header_map = header::HeaderMap::new();
+            for (k, v) in self.headers.iter() {
+                let header_name = match HeaderName::from_bytes(k.as_bytes()) {
+                    Ok(h) => h,
+                    Err(e) => {
+                        return Err(SRCError::non_retryable_with_cause(
+                            e,
+                            &*format!("could not create headername from {}", k),
+                        ));
+                    }
+                };
+                header_map.insert(header_name, v.parse().unwrap());
+            }
+            builder = builder.default_headers(header_map);
         }
-        if self.authorization.is_some() {
-            header_map.insert(
-                AUTHORIZATION,
-                self.authorization.as_ref().unwrap().parse().unwrap(),
-            );
-        }
-        builder = builder.default_headers(header_map);
         if self.proxy.is_some() {
             match reqwest::Proxy::all(self.proxy.as_ref().unwrap()) {
                 Ok(v) => builder = builder.proxy(v),
@@ -137,8 +165,13 @@ impl SrSettingsBuilder {
         }
         builder = builder.timeout(self.timeout);
         let urls = self.urls.clone();
+        let authorization = self.authorization.clone();
         match builder.build() {
-            Ok(client) => Ok(SrSettings { urls, client }),
+            Ok(client) => Ok(SrSettings {
+                urls,
+                client,
+                authorization,
+            }),
             Err(e) => Err(SRCError::non_retryable_with_cause(
                 e,
                 "could not create new client",
@@ -534,7 +567,12 @@ fn perform_sr_call(
     let url_count = sr_settings.urls.len();
     let mut n = 0;
     loop {
-        let result = perform_single_sr_call(&sr_settings.urls[n], &sr_settings.client, sr_call);
+        let result = perform_single_sr_call(
+            &sr_settings.urls[n],
+            &sr_settings.client,
+            &sr_settings.authorization,
+            sr_call,
+        );
         if result.is_ok() || n + 1 == url_count {
             break result;
         }
@@ -545,19 +583,30 @@ fn perform_sr_call(
 fn perform_single_sr_call(
     base_url: &str,
     client: &Client,
+    authentication: &SrAuthorization,
     sr_call: SrCall,
 ) -> Result<RawRegisteredSchema, SRCError> {
     let url = url_for_call(&sr_call, base_url);
-    let call = match sr_call {
+    let builder = match sr_call {
         SrCall::GetById(_) | SrCall::GetLatest(_) | SrCall::GetBySubjectAndVersion(_, _) => {
-            client.get(&url).send()
+            client.get(&url)
         }
         SrCall::PostNew(_, body) | SrCall::PostForVersion(_, body) => client
             .post(&url)
             .body(String::from(body))
             .header(CONTENT_TYPE, "application/vnd.schemaregistry.v1+json")
-            .header(ACCEPT, "application/vnd.schemaregistry.v1+json")
-            .send(),
+            .header(ACCEPT, "application/vnd.schemaregistry.v1+json"),
+    };
+    let call = match authentication {
+        SrAuthorization::None => builder.send(),
+        SrAuthorization::Token(token) => builder.bearer_auth(token).send(),
+        SrAuthorization::Basic(username, password) => {
+            let p = match password {
+                None => None,
+                Some(v) => Some(v),
+            };
+            builder.basic_auth(username, p).send()
+        }
     };
     match call {
         Ok(v) => match v.json::<RawRegisteredSchema>() {
@@ -651,7 +700,10 @@ impl SRCError {
 
 #[cfg(test)]
 mod tests {
-    use crate::schema_registry::{get_subject, SRCError, SchemaType, SrSettingsBuilder, SubjectNameStrategy, SuppliedSchema, get_schema_by_id};
+    use crate::schema_registry::{
+        get_schema_by_id, get_subject, SRCError, SchemaType, SrSettings, SubjectNameStrategy,
+        SuppliedSchema,
+    };
     use mockito::{mock, server_address};
     use std::time::Duration;
 
@@ -731,9 +783,9 @@ mod tests {
             .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
             .create();
 
-        let sr_settings = SrSettingsBuilder::new(String::from("bogus://test"))
+        let sr_settings = SrSettings::new_builder(String::from("bogus://test"))
             .add_url((&*format!("http://{}", server_address())).parse().unwrap())
-            .set_authorization("Bearer some_json_web_token_for_example")
+            .set_token_authorization("some_json_web_token_for_example")
             .add_header("foo", "bar")
             .set_timeout(Duration::from_secs(5))
             .build()
@@ -742,8 +794,40 @@ mod tests {
         let result = get_schema_by_id(1, &sr_settings);
 
         match result {
-            Ok(v) => assert_eq!(v.schema, String::from(r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#)),
-            _ => panic!()
+            Ok(v) => assert_eq!(
+                v.schema,
+                String::from(
+                    r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#
+                )
+            ),
+            _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn basic_authorization() {
+        let _m = mock("GET", "/schemas/ids/1")
+            .match_header("authorization", "Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
+            .create();
+
+        let sr_settings = SrSettings::new_builder(format!("http://{}", server_address()))
+            .set_basic_authorization("Aladdin", Some("open sesame"))
+            .build()
+            .unwrap();
+
+        let result = get_schema_by_id(1, &sr_settings);
+
+        match result {
+            Ok(v) => assert_eq!(
+                v.schema,
+                String::from(
+                    r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#
+                )
+            ),
+            _ => panic!(),
         }
     }
 }
