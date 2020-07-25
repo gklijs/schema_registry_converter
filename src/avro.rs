@@ -732,7 +732,7 @@ mod tests {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
         let decoder = AvroDecoder::new(sr_settings);
         assert_eq!(
-            "AvroDecoder { sr_settings: SrSettings { urls: [\"http://127.0.0.1:1234\"], client: Client }, cache: {} }"
+            "AvroDecoder { sr_settings: SrSettings { urls: [\"http://127.0.0.1:1234\"], client: Client, authorization: None }, cache: {} }"
                 .to_owned(),
             format!("{:?}", decoder)
         )
@@ -1060,7 +1060,7 @@ mod tests {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
         let decoder = AvroEncoder::new(sr_settings);
         assert_eq!(
-            "AvroEncoder { sr_settings: SrSettings { urls: [\"http://127.0.0.1:1234\"], client: Client }, cache: {} }"
+            "AvroEncoder { sr_settings: SrSettings { urls: [\"http://127.0.0.1:1234\"], client: Client, authorization: None }, cache: {} }"
                 .to_owned(),
             format!("{:?}", decoder)
         )

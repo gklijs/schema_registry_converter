@@ -7,7 +7,7 @@ description = "Encode/decode data from/to kafka using the Confluent Schema Regis
 homepage = "https://github.com/gklijs/schema_registry_converter"
 repository = "https://github.com/gklijs/schema_registry_converter"
 readme = "README.md"
-keywords = ["kafka", "encode", "decode", "schema", "avro"]
+keywords = ["kafka", "encode", "decode", "schema", "avro", "protobuf", "json schema"]
 categories = ["encoding", "parsing"]
 license = "MIT/Apache-2.0"
 edition = "2018"
@@ -15,7 +15,7 @@ edition = "2018"
 [features]
 avro = ["avro-rs"]
 proto_decoder = ["protofish", "bytes", "logos", "integer-encoding"]
-proto_raw_encoder = ["logos", "integer-encoding"]
+proto_raw = ["logos", "integer-encoding"]
 kafka_test = []
 default = []
 

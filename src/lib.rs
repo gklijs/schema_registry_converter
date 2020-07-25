@@ -29,8 +29,8 @@ extern crate failure;
 pub mod avro;
 #[cfg(feature = "proto_decoder")]
 pub mod proto_decoder;
-#[cfg(feature = "proto_raw_encoder")]
-pub mod proto_raw_encoder;
+#[cfg(feature = "proto_raw")]
+pub mod proto_raw;
 #[cfg(any(feature = "proto_decoder", feature = "proto_raw_encoder"))]
 mod proto_resolver;
 pub mod schema_registry;

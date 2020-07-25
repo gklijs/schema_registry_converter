@@ -1,31 +1,23 @@
-use crate::proto_resolver::MessageResolver;
+use crate::proto_resolver::{to_index_and_data, MessageResolver};
 use crate::schema_registry::{
     get_bytes_result, get_referenced_schema, get_schema_by_id_and_type, BytesResult,
     RegisteredSchema, SRCError, SchemaType, SrSettings,
 };
 use bytes::Bytes;
-use integer_encoding::VarIntReader;
 use protofish::{Context, MessageValue, Value};
 use std::collections::hash_map::{Entry, RandomState};
 use std::collections::HashMap;
-use std::io::BufReader;
-
-#[derive(Debug)]
-struct ResolveContext {
-    resolver: MessageResolver,
-    context: Context,
-}
 
 #[derive(Debug)]
 pub struct ProtoDecoder {
     sr_settings: SrSettings,
-    cache: HashMap<u32, Result<ResolveContext, SRCError>, RandomState>,
+    cache: HashMap<u32, Result<DecodeContext, SRCError>, RandomState>,
 }
 
 impl ProtoDecoder {
     /// Creates a new decoder which will use the supplied url to fetch the schema's since the schema
     /// needed is encoded in the binary, independent of the SubjectNameStrategy we don't need any
-    /// additional data. It's possible for recoverable errors to stay in the cash, when a result
+    /// additional data. It's possible for recoverable errors to stay in the cache, when a result
     /// comes back as an error you can use remove_errors_from_cache to clean the cache, keeping the
     /// correctly fetched schema's
     pub fn new(sr_settings: SrSettings) -> ProtoDecoder {
@@ -77,7 +69,7 @@ impl ProtoDecoder {
     }
     /// Gets the Context object, either from the cache, or from the schema registry and then putting
     /// it into the cache.
-    fn get_context(&mut self, id: u32) -> &Result<ResolveContext, SRCError> {
+    fn get_context(&mut self, id: u32) -> &Result<DecodeContext, SRCError> {
         match self.cache.entry(id) {
             Entry::Occupied(e) => &*e.into_mut(),
             Entry::Vacant(e) => {
@@ -113,33 +105,25 @@ fn add_files(
     Ok(())
 }
 
+#[derive(Debug)]
+struct DecodeContext {
+    resolver: MessageResolver,
+    context: Context,
+}
+
 fn to_resolve_context(
     sr_settings: &SrSettings,
     registered_schema: RegisteredSchema,
-) -> Result<ResolveContext, SRCError> {
+) -> Result<DecodeContext, SRCError> {
     let resolver = MessageResolver::new(&registered_schema.schema);
     let mut files = Vec::new();
     add_files(sr_settings, registered_schema, &mut files)?;
     match Context::parse(&files) {
-        Ok(context) => Ok(ResolveContext { resolver, context }),
+        Ok(context) => Ok(DecodeContext { resolver, context }),
         Err(e) => Err(SRCError::non_retryable_with_cause(
             e,
             "Error creating proto context",
         )),
-    }
-}
-
-fn to_index_and_data(bytes: &[u8]) -> (Vec<i32>, Vec<u8>) {
-    if bytes[0] == 0 {
-        (vec![0], bytes[1..].to_vec())
-    } else {
-        let mut reader = BufReader::new(bytes);
-        let count: i32 = reader.read_varint().unwrap();
-        let mut index = Vec::new();
-        for _ in 0..count {
-            index.push(reader.read_varint().unwrap())
-        }
-        (index, reader.buffer().to_vec())
     }
 }
 
@@ -240,7 +224,6 @@ mod tests {
             Err(e) => panic!("Error: {:?}, while none expected", e),
             Ok(v) => panic!("Other value: {:?} than expected Message", v),
         };
-        println!("received message: {:?}", message);
         assert_eq!(message.fields[1].value, Value::Int64(1))
     }
 
@@ -249,7 +232,7 @@ mod tests {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
         let decoder = ProtoDecoder::new(sr_settings);
         assert_eq!(
-            "ProtoDecoder { sr_settings: SrSettings { urls: [\"http://127.0.0.1:1234\"], client: Client }, cache: {} }"
+            "ProtoDecoder { sr_settings: SrSettings { urls: [\"http://127.0.0.1:1234\"], client: Client, authorization: None }, cache: {} }"
                 .to_owned(),
             format!("{:?}", decoder)
         )
