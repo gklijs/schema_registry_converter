@@ -243,4 +243,15 @@ mod tests {
         println!("received message: {:?}", message);
         assert_eq!(message.fields[1].value, Value::Int64(1))
     }
+
+    #[test]
+    fn display_decoder() {
+        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let decoder = ProtoDecoder::new(sr_settings);
+        assert_eq!(
+            "ProtoDecoder { sr_settings: SrSettings { urls: [\"http://127.0.0.1:1234\"], client: Client }, cache: {} }"
+                .to_owned(),
+            format!("{:?}", decoder)
+        )
+    }
 }

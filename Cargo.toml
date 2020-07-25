@@ -57,7 +57,7 @@ features = ["derive"]
 version = "^1.0"
 
 [dev-dependencies]
-mockito = "^0.26.0"
+mockito = "^0.27.0"
 rdkafka = { version = "^0.23.1", features = ["cmake-build"] }
 futures = "^0.3.5"
 rand = "^0.7.3"

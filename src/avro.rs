@@ -59,10 +59,10 @@ struct AvroSchema {
 /// whether it's actual used as key or value.
 ///
 /// ```
-///  # use mockito::{mock, server_address};
-///  # use avro_rs::types::Value;
-///  # use schema_registry_converter::avro::AvroDecoder;
-///  # use schema_registry_converter::schema_registry::SrSettings;
+///  use mockito::{mock, server_address};
+///  use avro_rs::types::Value;
+///  use schema_registry_converter::avro::AvroDecoder;
+///  use schema_registry_converter::schema_registry::SrSettings;
 ///
 /// let _m = mock("GET", "/schemas/ids/1")
 ///     .with_status(200)
@@ -99,10 +99,10 @@ impl AvroDecoder {
     /// exist or can't be parsed.
     ///
     /// ```
-    ///  # use mockito::{mock, server_address};
-    ///  # use schema_registry_converter::schema_registry::{SRCError, SrSettings};
-    ///  # use avro_rs::types::Value;
-    ///  # use schema_registry_converter::avro::AvroDecoder;
+    ///  use mockito::{mock, server_address};
+    ///  use schema_registry_converter::schema_registry::{SRCError, SrSettings};
+    ///  use avro_rs::types::Value;
+    ///  use schema_registry_converter::avro::AvroDecoder;
     ///
     /// let sr_settings = SrSettings::new(format!("http://{}", server_address()));
     /// let mut decoder = AvroDecoder::new(sr_settings);
@@ -142,9 +142,9 @@ impl AvroDecoder {
     /// decoder.decode(m.key()) to get the decoded key.
     ///
     /// ```no_run
-    /// # use rdkafka::message::{Message, BorrowedMessage};
-    /// # use avro_rs::types::Value;
-    /// # use schema_registry_converter::avro::AvroDecoder;
+    /// use rdkafka::message::{Message, BorrowedMessage};
+    /// use avro_rs::types::Value;
+    /// use schema_registry_converter::avro::AvroDecoder;
     /// fn get_value<'a>(
     ///     msg: &'a BorrowedMessage,
     ///     decoder: &'a mut AvroDecoder,
@@ -207,10 +207,10 @@ impl AvroDecoder {
 /// whether it's actual used as key or value.
 ///
 /// ```
-///  # use mockito::{mock, server_address};
-///  # use schema_registry_converter::schema_registry::{SubjectNameStrategy, SrSettings};
-///  # use avro_rs::types::Value;
-///  # use schema_registry_converter::avro::AvroEncoder;
+///  use mockito::{mock, server_address};
+///  use schema_registry_converter::schema_registry::{SubjectNameStrategy, SrSettings};
+///  use avro_rs::types::Value;
+///  use schema_registry_converter::avro::AvroEncoder;
 ///
 /// let _m = mock("GET", "/subjects/heartbeat-value/versions/latest")
 ///     .with_status(200)
@@ -253,11 +253,11 @@ impl AvroEncoder {
     /// New schema's can set by doing a post at /subjects/{subject}/versions.
     ///
     /// ```
-    /// # use mockito::{mock, server_address};
-    /// # use schema_registry_converter::schema_registry::{SRCError, SubjectNameStrategy, SuppliedSchema, SchemaType, SrSettings};
-    /// # use schema_registry_converter::schema_registry::SchemaType::Avro;
-    /// # use avro_rs::types::Value;
-    /// # use schema_registry_converter::avro::AvroEncoder;
+    /// use mockito::{mock, server_address};
+    /// use schema_registry_converter::schema_registry::{SRCError, SubjectNameStrategy, SuppliedSchema, SchemaType, SrSettings};
+    /// use schema_registry_converter::schema_registry::SchemaType::Avro;
+    /// use avro_rs::types::Value;
+    /// use schema_registry_converter::avro::AvroEncoder;
     ///
     /// # let _n = mock("POST", "/subjects/hb-nl.openweb.data.Heartbeat/versions")
     /// #    .with_status(200)
@@ -288,11 +288,11 @@ impl AvroEncoder {
     /// exist or can't be parsed.
     ///
     /// ```
-    ///  # use mockito::{mock, server_address};
-    ///  # use schema_registry_converter::schema_registry::{SubjectNameStrategy, SrSettings};
-    ///  # use schema_registry_converter::schema_registry::SRCError;
-    ///  # use avro_rs::types::Value;
-    ///  # use schema_registry_converter::avro::AvroEncoder;
+    ///  use mockito::{mock, server_address};
+    ///  use schema_registry_converter::schema_registry::{SubjectNameStrategy, SrSettings};
+    ///  use schema_registry_converter::schema_registry::SRCError;
+    ///  use avro_rs::types::Value;
+    ///  use schema_registry_converter::avro::AvroEncoder;
     ///
     /// let sr_settings = SrSettings::new(format!("http://{}", server_address()));
     /// let mut encoder = AvroEncoder::new(sr_settings);
@@ -330,10 +330,10 @@ impl AvroEncoder {
     /// The function get_supplied_schema might be used to easily provide the schema in the correct
     /// form.
     /// ```
-    ///  # use mockito::{mock, server_address};
-    ///  # use schema_registry_converter::schema_registry::{SubjectNameStrategy, SrSettings};
-    ///  # use avro_rs::types::Value;
-    ///  # use schema_registry_converter::avro::AvroEncoder;
+    ///  use mockito::{mock, server_address};
+    ///  use schema_registry_converter::schema_registry::{SubjectNameStrategy, SrSettings};
+    ///  use avro_rs::types::Value;
+    ///  use schema_registry_converter::avro::AvroEncoder;
     ///
     /// let _m = mock("GET", "/subjects/heartbeat-nl.openweb.data.Heartbeat/versions/latest")
     ///     .with_status(200)
@@ -367,12 +367,12 @@ impl AvroEncoder {
     /// The function get_supplied_schema might be used to easily provide the schema in the correct
     /// form.
     /// ```
-    ///  # use mockito::{mock, server_address};
-    ///  # use schema_registry_converter::schema_registry::{SubjectNameStrategy, SuppliedSchema, SchemaType, SrSettings};
-    ///  # use serde::Serialize;
-    ///  # use avro_rs::types::Value;
-    ///  # use schema_registry_converter::avro::{AvroEncoder, get_supplied_schema};
-    ///  # use avro_rs::Schema;
+    ///  use mockito::{mock, server_address};
+    ///  use schema_registry_converter::schema_registry::{SubjectNameStrategy, SuppliedSchema, SchemaType, SrSettings};
+    ///  use serde::Serialize;
+    ///  use avro_rs::types::Value;
+    ///  use schema_registry_converter::avro::{AvroEncoder, get_supplied_schema};
+    ///  use avro_rs::Schema;
     ///
     /// let _m = mock("GET", "/subjects/heartbeat-nl.openweb.data.Heartbeat/versions/latest")
     ///     .with_status(200)
@@ -732,7 +732,7 @@ mod tests {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
         let decoder = AvroDecoder::new(sr_settings);
         assert_eq!(
-            "AvroDecoder { sr_settings: SrSettings { url: \"http://127.0.0.1:1234\" }, cache: {} }"
+            "AvroDecoder { sr_settings: SrSettings { urls: [\"http://127.0.0.1:1234\"], client: Client }, cache: {} }"
                 .to_owned(),
             format!("{:?}", decoder)
         )
@@ -935,7 +935,7 @@ mod tests {
         let result = decoder.decode(Some(&[0, 0, 0, 10, 1, 6]));
 
         match result {
-            Err(e) => assert_eq!(e.error, "http get to schema registry failed"),
+            Err(e) => assert_eq!(e.error, "http call to schema registry failed"),
             _ => panic!(),
         }
     }
@@ -1060,7 +1060,7 @@ mod tests {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
         let decoder = AvroEncoder::new(sr_settings);
         assert_eq!(
-            "AvroEncoder { sr_settings: SrSettings { url: \"http://127.0.0.1:1234\" }, cache: {} }"
+            "AvroEncoder { sr_settings: SrSettings { urls: [\"http://127.0.0.1:1234\"], client: Client }, cache: {} }"
                 .to_owned(),
             format!("{:?}", decoder)
         )
@@ -1155,7 +1155,7 @@ mod tests {
         let result = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
 
         match result {
-            Err(e) => assert_eq!(e.error, "http get to schema registry failed"),
+            Err(e) => assert_eq!(e.error, "http call to schema registry failed"),
             _ => panic!(),
         }
     }
@@ -1173,7 +1173,7 @@ mod tests {
         assert_eq!(
             result,
             Err(SRCError::new(
-                "http get to schema registry failed",
+                "http call to schema registry failed",
                 Some(String::from("builder error for url (hxxx://bogus/subjects/heartbeat-nl.openweb.data.Balance/versions/latest): URL scheme is not allowed")),
                 true,
             )
@@ -1198,7 +1198,7 @@ mod tests {
         let result = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
 
         match result {
-            Err(e) => assert_eq!(e.error, "http post to schema registry failed"),
+            Err(e) => assert_eq!(e.error, "http call to schema registry failed"),
             _ => panic!(),
         }
     }
@@ -1348,7 +1348,7 @@ mod tests {
         assert_eq!(
             result,
             Err(
-                SRCError::non_retryable_without_cause("Could not get id from response")
+                SRCError::non_retryable_without_cause("Could not get id from response for PostNew(\"nl.openweb.data.Heartbeat\", \"{\\\"schema\\\":\\\"{\\\\\\\"type\\\\\\\":\\\\\\\"record\\\\\\\",\\\\\\\"name\\\\\\\":\\\\\\\"Heartbeat\\\\\\\",\\\\\\\"namespace\\\\\\\":\\\\\\\"nl.openweb.data\\\\\\\",\\\\\\\"fields\\\\\\\":[{\\\\\\\"name\\\\\\\":\\\\\\\"beat\\\\\\\",\\\\\\\"type\\\\\\\":\\\\\\\"long\\\\\\\"}]}\\\",\\\"schemaType\\\":\\\"AVRO\\\"}\")")
                     .into_cache()
             )
         )
