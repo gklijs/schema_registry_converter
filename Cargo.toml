@@ -14,8 +14,9 @@ edition = "2018"
 
 [features]
 avro = ["avro-rs"]
-proto_decoder = ["protofish", "bytes", "logos", "integer-encoding"]
-proto_raw = ["logos", "integer-encoding"]
+json = ["url", "valico"]
+proto_decoder = ["bytes", "integer-encoding", "logos", "protofish"]
+proto_raw = ["integer-encoding", "logos"]
 kafka_test = []
 default = []
 
@@ -55,6 +56,14 @@ features = ["derive"]
 
 [dependencies.serde_json]
 version = "^1.0"
+
+[dependencies.url]
+version = "^2"
+optional = true
+
+[dependencies.valico]
+version = "^3.4"
+optional = true
 
 [dev-dependencies]
 mockito = "^0.27.0"
