@@ -67,12 +67,24 @@ fn get_deserialized_record<'a>(
     decoder: &'a mut AvroDecoder,
 ) -> DeserializedAvroRecord<'a> {
     let key = match decoder.decode(m.key()) {
-        Ok(v) => v.1,
-        Err(e) => panic!("Error getting value: {}", e),
+        Ok(v) => v.value,
+        Err(e) => {
+            println!(
+                "encountered error, key probably was not avro encoded: {}",
+                e
+            );
+            match String::from_utf8(Vec::from(m.key().unwrap())) {
+                Ok(s) => Value::String(s),
+                Err(_) => {
+                    println!("It was not a String either :(");
+                    Value::Bytes(Vec::from(m.key().unwrap()))
+                }
+            }
+        }
     };
     print!("value needed for test {:?}", m.payload());
     let value = match decoder.decode(m.payload()) {
-        Ok(v) => v.1,
+        Ok(v) => v.value,
         Err(e) => panic!("Error getting value: {}", e),
     };
     DeserializedAvroRecord {

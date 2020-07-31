@@ -21,16 +21,14 @@
 //! automatically does retries.
 //!
 //! [avro-rs]: https://crates.io/crates/avro-rs
-
-#[macro_use]
-extern crate failure;
-
 #[cfg(feature = "avro")]
 pub mod avro;
+#[cfg(feature = "json")]
+pub mod json;
 #[cfg(feature = "proto_decoder")]
 pub mod proto_decoder;
 #[cfg(feature = "proto_raw")]
 pub mod proto_raw;
-#[cfg(any(feature = "proto_decoder", feature = "proto_raw_encoder"))]
+#[cfg(any(feature = "proto_decoder", feature = "proto_raw"))]
 mod proto_resolver;
 pub mod schema_registry;

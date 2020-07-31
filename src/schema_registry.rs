@@ -79,6 +79,10 @@ impl SrSettings {
             timeout: Duration::from_secs(30),
         }
     }
+
+    pub(crate) fn url(&self) -> &str {
+        &*self.urls[0]
+    }
 }
 
 /// Builder for SrSettings
@@ -613,7 +617,7 @@ fn perform_single_sr_call(
             Ok(r) => Ok(r),
             Err(e) => Err(SRCError::non_retryable_with_cause(
                 e,
-                "could not parse to RawRegisteredSchema",
+                "could not parse to RawRegisteredSchema, schema might not exist on this schema registry, the http call failed, cause will give more information",
             )),
         },
         Err(e) => Err(SRCError::retryable_with_cause(

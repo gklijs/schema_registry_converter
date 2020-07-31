@@ -337,7 +337,7 @@ mod tests {
         let _m = mock("GET", "/schemas/ids/7")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_proto_body(get_proto_hb_schema(), 1))
+            .with_body(&get_proto_body(get_proto_hb_schema(), 7))
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));

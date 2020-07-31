@@ -72,7 +72,7 @@ struct AvroSchema {
 ///
 /// let sr_settings = SrSettings::new(format!("http://{}", server_address()));
 /// let mut decoder = AvroDecoder::new(sr_settings);
-/// let heartbeat = decoder.decode(Some(&[0,0,0,0,1,6])).unwrap().1;
+/// let heartbeat = decoder.decode(Some(&[0,0,0,0,1,6])).unwrap().value;
 ///
 /// assert_eq!(heartbeat, Value::Record(vec![("beat".to_string(), Value::Long(3))]))
 /// ```
@@ -129,7 +129,7 @@ impl AvroDecoder {
     ///
     /// decoder.remove_errors_from_cache();
     ///
-    /// let heartbeat = decoder.decode(Some(&bytes)).unwrap().1;
+    /// let heartbeat = decoder.decode(Some(&bytes)).unwrap().value;
     /// assert_eq!(heartbeat, Value::Record(vec![("beat".to_string(), Value::Long(3))]))
     /// ```
     pub fn remove_errors_from_cache(&mut self) {
@@ -150,26 +150,35 @@ impl AvroDecoder {
     ///     decoder: &'a mut AvroDecoder,
     /// ) -> Value{
     ///     match decoder.decode(msg.payload()){
-    ///         Ok((_name, v)) => v,
+    ///         Ok(r) => r.value,
     ///         Err(e) => panic!("Error getting value: {}", e),
     ///     }
     /// }
     /// ```
-    pub fn decode(&mut self, bytes: Option<&[u8]>) -> Result<(Option<Name>, Value), SRCError> {
+    pub fn decode(&mut self, bytes: Option<&[u8]>) -> Result<DecodeResult, SRCError> {
         match get_bytes_result(bytes) {
-            BytesResult::Null => Ok((None, Value::Null)),
+            BytesResult::Null => Ok(DecodeResult {
+                name: None,
+                value: Value::Null,
+            }),
             BytesResult::Valid(id, bytes) => self.deserialize(id, &bytes),
-            BytesResult::Invalid(bytes) => Ok((None, Value::Bytes(bytes))),
+            BytesResult::Invalid(bytes) => Err(SRCError::non_retryable_without_cause(&*format!(
+                "Invalid bytes {:?}",
+                bytes
+            ))),
         }
     }
     /// The actual deserialization trying to get the id from the bytes to retrieve the schema, and
     /// using a reader transforms the bytes to a value.
-    fn deserialize(&mut self, id: u32, bytes: &[u8]) -> Result<(Option<Name>, Value), SRCError> {
+    fn deserialize(&mut self, id: u32, bytes: &[u8]) -> Result<DecodeResult, SRCError> {
         let schema = self.get_schema(id);
         let mut reader = Cursor::new(bytes);
         match schema {
             Ok(s) => match from_avro_datum(&s.parsed, &mut reader, None) {
-                Ok(v) => Ok((get_name(&s.parsed), v)),
+                Ok(v) => Ok(DecodeResult {
+                    name: get_name(&s.parsed),
+                    value: v,
+                }),
                 Err(e) => Err(SRCError::non_retryable_with_cause(
                     e,
                     "Could not transform bytes using schema",
@@ -192,6 +201,12 @@ impl AvroDecoder {
             }
         }
     }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct DecodeResult {
+    pub name: Option<Name>,
+    pub value: Value,
 }
 
 /// An encoder used to transform a Value object to bytes
@@ -748,7 +763,7 @@ mod tests {
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
         let mut decoder = AvroDecoder::new(sr_settings);
-        let heartbeat = decoder.decode(Some(&[0, 0, 0, 0, 1, 6])).unwrap().1;
+        let heartbeat = decoder.decode(Some(&[0, 0, 0, 0, 1, 6])).unwrap().value;
 
         assert_eq!(
             heartbeat,
@@ -774,16 +789,12 @@ mod tests {
         let mut decoder = AvroDecoder::new(sr_settings);
         let heartbeat = decoder.decode(Some(&[0, 0, 0, 0, 1, 6]));
         let item = match heartbeat {
-            Ok((Some(name), value)) => match name.name.as_str() {
-                "Heartbeat" => match name.namespace {
-                    Some(namespace) => match namespace.as_str() {
-                        "nl.openweb.data" => from_value::<Heartbeat>(&value).unwrap(),
-                        ns => panic!("Unexpected namespace {}", ns),
-                    },
-                    None => panic!("No namespace, was expected"),
-                },
-                name => panic!("Unexpected name {}", name),
-            },
+            Ok(r) => {
+                let name = r.name.unwrap();
+                assert_eq!(name.name.as_str(), "Heartbeat");
+                assert_eq!(name.namespace.unwrap().as_str(), "nl.openweb.data");
+                from_value::<Heartbeat>(&r.value).unwrap()
+            }
             _ => panic!(),
         };
         assert_eq!(item.beat, 3i64);
@@ -793,7 +804,7 @@ mod tests {
     fn test_decoder_no_bytes() {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
         let mut decoder = AvroDecoder::new(sr_settings);
-        let heartbeat = decoder.decode(None).unwrap().1;
+        let heartbeat = decoder.decode(None).unwrap().value;
 
         assert_eq!(heartbeat, Value::Null)
     }
@@ -804,34 +815,55 @@ mod tests {
         let mut decoder = AvroDecoder::new(sr_settings);
         let heartbeat = decoder.decode(None).unwrap();
 
-        assert_eq!(heartbeat, (None, Value::Null))
+        assert_eq!(
+            heartbeat,
+            DecodeResult {
+                name: None,
+                value: Value::Null
+            }
+        )
     }
 
     #[test]
     fn test_decoder_magic_byte_not_present() {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
         let mut decoder = AvroDecoder::new(sr_settings);
-        let heartbeat = decoder.decode(Some(&[1, 0, 0, 0, 1, 6])).unwrap().1;
+        let result = decoder.decode(Some(&[1, 0, 0, 0, 1, 6]));
 
-        assert_eq!(heartbeat, Value::Bytes(vec![1, 0, 0, 0, 1, 6]))
+        assert_eq!(
+            result,
+            Err(SRCError::non_retryable_without_cause(
+                "Invalid bytes [1, 0, 0, 0, 1, 6]"
+            ))
+        )
     }
 
     #[test]
     fn test_decoder_with_name_magic_byte_not_present() {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
         let mut decoder = AvroDecoder::new(sr_settings);
-        let heartbeat = decoder.decode(Some(&[1, 0, 0, 0, 1, 6]));
+        let result = decoder.decode(Some(&[1, 0, 0, 0, 1, 6]));
 
-        assert_eq!(heartbeat, Ok((None, Value::Bytes(vec![1, 0, 0, 0, 1, 6]))))
+        assert_eq!(
+            result,
+            Err(SRCError::non_retryable_without_cause(
+                "Invalid bytes [1, 0, 0, 0, 1, 6]"
+            ))
+        )
     }
 
     #[test]
     fn test_decoder_not_enough_bytes() {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
         let mut decoder = AvroDecoder::new(sr_settings);
-        let heartbeat = decoder.decode(Some(&[0, 0, 0, 0])).unwrap().1;
+        let result = decoder.decode(Some(&[0, 0, 0, 0]));
 
-        assert_eq!(heartbeat, Value::Bytes(vec![0, 0, 0, 0]))
+        assert_eq!(
+            result,
+            Err(SRCError::non_retryable_without_cause(
+                "Invalid bytes [0, 0, 0, 0]"
+            ))
+        )
     }
 
     #[test]
@@ -893,7 +925,7 @@ mod tests {
         assert_eq!(
             heartbeat,
             Err(SRCError::new(
-                "could not parse to RawRegisteredSchema",
+                "could not parse to RawRegisteredSchema, schema might not exist on this schema registry, the http call failed, cause will give more information",
                 Some(String::from(
                     "error decoding response body: expected `:` at line 1 column 130"
                 )),
@@ -918,7 +950,7 @@ mod tests {
         assert_eq!(
             heartbeat,
             Err(SRCError::new(
-                "could not parse to RawRegisteredSchema",
+                "could not parse to RawRegisteredSchema, schema might not exist on this schema registry, the http call failed, cause will give more information",
                 Some(String::from(
                     "error decoding response body: expected `:` at line 1 column 130"
                 )),
@@ -998,7 +1030,7 @@ mod tests {
                 118, 162, 2,
             ]))
             .unwrap()
-            .1;
+            .value;
 
         assert_eq!(
             cac,
@@ -1048,7 +1080,7 @@ mod tests {
 
         decoder.remove_errors_from_cache();
 
-        let heartbeat = decoder.decode(Some(&bytes)).unwrap().1;
+        let heartbeat = decoder.decode(Some(&bytes)).unwrap().value;
         assert_eq!(
             heartbeat,
             Value::Record(vec![("beat".to_string(), Value::Long(3))])
@@ -1058,11 +1090,11 @@ mod tests {
     #[test]
     fn display_encode() {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let decoder = AvroEncoder::new(sr_settings);
+        let encoder = AvroEncoder::new(sr_settings);
         assert_eq!(
             "AvroEncoder { sr_settings: SrSettings { urls: [\"http://127.0.0.1:1234\"], client: Client, authorization: None }, cache: {} }"
                 .to_owned(),
-            format!("{:?}", decoder)
+            format!("{:?}", encoder)
         )
     }
 
@@ -1400,7 +1432,7 @@ mod tests {
         assert_eq!(
             error,
             Err(SRCError::new(
-                "could not parse to RawRegisteredSchema",
+                "could not parse to RawRegisteredSchema, schema might not exist on this schema registry, the http call failed, cause will give more information",
                 Some(String::from(
                     "error decoding response body: EOF while parsing a value at line 1 column 0"
                 )),
@@ -1572,9 +1604,11 @@ mod tests {
 
         let result = decoder.decode(Some(&bytes));
         let value_values = match result {
-            Ok((_, Value::Record(v))) => v,
+            Ok(v) => match v.value {
+                Value::Record(r) => r,
+                _ => panic!("Not a record, while only only those expected"),
+            },
             Err(e) => panic!("Some kind of error: {}", e),
-            _ => panic!("Not a record, while only only those expected"),
         };
         let id_key = match &value_values[0] {
             (_id, Value::Fixed(16, _v)) => _id,

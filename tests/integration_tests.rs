@@ -7,7 +7,6 @@ use crate::kafka_consumer::{consume_avro, DeserializedAvroRecord};
 use crate::kafka_producer::get_producer;
 use avro_rs::types::Value;
 use rand::Rng;
-use rdkafka::message::FromBytes;
 use schema_registry_converter::schema_registry::{SchemaType, SubjectNameStrategy, SuppliedSchema};
 
 fn get_schema_registry_url() -> String {
@@ -163,15 +162,10 @@ fn test7_test_avro_from_java_test_app() {
     let topic = "testavro";
     let test = Box::new(move |rec: DeserializedAvroRecord| {
         println!("testing record {:#?}", rec);
-        let key_bytes = match rec.key {
-            Value::Bytes(v) => v,
-            _ => panic!("Keys wasn't bytes"),
+        match rec.key {
+            Value::String(s) => assert_eq!("testkey", s, "check string key"),
+            _ => panic!("Keys wasn't a string"),
         };
-        let key_string = match str::from_bytes(key_bytes.as_ref()) {
-            Ok(v) => v,
-            _ => panic!("Could not create string key successfully"),
-        };
-        assert_eq!("testkey", key_string, "check string key");
         let value_values = match rec.value {
             Value::Record(v) => v,
             _ => panic!("Not a record, while only only those expected"),
