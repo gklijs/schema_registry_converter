@@ -1,8 +1,9 @@
 use avro_rs::types::Value;
 use rdkafka::config::ClientConfig;
 use rdkafka::producer::{FutureProducer, FutureRecord};
-use schema_registry_converter::avro::AvroEncoder;
-use schema_registry_converter::schema_registry::{SrSettings, SubjectNameStrategy};
+use schema_registry_converter::blocking::avro::AvroEncoder;
+use schema_registry_converter::blocking::schema_registry::SrSettings;
+use schema_registry_converter::schema_registry_common::SubjectNameStrategy;
 
 pub struct RecordProducer {
     producer: FutureProducer,

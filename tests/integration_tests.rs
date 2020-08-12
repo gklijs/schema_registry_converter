@@ -7,7 +7,9 @@ use crate::kafka_consumer::{consume_avro, DeserializedAvroRecord};
 use crate::kafka_producer::get_producer;
 use avro_rs::types::Value;
 use rand::Rng;
-use schema_registry_converter::schema_registry::{SchemaType, SubjectNameStrategy, SuppliedSchema};
+use schema_registry_converter::schema_registry_common::{
+    SchemaType, SubjectNameStrategy, SuppliedSchema,
+};
 
 fn get_schema_registry_url() -> String {
     String::from("http://localhost:8081")
