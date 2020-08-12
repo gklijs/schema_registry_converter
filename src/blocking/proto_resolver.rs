@@ -170,7 +170,7 @@ pub(crate) fn to_index_and_data(bytes: &[u8]) -> (Vec<i32>, Vec<u8>) {
 
 #[cfg(test)]
 mod tests {
-    use crate::proto_resolver::{IndexResolver, MessageResolver};
+    use crate::blocking::proto_resolver::{IndexResolver, MessageResolver};
 
     fn get_proto_simple() -> &'static str {
         r#"syntax = "proto3";package nl.openweb.data; message Heartbeat{uint64 beat = 1;}"#

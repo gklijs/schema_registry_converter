@@ -1,7 +1,10 @@
-use crate::proto_resolver::{to_index_and_data, IndexResolver, MessageResolver};
-use crate::schema_registry::{
-    get_bytes_result, get_payload, get_schema_by_id_and_type, get_schema_by_subject, get_subject,
-    BytesResult, RegisteredSchema, SRCError, SchemaType, SrSettings, SubjectNameStrategy,
+use crate::blocking::proto_resolver::{to_index_and_data, IndexResolver, MessageResolver};
+use crate::blocking::schema_registry::{
+    get_bytes_result, get_payload, get_schema_by_id_and_type, get_schema_by_subject, SrSettings,
+};
+use crate::error::SRCError;
+use crate::schema_registry_common::{
+    get_subject, BytesResult, RegisteredSchema, SchemaType, SubjectNameStrategy,
 };
 use integer_encoding::VarInt;
 use std::collections::hash_map::{Entry, RandomState};
@@ -193,9 +196,10 @@ pub struct RawDecodeResult<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::proto_raw::{ProtoRawDecoder, ProtoRawEncoder};
-    use crate::schema_registry::{
-        SchemaType, SrSettings, SubjectNameStrategy, SuppliedReference, SuppliedSchema,
+    use crate::blocking::proto_raw::{ProtoRawDecoder, ProtoRawEncoder};
+    use crate::blocking::schema_registry::SrSettings;
+    use crate::schema_registry_common::{
+        SchemaType, SubjectNameStrategy, SuppliedReference, SuppliedSchema,
     };
     use mockito::{mock, server_address};
 

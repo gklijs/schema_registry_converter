@@ -1,7 +1,11 @@
-use crate::schema_registry::{
+use crate::blocking::schema_registry::{
     get_bytes_result, get_payload, get_referenced_schema, get_schema_by_id_and_type,
-    get_schema_by_subject, get_subject, BytesResult, RegisteredReference, RegisteredSchema,
-    SRCError, SchemaType, SrSettings, SubjectNameStrategy,
+    get_schema_by_subject, SrSettings,
+};
+use crate::error::SRCError;
+use crate::schema_registry_common::{
+    get_subject, BytesResult, RegisteredReference, RegisteredSchema, SchemaType,
+    SubjectNameStrategy,
 };
 use serde_json::Value;
 use std::collections::hash_map::{Entry, RandomState};
@@ -281,8 +285,9 @@ pub struct DecodeResult<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::json::{JsonDecoder, JsonEncoder};
-    use crate::schema_registry::{get_payload, SrSettings, SubjectNameStrategy};
+    use crate::blocking::json::{JsonDecoder, JsonEncoder};
+    use crate::blocking::schema_registry::{get_payload, SrSettings};
+    use crate::schema_registry_common::SubjectNameStrategy;
     use mockito::{mock, server_address};
     use serde_json::{from_str, to_string_pretty, Value};
     use std::fs::{read_to_string, File};

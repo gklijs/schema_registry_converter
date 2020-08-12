@@ -1,17 +1,18 @@
 //! This module contains the code specific for the schema registry.
 
+use crate::error::SRCError;
+use crate::schema_registry_common::{
+    get_schema, get_subject, url_for_call, BytesResult, RawRegisteredSchema, RegisteredReference,
+    RegisteredSchema, SchemaType, SrAuthorization, SrCall, SubjectNameStrategy, SuppliedReference,
+    SuppliedSchema,
+};
 use byteorder::{BigEndian, ByteOrder, ReadBytesExt};
-use core::fmt;
-use failure::Fail;
 use reqwest::blocking::Client;
 use reqwest::header;
 use reqwest::header::{HeaderName, ACCEPT, CONTENT_TYPE};
-use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::collections::hash_map::RandomState;
 use std::collections::HashMap;
-use std::fmt::Display;
-use std::ops::Deref;
 use std::str;
 use std::time::Duration;
 
@@ -23,23 +24,6 @@ pub struct SrSettings {
     urls: Vec<String>,
     client: Client,
     authorization: SrAuthorization,
-}
-
-#[derive(Clone)]
-enum SrAuthorization {
-    None,
-    Token(String),
-    Basic(String, Option<String>),
-}
-
-impl fmt::Debug for SrAuthorization {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            SrAuthorization::None => write!(f, "None"),
-            SrAuthorization::Token(_) => write!(f, "Token"),
-            SrAuthorization::Basic(_, _) => write!(f, "Basic"),
-        }
-    }
 }
 
 /// Struct to create an SrSettings when used with multiple url's, authorization, custom headers, or
@@ -54,7 +38,7 @@ pub struct SrSettingsBuilder {
 
 /// Creates a new SrSettings struct that is needed to make calls to the schema registry
 /// ```
-/// use schema_registry_converter::schema_registry::SrSettings;
+/// use schema_registry_converter::blocking::schema_registry::SrSettings;
 /// let sr_settings = SrSettings::new(String::from("http://localhost:8081"));
 /// ```
 impl SrSettings {
@@ -68,7 +52,7 @@ impl SrSettings {
         }
     }
 
-    /// Wil create a new SrSettingsBuilder with default values, the url should be fully qualified
+    /// Will create a new SrSettingsBuilder with default values, the url should be fully qualified
     /// like `"http://localhost:8081"`.
     pub fn new_builder(url: String) -> SrSettingsBuilder {
         SrSettingsBuilder {
@@ -87,7 +71,7 @@ impl SrSettings {
 
 /// Builder for SrSettings
 /// ```
-/// use schema_registry_converter::schema_registry::{SrSettings};
+/// use schema_registry_converter::blocking::schema_registry::{SrSettings};
 /// use std::time::Duration;
 /// let sr_settings = SrSettings::new_builder(String::from("http://localhost:8081"))
 ///     .add_url(String::from("http://localhost:8082"))
@@ -184,88 +168,14 @@ impl SrSettingsBuilder {
     }
 }
 
-/// By default the schema registry supports three types. It's possible there will be more in the future
-/// or to add your own. Therefore the other is one of the schema types.
-#[derive(Clone, Debug, PartialEq)]
-pub enum SchemaType {
-    Avro,
-    Protobuf,
-    Json,
-    Other(String),
-}
-
-/// The schema registry supports sub schema's they will be stored separately in the schema registry
-#[derive(Clone, Debug)]
-pub struct SuppliedReference {
-    pub name: String,
-    pub subject: String,
-    pub schema: String,
-    pub references: Vec<SuppliedReference>,
-}
-
-/// Schema as it might be provided to create messages, they will be added to th schema registry if
-/// not already present
-#[derive(Clone, Debug)]
-pub struct SuppliedSchema {
-    pub name: Option<String>,
-    pub schema_type: SchemaType,
-    pub schema: String,
-    pub references: Vec<SuppliedReference>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct RegisteredReference {
-    pub name: String,
-    pub subject: String,
-    pub version: u32,
-}
-
-/// Schema as retrieved from the schema registry. It's close to the json received and doesn't do
-/// type specific transformations.
-#[derive(Clone, Debug)]
-pub struct RegisteredSchema {
-    pub id: u32,
-    pub schema_type: SchemaType,
-    pub schema: String,
-    pub references: Vec<RegisteredReference>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RawRegisteredSchema {
-    subject: Option<String>,
-    version: Option<u32>,
-    id: Option<u32>,
-    schema_type: Option<String>,
-    references: Option<Vec<RegisteredReference>>,
-    schema: Option<String>,
-}
-
-/// Intermediate result to just handle the byte transformation. When used in a decoder just the
-/// id might me enough because the resolved schema is cashed already.
-#[derive(Debug)]
-pub enum BytesResult {
-    Null,
-    Invalid(Vec<u8>),
-    Valid(u32, Vec<u8>),
-}
-
-/// Strategy similar to the one in the Java client. By default schema's needs to be backwards
-/// compatible. Historically the only available strategy was the TopicNameStrategy. This meant in
-/// practice that a topic could only have one type, or the restriction on backwards compatibility
-/// was to be abandoned. Using either of the two other strategies allows multiple types of schema
-/// on on topic, while still being able to keep the restriction on schema's being backwards
-/// compatible.
-/// Depending on the strategy, either the topic, whether the value is used as key, the fully
-/// qualified name (only for RecordNameStrategy), or the schema needs to be provided.
-#[derive(Clone, Debug)]
-pub enum SubjectNameStrategy {
-    RecordNameStrategy(String),
-    TopicNameStrategy(String, bool),
-    TopicRecordNameStrategy(String, String),
-    RecordNameStrategyWithSchema(Box<SuppliedSchema>),
-    TopicNameStrategyWithSchema(String, bool, Box<SuppliedSchema>),
-    TopicRecordNameStrategyWithSchema(String, Box<SuppliedSchema>),
+/// Creates payload that can be included as a key or value on a kafka record
+pub fn get_payload(id: u32, encoded_bytes: Vec<u8>) -> Vec<u8> {
+    let mut payload = vec![0u8];
+    let mut buf = [0u8; 4];
+    BigEndian::write_u32(&mut buf, id);
+    payload.extend_from_slice(&buf);
+    payload.extend_from_slice(encoded_bytes.as_slice());
+    payload
 }
 
 /// Just analyses the bytes which are contained in the key or value of an kafka record. When valid
@@ -282,16 +192,6 @@ pub fn get_bytes_result(bytes: Option<&[u8]>) -> BytesResult {
         }
         Some(p) => BytesResult::Invalid(p[..].to_owned()),
     }
-}
-
-/// Creates payload that can be included as a key or value on a kafka record
-pub fn get_payload(id: u32, encoded_bytes: Vec<u8>) -> Vec<u8> {
-    let mut payload = vec![0u8];
-    let mut buf = [0u8; 4];
-    BigEndian::write_u32(&mut buf, id);
-    payload.extend_from_slice(&buf);
-    payload.extend_from_slice(encoded_bytes.as_slice());
-    payload
 }
 
 /// Gets a schema by an id. This is used to get the correct schema te deserialize bytes, with the
@@ -344,53 +244,6 @@ pub fn get_referenced_schema(
         ),
     )?;
     raw_to_registered_schema(raw_schema, None)
-}
-
-/// Helper function to get the schema from the strategy.
-fn get_schema(subject_name_strategy: &SubjectNameStrategy) -> Option<SuppliedSchema> {
-    match subject_name_strategy {
-        SubjectNameStrategy::RecordNameStrategy(_) => None,
-        SubjectNameStrategy::TopicNameStrategy(_, _) => None,
-        SubjectNameStrategy::TopicRecordNameStrategy(_, _) => None,
-        SubjectNameStrategy::RecordNameStrategyWithSchema(s) => Some(*s.clone()),
-        SubjectNameStrategy::TopicNameStrategyWithSchema(_, _, s) => Some(*s.clone()),
-        SubjectNameStrategy::TopicRecordNameStrategyWithSchema(_, s) => Some(*s.clone()),
-    }
-}
-
-/// Gets the subject part which is also used as key to cache the results. It's constructed so that
-/// it's compatible with the Java client.
-pub fn get_subject(subject_name_strategy: &SubjectNameStrategy) -> Result<String, SRCError> {
-    match subject_name_strategy {
-        SubjectNameStrategy::RecordNameStrategy(rn) => Ok(rn.clone()),
-        SubjectNameStrategy::TopicNameStrategy(t, is_key) => {
-            if *is_key {
-                Ok(format!("{}-key", t))
-            } else {
-                Ok(format!("{}-value", t))
-            }
-        }
-        SubjectNameStrategy::TopicRecordNameStrategy(t, rn) => Ok(format!("{}-{}", t, rn)),
-        SubjectNameStrategy::RecordNameStrategyWithSchema(s) => match &s.name {
-            None => Err(SRCError::non_retryable_without_cause(
-                "name is mandatory in SuppliedSchema when used in TopicRecordNameStrategyWithSchema",
-            )),
-            Some(n) => Ok(n.clone()),
-        },
-        SubjectNameStrategy::TopicNameStrategyWithSchema(t, is_key, _) => {
-            if *is_key {
-                Ok(format!("{}-key", t))
-            } else {
-                Ok(format!("{}-value", t))
-            }
-        }
-        SubjectNameStrategy::TopicRecordNameStrategyWithSchema(t, s) => match &s.name {
-            None => Err(SRCError::non_retryable_without_cause(
-                "name is mandatory in SuppliedSchema when used in TopicRecordNameStrategyWithSchema",
-            )),
-            Some(n) => Ok(format!("{}-{}", t, n)),
-        },
-    }
 }
 
 fn raw_to_registered_schema(
@@ -543,27 +396,6 @@ fn post_reference(
     })
 }
 
-#[derive(Debug, Clone, Copy)]
-enum SrCall<'a> {
-    GetById(u32),
-    GetLatest(&'a str),
-    GetBySubjectAndVersion(&'a str, u32),
-    PostNew(&'a str, &'a str),
-    PostForVersion(&'a str, &'a str),
-}
-
-fn url_for_call(call: &SrCall, base_url: &str) -> String {
-    match call {
-        SrCall::GetById(id) => format!("{}/schemas/ids/{}", base_url, id),
-        SrCall::GetLatest(subject) => format!("{}/subjects/{}/versions/latest", base_url, subject),
-        SrCall::GetBySubjectAndVersion(subject, version) => {
-            format!("{}/subjects/{}/versions/{}", base_url, subject, version)
-        }
-        SrCall::PostNew(subject, _) => format!("{}/subjects/{}/versions", base_url, subject),
-        SrCall::PostForVersion(subject, _) => format!("{}/subjects/{}", base_url, subject),
-    }
-}
-
 fn perform_sr_call(
     sr_settings: &SrSettings,
     sr_call: SrCall,
@@ -627,155 +459,11 @@ fn perform_single_sr_call(
     }
 }
 
-/// Error struct which makes it easy to know if the resulting error is also preserved in the cache
-/// or not. And whether trying it again might not cause an error.
-#[derive(Debug, PartialEq, Fail)]
-pub struct SRCError {
-    pub error: String,
-    pub cause: Option<String>,
-    pub retriable: bool,
-    pub cached: bool,
-}
-
-/// Implements clone so when an error is returned from the cache, a copy can be returned
-impl Clone for SRCError {
-    fn clone(&self) -> SRCError {
-        let side = match &self.cause {
-            Some(v) => Some(String::from(v.deref())),
-            None => None,
-        };
-        SRCError {
-            error: String::from(self.error.deref()),
-            cause: side,
-            retriable: self.retriable,
-            cached: self.cached,
-        }
-    }
-}
-
-/// Gives the information from the error in a readable format.
-impl fmt::Display for SRCError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match &self.cause {
-            Some(cause) => write!(
-                f,
-                "Error: {}, was cause by {}, it's retriable: {}, it's cached: {}",
-                self.error, &cause, self.retriable, self.cached
-            ),
-            None => write!(
-                f,
-                "Error: {} had no other cause, it's retriable: {}, it's cached: {}",
-                self.error, self.retriable, self.cached
-            ),
-        }
-    }
-}
-
-/// Specific error from which can be determined whether retrying might not lead to an error and
-/// whether the error is cashed, it's turned into the cashed variant when it's put into the cache.
-impl SRCError {
-    pub fn new(error: &str, cause: Option<String>, retriable: bool) -> SRCError {
-        SRCError {
-            error: error.to_owned(),
-            cause,
-            retriable,
-            cached: false,
-        }
-    }
-    pub fn retryable_with_cause<T: Display>(cause: T, error: &str) -> SRCError {
-        SRCError::new(error, Some(format!("{}", cause)), true)
-    }
-    pub fn non_retryable_with_cause<T: Display>(cause: T, error: &str) -> SRCError {
-        SRCError::new(error, Some(format!("{}", cause)), false)
-    }
-    pub fn non_retryable_without_cause(error: &str) -> SRCError {
-        SRCError::new(error, None, false)
-    }
-    /// Should be called before putting the error in the cache
-    pub fn into_cache(self) -> SRCError {
-        SRCError {
-            error: self.error,
-            cause: self.cause,
-            retriable: self.retriable,
-            cached: true,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::schema_registry::{
-        get_schema_by_id, get_subject, SRCError, SchemaType, SrSettings, SubjectNameStrategy,
-        SuppliedSchema,
-    };
+    use crate::blocking::schema_registry::{get_schema_by_id, SrSettings};
     use mockito::{mock, server_address};
     use std::time::Duration;
-
-    #[test]
-    fn display_record_name_strategy() {
-        let sns = SubjectNameStrategy::RecordNameStrategy(String::from("bla"));
-        assert_eq!(
-            "RecordNameStrategy(\"bla\")".to_owned(),
-            format!("{:?}", sns)
-        )
-    }
-
-    #[test]
-    fn display_topic_name_strategy() {
-        let sns = SubjectNameStrategy::TopicNameStrategy(String::from("bla"), true);
-        assert_eq!(
-            "TopicNameStrategy(\"bla\", true)".to_owned(),
-            format!("{:?}", sns)
-        )
-    }
-
-    #[test]
-    fn display_topic_record_name_strategy() {
-        let sns =
-            SubjectNameStrategy::TopicRecordNameStrategy(String::from("bla"), String::from("foo"));
-        assert_eq!(
-            "TopicRecordNameStrategy(\"bla\", \"foo\")".to_owned(),
-            format!("{:?}", sns)
-        )
-    }
-
-    #[test]
-    fn display_error_no_cause() {
-        let err = SRCError::new("Could not get id from response", None, false);
-        assert_eq!(format!("{}", err), "Error: Could not get id from response had no other cause, it\'s retriable: false, it\'s cached: false".to_owned())
-    }
-
-    #[test]
-    fn display_error_with_cause() {
-        let err = SRCError::new(
-            "Could not get id from response",
-            Some(String::from("error in response")),
-            false,
-        );
-        assert_eq!(format!("{}", err), "Error: Could not get id from response, was cause by error in response, it\'s retriable: false, it\'s cached: false".to_owned())
-    }
-
-    #[test]
-    fn error_when_name_mandatory() {
-        let strategy = SubjectNameStrategy::TopicRecordNameStrategyWithSchema(
-            String::from("someTopic"),
-            Box::from(SuppliedSchema {
-                name: None,
-                schema_type: SchemaType::Other(String::from("foo")),
-                schema: "".to_string(),
-                references: vec![],
-            }),
-        );
-
-        let result = get_subject(&strategy);
-
-        assert_eq!(
-            result,
-            Err(SRCError::non_retryable_without_cause(
-                "name is mandatory in SuppliedSchema when used in TopicRecordNameStrategyWithSchema"
-            ))
-        );
-    }
 
     #[test]
     fn put_correct_url_as_second_check_header_set() {

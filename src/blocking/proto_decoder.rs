@@ -1,8 +1,9 @@
-use crate::proto_resolver::{to_index_and_data, MessageResolver};
-use crate::schema_registry::{
-    get_bytes_result, get_referenced_schema, get_schema_by_id_and_type, BytesResult,
-    RegisteredSchema, SRCError, SchemaType, SrSettings,
+use crate::blocking::proto_resolver::{to_index_and_data, MessageResolver};
+use crate::blocking::schema_registry::{
+    get_bytes_result, get_referenced_schema, get_schema_by_id_and_type, SrSettings,
 };
+use crate::error::SRCError;
+use crate::schema_registry_common::{BytesResult, RegisteredSchema, SchemaType};
 use bytes::Bytes;
 use protofish::{Context, MessageValue, Value};
 use std::collections::hash_map::{Entry, RandomState};
@@ -129,8 +130,8 @@ fn to_resolve_context(
 
 #[cfg(test)]
 mod tests {
-    use crate::proto_decoder::ProtoDecoder;
-    use crate::schema_registry::SrSettings;
+    use crate::blocking::proto_decoder::ProtoDecoder;
+    use crate::blocking::schema_registry::SrSettings;
     use mockito::{mock, server_address};
     use protofish::Value;
 

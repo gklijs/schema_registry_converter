@@ -5,8 +5,8 @@ use rdkafka::consumer::base_consumer::BaseConsumer;
 use rdkafka::consumer::{Consumer, ConsumerContext, Rebalance};
 use rdkafka::message::BorrowedMessage;
 use rdkafka::Message;
-use schema_registry_converter::avro::AvroDecoder;
-use schema_registry_converter::schema_registry::SrSettings;
+use schema_registry_converter::blocking::avro::AvroDecoder;
+use schema_registry_converter::blocking::schema_registry::SrSettings;
 
 // A context can be used to change the behavior of producers and consumers by adding callbacks
 // that will be executed by librdkafka.

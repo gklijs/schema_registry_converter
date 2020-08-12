@@ -22,10 +22,14 @@
 //!
 //! [avro-rs]: https://crates.io/crates/avro-rs
 
-use crate::schema_registry::{
+use crate::blocking::schema_registry::{
     get_bytes_result, get_payload, get_referenced_schema, get_schema_by_id_and_type,
-    get_schema_by_subject, get_subject, BytesResult, RegisteredReference, RegisteredSchema,
-    SRCError, SchemaType, SrSettings, SubjectNameStrategy, SuppliedSchema,
+    get_schema_by_subject, SrSettings,
+};
+use crate::error::SRCError;
+use crate::schema_registry_common::{
+    get_subject, BytesResult, RegisteredReference, RegisteredSchema, SchemaType,
+    SubjectNameStrategy, SuppliedSchema,
 };
 use avro_rs::schema::Name;
 use avro_rs::to_value;
@@ -59,10 +63,10 @@ struct AvroSchema {
 /// whether it's actual used as key or value.
 ///
 /// ```
-///  use mockito::{mock, server_address};
-///  use avro_rs::types::Value;
-///  use schema_registry_converter::avro::AvroDecoder;
-///  use schema_registry_converter::schema_registry::SrSettings;
+/// use mockito::{mock, server_address};
+/// use avro_rs::types::Value;
+/// use schema_registry_converter::blocking::schema_registry::SrSettings;
+/// use schema_registry_converter::blocking::avro::AvroDecoder;
 ///
 /// let _m = mock("GET", "/schemas/ids/1")
 ///     .with_status(200)
@@ -99,10 +103,11 @@ impl AvroDecoder {
     /// exist or can't be parsed.
     ///
     /// ```
-    ///  use mockito::{mock, server_address};
-    ///  use schema_registry_converter::schema_registry::{SRCError, SrSettings};
-    ///  use avro_rs::types::Value;
-    ///  use schema_registry_converter::avro::AvroDecoder;
+    /// use mockito::{mock, server_address};
+    /// use avro_rs::types::Value;
+    /// use schema_registry_converter::blocking::avro::AvroDecoder;
+    /// use schema_registry_converter::blocking::schema_registry::SrSettings;
+    /// use schema_registry_converter::error::SRCError;
     ///
     /// let sr_settings = SrSettings::new(format!("http://{}", server_address()));
     /// let mut decoder = AvroDecoder::new(sr_settings);
@@ -144,7 +149,7 @@ impl AvroDecoder {
     /// ```no_run
     /// use rdkafka::message::{Message, BorrowedMessage};
     /// use avro_rs::types::Value;
-    /// use schema_registry_converter::avro::AvroDecoder;
+    /// use schema_registry_converter::blocking::avro::AvroDecoder;
     /// fn get_value<'a>(
     ///     msg: &'a BorrowedMessage,
     ///     decoder: &'a mut AvroDecoder,
@@ -222,10 +227,11 @@ pub struct DecodeResult {
 /// whether it's actual used as key or value.
 ///
 /// ```
-///  use mockito::{mock, server_address};
-///  use schema_registry_converter::schema_registry::{SubjectNameStrategy, SrSettings};
-///  use avro_rs::types::Value;
-///  use schema_registry_converter::avro::AvroEncoder;
+/// use mockito::{mock, server_address};
+/// use avro_rs::types::Value;
+/// use schema_registry_converter::blocking::avro::AvroEncoder;
+/// use schema_registry_converter::blocking::schema_registry::SrSettings;
+/// use schema_registry_converter::schema_registry_common::SubjectNameStrategy;
 ///
 /// let _m = mock("GET", "/subjects/heartbeat-value/versions/latest")
 ///     .with_status(200)
@@ -269,10 +275,10 @@ impl AvroEncoder {
     ///
     /// ```
     /// use mockito::{mock, server_address};
-    /// use schema_registry_converter::schema_registry::{SRCError, SubjectNameStrategy, SuppliedSchema, SchemaType, SrSettings};
-    /// use schema_registry_converter::schema_registry::SchemaType::Avro;
     /// use avro_rs::types::Value;
-    /// use schema_registry_converter::avro::AvroEncoder;
+    /// use schema_registry_converter::blocking::avro::AvroEncoder;
+    /// use schema_registry_converter::blocking::schema_registry::SrSettings;
+    /// use schema_registry_converter::schema_registry_common::{SubjectNameStrategy, SchemaType, SuppliedSchema};
     ///
     /// # let _n = mock("POST", "/subjects/hb-nl.openweb.data.Heartbeat/versions")
     /// #    .with_status(200)
@@ -303,11 +309,12 @@ impl AvroEncoder {
     /// exist or can't be parsed.
     ///
     /// ```
-    ///  use mockito::{mock, server_address};
-    ///  use schema_registry_converter::schema_registry::{SubjectNameStrategy, SrSettings};
-    ///  use schema_registry_converter::schema_registry::SRCError;
-    ///  use avro_rs::types::Value;
-    ///  use schema_registry_converter::avro::AvroEncoder;
+    /// use mockito::{mock, server_address};
+    /// use avro_rs::types::Value;
+    /// use schema_registry_converter::blocking::avro::AvroEncoder;
+    /// use schema_registry_converter::schema_registry_common::SubjectNameStrategy;
+    /// use schema_registry_converter::error::SRCError;
+    /// use schema_registry_converter::blocking::schema_registry::SrSettings;
     ///
     /// let sr_settings = SrSettings::new(format!("http://{}", server_address()));
     /// let mut encoder = AvroEncoder::new(sr_settings);
@@ -345,10 +352,11 @@ impl AvroEncoder {
     /// The function get_supplied_schema might be used to easily provide the schema in the correct
     /// form.
     /// ```
-    ///  use mockito::{mock, server_address};
-    ///  use schema_registry_converter::schema_registry::{SubjectNameStrategy, SrSettings};
-    ///  use avro_rs::types::Value;
-    ///  use schema_registry_converter::avro::AvroEncoder;
+    /// use mockito::{mock, server_address};
+    /// use avro_rs::types::Value;
+    /// use schema_registry_converter::blocking::avro::AvroEncoder;
+    /// use schema_registry_converter::schema_registry_common::SubjectNameStrategy;
+    /// use schema_registry_converter::blocking::schema_registry::SrSettings;
     ///
     /// let _m = mock("GET", "/subjects/heartbeat-nl.openweb.data.Heartbeat/versions/latest")
     ///     .with_status(200)
@@ -382,12 +390,13 @@ impl AvroEncoder {
     /// The function get_supplied_schema might be used to easily provide the schema in the correct
     /// form.
     /// ```
-    ///  use mockito::{mock, server_address};
-    ///  use schema_registry_converter::schema_registry::{SubjectNameStrategy, SuppliedSchema, SchemaType, SrSettings};
-    ///  use serde::Serialize;
-    ///  use avro_rs::types::Value;
-    ///  use schema_registry_converter::avro::{AvroEncoder, get_supplied_schema};
-    ///  use avro_rs::Schema;
+    /// use mockito::{mock, server_address};
+    /// use serde::Serialize;
+    /// use avro_rs::types::Value;
+    /// use avro_rs::Schema;
+    /// use schema_registry_converter::blocking::avro::{AvroEncoder, get_supplied_schema};
+    /// use schema_registry_converter::schema_registry_common::SubjectNameStrategy;
+    /// use schema_registry_converter::blocking::schema_registry::SrSettings;
     ///
     /// let _m = mock("GET", "/subjects/heartbeat-nl.openweb.data.Heartbeat/versions/latest")
     ///     .with_status(200)
@@ -662,7 +671,6 @@ pub fn get_supplied_schema(schema: &Schema) -> Box<SuppliedSchema> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema_registry::{SchemaType, SuppliedSchema};
     use avro_rs::from_value;
     use mockito::{mock, server_address};
     use serde::{Deserialize, Serialize};
@@ -1453,7 +1461,7 @@ mod tests {
                 r#"{"type":"record","name":"Name","namespace":"nl.openweb.data","fields":[{"name":"name","type":"string","avro.java.string":"String"}]}"#,
             ).unwrap(),
         };
-        let result = crate::avro::item_to_bytes(&schema, Heartbeat { beat: 3 });
+        let result = crate::blocking::avro::item_to_bytes(&schema, Heartbeat { beat: 3 });
         assert_eq!(
             result,
             Err(SRCError::new(
@@ -1483,7 +1491,7 @@ mod tests {
             ],
             a_type: Atype::Manual,
         };
-        let result = crate::avro::item_to_bytes(&schema, item);
+        let result = crate::blocking::avro::item_to_bytes(&schema, item);
         assert_eq!(
             result,
             Err(SRCError::new(

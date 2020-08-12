@@ -21,14 +21,9 @@
 //! automatically does retries.
 //!
 //! [avro-rs]: https://crates.io/crates/avro-rs
-#[cfg(feature = "avro")]
-pub mod avro;
-#[cfg(feature = "json")]
-pub mod json;
-#[cfg(feature = "proto_decoder")]
-pub mod proto_decoder;
-#[cfg(feature = "proto_raw")]
-pub mod proto_raw;
-#[cfg(any(feature = "proto_decoder", feature = "proto_raw"))]
-mod proto_resolver;
-pub mod schema_registry;
+#[cfg(any(not(feature = "blocking"), feature = "kafka_test"))]
+pub mod async_impl;
+#[cfg(feature = "blocking")]
+pub mod blocking;
+pub mod error;
+pub mod schema_registry_common;
