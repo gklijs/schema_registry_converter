@@ -1,6 +1,7 @@
-use failure::Fail;
 use std::fmt;
 use std::fmt::Display;
+
+use failure::Fail;
 
 /// Error struct which makes it easy to know if the resulting error is also preserved in the cache
 /// or not. And whether trying it again might not cause an error.

@@ -1,8 +1,9 @@
-use integer_encoding::VarIntReader;
-use logos::Logos;
 use std::collections::hash_map::RandomState;
 use std::collections::HashMap;
 use std::io::BufReader;
+
+use integer_encoding::VarIntReader;
+use logos::Logos;
 
 #[derive(Debug)]
 pub(crate) struct MessageResolver {
@@ -170,7 +171,7 @@ pub(crate) fn to_index_and_data(bytes: &[u8]) -> (Vec<i32>, Vec<u8>) {
 
 #[cfg(test)]
 mod tests {
-    use crate::blocking::proto_resolver::{IndexResolver, MessageResolver};
+    use crate::proto_resolver::{IndexResolver, MessageResolver};
 
     fn get_proto_simple() -> &'static str {
         r#"syntax = "proto3";package nl.openweb.data; message Heartbeat{uint64 beat = 1;}"#
@@ -185,10 +186,10 @@ mod tests {
         let resolver = MessageResolver::new(get_proto_simple());
 
         assert_eq!(
-            resolver.find_name(&vec![0]),
+            resolver.find_name(&[0]),
             Some(&String::from("nl.openweb.data.Heartbeat"))
         );
-        assert_eq!(resolver.find_name(&vec![1]), None)
+        assert_eq!(resolver.find_name(&[1]), None)
     }
 
     #[test]
@@ -207,15 +208,15 @@ mod tests {
         let resolver = MessageResolver::new(get_proto_complex());
 
         assert_eq!(
-            resolver.find_name(&vec![0]),
+            resolver.find_name(&[0]),
             Some(&String::from("org.schema_registry_test_app.proto.A"))
         );
         assert_eq!(
-            resolver.find_name(&vec![2, 0]),
+            resolver.find_name(&[2, 0]),
             Some(&String::from("org.schema_registry_test_app.proto.C.D"))
         );
         assert_eq!(
-            resolver.find_name(&vec![3]),
+            resolver.find_name(&[3]),
             Some(&String::from(
                 "org.schema_registry_test_app.proto.ProtoTest"
             ))

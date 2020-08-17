@@ -1,19 +1,21 @@
-use crate::blocking::schema_registry::{
-    get_bytes_result, get_payload, get_referenced_schema, get_schema_by_id_and_type,
-    get_schema_by_subject, SrSettings,
-};
-use crate::error::SRCError;
-use crate::schema_registry_common::{
-    get_subject, BytesResult, RegisteredReference, RegisteredSchema, SchemaType,
-    SubjectNameStrategy,
-};
-use serde_json::Value;
 use std::collections::hash_map::{Entry, RandomState};
 use std::collections::HashMap;
 use std::str::FromStr;
+
+use serde_json::Value;
 use url::Url;
 use valico::json_schema::schema::ScopedSchema;
 use valico::json_schema::{Scope, ValidationState};
+
+use crate::blocking::schema_registry::{
+    get_bytes_result, get_referenced_schema, get_schema_by_id_and_type, get_schema_by_subject,
+    SrSettings,
+};
+use crate::error::SRCError;
+use crate::schema_registry_common::{
+    get_payload, get_subject, BytesResult, RegisteredReference, RegisteredSchema, SchemaType,
+    SubjectNameStrategy,
+};
 
 /// Encoder that works by prepending the correct bytes in order to make it valid schema registry
 /// bytes. Ideally you want to make sure the bytes are based on the exact schema used for encoding
@@ -285,13 +287,15 @@ pub struct DecodeResult<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::blocking::json::{JsonDecoder, JsonEncoder};
-    use crate::blocking::schema_registry::{get_payload, SrSettings};
-    use crate::schema_registry_common::SubjectNameStrategy;
+    use std::fs::{read_to_string, File};
+
     use mockito::{mock, server_address};
     use serde_json::{from_str, to_string_pretty, Value};
-    use std::fs::{read_to_string, File};
     use valico::json_dsl;
+
+    use crate::blocking::json::{JsonDecoder, JsonEncoder};
+    use crate::blocking::schema_registry::SrSettings;
+    use crate::schema_registry_common::{get_payload, SubjectNameStrategy};
 
     fn get_json_body(schema: &str, id: u32) -> String {
         format!(

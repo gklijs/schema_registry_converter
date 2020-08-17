@@ -22,33 +22,27 @@
 //!
 //! [avro-rs]: https://crates.io/crates/avro-rs
 
+use std::collections::hash_map::{Entry, RandomState};
+use std::collections::HashMap;
+use std::io::Cursor;
+
+use avro_rs::types::Value;
+use avro_rs::{from_avro_datum, Schema};
+use serde::ser::Serialize;
+use serde_json::Value as JsonValue;
+
+use crate::avro_common::{
+    get_name, item_to_bytes, replace_reference, values_to_bytes, AvroSchema, DecodeResult,
+};
 use crate::blocking::schema_registry::{
-    get_bytes_result, get_payload, get_referenced_schema, get_schema_by_id_and_type,
-    get_schema_by_subject, SrSettings,
+    get_bytes_result, get_referenced_schema, get_schema_by_id_and_type, get_schema_by_subject,
+    SrSettings,
 };
 use crate::error::SRCError;
 use crate::schema_registry_common::{
     get_subject, BytesResult, RegisteredReference, RegisteredSchema, SchemaType,
-    SubjectNameStrategy, SuppliedSchema,
+    SubjectNameStrategy,
 };
-use avro_rs::schema::Name;
-use avro_rs::to_value;
-use avro_rs::types::{Record, ToAvro, Value};
-use avro_rs::{from_avro_datum, to_avro_datum, Schema};
-use serde::ser::Serialize;
-use serde_json::{Map as JsonMap, Value as JsonValue};
-use std::collections::hash_map::{Entry, RandomState};
-use std::collections::{HashMap, HashSet};
-use std::io::Cursor;
-
-/// Because we need both the resulting schema, as have a way of posting the schema as json, we use
-/// this struct so we keep them both together.
-#[derive(Clone, Debug)]
-struct AvroSchema {
-    id: u32,
-    raw: String,
-    parsed: Schema,
-}
 
 /// A decoder used to transform bytes to a Value object
 ///
@@ -206,12 +200,6 @@ impl AvroDecoder {
             }
         }
     }
-}
-
-#[derive(Debug, PartialEq)]
-pub struct DecodeResult {
-    pub name: Option<Name>,
-    pub value: Value,
 }
 
 /// An encoder used to transform a Value object to bytes
@@ -394,9 +382,10 @@ impl AvroEncoder {
     /// use serde::Serialize;
     /// use avro_rs::types::Value;
     /// use avro_rs::Schema;
-    /// use schema_registry_converter::blocking::avro::{AvroEncoder, get_supplied_schema};
+    /// use schema_registry_converter::blocking::avro::AvroEncoder;
     /// use schema_registry_converter::schema_registry_common::SubjectNameStrategy;
     /// use schema_registry_converter::blocking::schema_registry::SrSettings;
+    /// use schema_registry_converter::avro_common::get_supplied_schema;
     ///
     /// let _m = mock("GET", "/subjects/heartbeat-nl.openweb.data.Heartbeat/versions/latest")
     ///     .with_status(200)
@@ -455,73 +444,6 @@ impl AvroEncoder {
                 &*e.insert(v)
             }
         }
-    }
-}
-
-fn might_replace(val: JsonValue, child: &JsonValue, replace_values: &HashSet<String>) -> JsonValue {
-    match val {
-        JsonValue::Object(v) => replace_in_map(v, child, replace_values),
-        JsonValue::Array(v) => replace_in_array(&*v, child, replace_values),
-        JsonValue::String(s) if replace_values.contains(&*s) => child.clone(),
-        p => p,
-    }
-}
-
-fn replace_in_array(
-    parent_array: &[JsonValue],
-    child: &JsonValue,
-    replace_values: &HashSet<String>,
-) -> JsonValue {
-    JsonValue::Array(
-        parent_array
-            .iter()
-            .map(|v| might_replace(v.clone(), child, replace_values))
-            .collect(),
-    )
-}
-
-fn replace_in_map(
-    parent_map: JsonMap<String, JsonValue>,
-    child: &JsonValue,
-    replace_values: &HashSet<String>,
-) -> JsonValue {
-    JsonValue::Object(
-        parent_map
-            .iter()
-            .map(|e| {
-                (
-                    e.0.clone(),
-                    might_replace(e.1.clone(), child, replace_values),
-                )
-            })
-            .collect(),
-    )
-}
-
-fn replace_reference(parent: JsonValue, child: JsonValue) -> JsonValue {
-    let (name, namespace) = match &child {
-        JsonValue::Object(v) => (v["name"].as_str(), v["namespace"].as_str()),
-        _ => return parent,
-    };
-    let mut replace_values: HashSet<String> = HashSet::new();
-    match name {
-        Some(v) => match namespace {
-            Some(u) => {
-                replace_values.insert(format!(".{}.{}", u, v));
-                if parent["namespace"].as_str() == namespace {
-                    replace_values.insert(String::from(v))
-                } else {
-                    true
-                }
-            }
-            None => replace_values.insert(String::from(v)),
-        },
-        None => return parent,
-    };
-    match parent {
-        JsonValue::Object(v) => replace_in_map(v, &child, &replace_values),
-        JsonValue::Array(v) => replace_in_array(&*v, &child, &replace_values),
-        p => p,
     }
 }
 
@@ -600,154 +522,20 @@ fn to_avro_schema(
     }
 }
 
-fn to_bytes<T: ToAvro>(avro_schema: &AvroSchema, record: T) -> Result<Vec<u8>, SRCError> {
-    match to_avro_datum(&avro_schema.parsed, record) {
-        Ok(v) => Ok(get_payload(avro_schema.id, v)),
-        Err(e) => Err(SRCError::non_retryable_with_cause(
-            e,
-            "Could not get Avro bytes",
-        )),
-    }
-}
-
-/// Using the schema with a vector of values the values will be correctly deserialized according to
-/// the avro specification.
-fn values_to_bytes(
-    avro_schema: &AvroSchema,
-    values: Vec<(&'static str, Value)>,
-) -> Result<Vec<u8>, SRCError> {
-    let mut record = match Record::new(&avro_schema.parsed) {
-        Some(v) => v,
-        None => {
-            return Err(SRCError::new(
-                "Could not create record from schema",
-                None,
-                false,
-            ));
-        }
-    };
-    for value in values {
-        record.put(value.0, value.1)
-    }
-    to_bytes(avro_schema, record)
-}
-
-/// Using the schema with an item implementing serialize the item will be correctly deserialized
-/// according to the avro specification.
-fn item_to_bytes(avro_schema: &AvroSchema, item: impl Serialize) -> Result<Vec<u8>, SRCError> {
-    match to_value(item)
-        .map_err(|e| SRCError::non_retryable_with_cause(e, "Could not transform to avro_rs value"))
-        .map(|r| r.resolve(&avro_schema.parsed))
-    {
-        Ok(Ok(v)) => to_bytes(avro_schema, v),
-        Ok(Err(e)) => Err(SRCError::non_retryable_with_cause(e, "Failed to resolve")),
-        Err(e) => Err(e),
-    }
-}
-
-fn get_name(schema: &Schema) -> Option<Name> {
-    match schema {
-        Schema::Record { name: n, .. } => Some(n.clone()),
-        _ => None,
-    }
-}
-
-pub fn get_supplied_schema(schema: &Schema) -> Box<SuppliedSchema> {
-    let name = match get_name(schema) {
-        None => None,
-        Some(n) => match n.namespace {
-            None => Some(n.name),
-            Some(ns) => Some(format!("{}.{}", ns, n.name)),
-        },
-    };
-    Box::from(SuppliedSchema {
-        name,
-        schema_type: SchemaType::Avro,
-        schema: schema.canonical_form(),
-        references: vec![],
-    })
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
     use avro_rs::from_value;
     use mockito::{mock, server_address};
     use serde::{Deserialize, Serialize};
 
+    use crate::avro_common::get_supplied_schema;
+
+    use super::*;
+    use crate::schema_registry_common::SuppliedSchema;
+
     #[derive(Debug, Deserialize, Serialize)]
     struct Heartbeat {
         beat: i64,
-    }
-
-    #[derive(Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Clone, Deserialize, Serialize)]
-    pub enum Atype {
-        #[serde(rename = "AUTO")]
-        Auto,
-        #[serde(rename = "MANUAL")]
-        Manual,
-    }
-
-    impl Default for Atype {
-        fn default() -> Self {
-            Atype::Auto
-        }
-    }
-
-    pub type Uuid = [u8; 16];
-
-    #[serde(default)]
-    #[derive(Debug, PartialEq, Clone, Deserialize, Serialize)]
-    pub struct ConfirmAccountCreation {
-        pub id: Uuid,
-        pub a_type: Atype,
-    }
-
-    impl Default for ConfirmAccountCreation {
-        fn default() -> ConfirmAccountCreation {
-            ConfirmAccountCreation {
-                id: Uuid::default(),
-                a_type: Atype::Auto,
-            }
-        }
-    }
-
-    #[test]
-    fn to_bytes_no_record() {
-        let schema = AvroSchema {
-            id: 5,
-            raw: "".to_string(),
-            parsed: Schema::Boolean,
-        };
-        let result = values_to_bytes(&schema, vec![("beat", Value::Long(3))]);
-        assert_eq!(
-            result,
-            Err(SRCError::new(
-                "Could not create record from schema",
-                None,
-                false,
-            ))
-        )
-    }
-
-    #[test]
-    fn to_bytes_no_transfer_wrong() {
-        let schema = AvroSchema {
-            id: 5,
-            raw: String::from(r#"{"type":"record","name":"Name","namespace":"nl.openweb.data","fields":[{"name":"name","type":"string","avro.java.string":"String"}]}"#),
-            parsed: Schema::parse_str(r#"{"type":"record","name":"Name","namespace":"nl.openweb.data","fields":[{"name":"name","type":"string","avro.java.string":"String"}]}"#).unwrap(),
-        };
-        let result = values_to_bytes(&schema, vec![("beat", Value::Long(3))]);
-        assert_eq!(
-            result,
-            Err(SRCError::new(
-                "Could not get Avro bytes",
-                Some(String::from(
-                    "Validation error: value does not match schema"
-                )),
-                false,
-            ))
-        )
     }
 
     #[test]
@@ -970,7 +758,7 @@ mod tests {
 
     #[test]
     fn test_decoder_schema_registry_unavailable() {
-        let sr_settings = SrSettings::new(String::from("http://bogus".to_string()));
+        let sr_settings = SrSettings::new(String::from("http://bogus"));
         let mut decoder = AvroDecoder::new(sr_settings);
         let result = decoder.decode(Some(&[0, 0, 0, 10, 1, 6]));
 
@@ -1447,58 +1235,6 @@ mod tests {
                 false,
             )
             .into_cache())
-        )
-    }
-
-    #[test]
-    fn item_to_bytes_no_tranfer_wrong() {
-        let schema = AvroSchema {
-            id: 5,
-            raw: String::from(
-                r#"{"type":"record","name":"Name","namespace":"nl.openweb.data","fields":[{"name":"name","type":"string","avro.java.string":"String"}]}"#,
-            ),
-            parsed: Schema::parse_str(
-                r#"{"type":"record","name":"Name","namespace":"nl.openweb.data","fields":[{"name":"name","type":"string","avro.java.string":"String"}]}"#,
-            ).unwrap(),
-        };
-        let result = crate::blocking::avro::item_to_bytes(&schema, Heartbeat { beat: 3 });
-        assert_eq!(
-            result,
-            Err(SRCError::new(
-                "Failed to resolve",
-                Some(String::from(
-                    "Schema resoulution error: missing field name in record"
-                )),
-                false,
-            ))
-        )
-    }
-
-    #[test]
-    fn item_to_bytes_still_broken() {
-        let schema = AvroSchema {
-            id: 6,
-            raw: String::from(
-                r#"{"type":"record","name":"ConfirmAccountCreation","namespace":"nl.openweb.data","fields":[{"name":"id","type":{"type":"fixed","name":"Uuid","size":16}},{"name":"a_type","type":{"type":"enum","name":"Atype","symbols":["AUTO","MANUAL"]}}]}"#,
-            ),
-            parsed: Schema::parse_str(
-                r#"{"type":"record","name":"ConfirmAccountCreation","namespace":"nl.openweb.data","fields":[{"name":"id","type":{"type":"fixed","name":"Uuid","size":16}},{"name":"a_type","type":{"type":"enum","name":"Atype","symbols":["AUTO","MANUAL"]}}]}"#,
-            ).unwrap(),
-        };
-        let item = ConfirmAccountCreation {
-            id: [
-                204, 240, 237, 74, 227, 188, 75, 46, 183, 163, 122, 214, 178, 72, 118, 162,
-            ],
-            a_type: Atype::Manual,
-        };
-        let result = crate::blocking::avro::item_to_bytes(&schema, item);
-        assert_eq!(
-            result,
-            Err(SRCError::new(
-                "Failed to resolve",
-                Some(String::from("Schema resoulution error: String expected, got Array([Int(204), Int(240), Int(237), Int(74), Int(227), Int(188), Int(75), Int(46), Int(183), Int(163), Int(122), Int(214), Int(178), Int(72), Int(118), Int(162)])")),
-                false,
-            ))
         )
     }
 

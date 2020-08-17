@@ -1,22 +1,24 @@
 //! This module contains the code specific for the schema registry.
 
-use crate::error::SRCError;
-use crate::schema_registry_common::{
-    get_schema, get_subject, url_for_call, BytesResult, RawRegisteredSchema, RegisteredReference,
-    RegisteredSchema, SchemaType, SrAuthorization, SrCall, SubjectNameStrategy, SuppliedReference,
-    SuppliedSchema,
-};
-use byteorder::{BigEndian, ByteOrder, ReadBytesExt};
+use std::collections::hash_map::RandomState;
+use std::collections::HashMap;
+use std::str;
+use std::time::Duration;
+
 use futures::future::{BoxFuture, FutureExt};
 use futures::stream::{self, StreamExt};
 use reqwest::header;
 use reqwest::header::{HeaderName, ACCEPT, CONTENT_TYPE};
 use reqwest::Client;
 use serde_json::{json, Map, Value};
-use std::collections::hash_map::RandomState;
-use std::collections::HashMap;
-use std::str;
-use std::time::Duration;
+
+use crate::error::SRCError;
+use crate::schema_registry_common::{
+    get_schema, get_subject, url_for_call, BytesResult, RawRegisteredSchema, RegisteredReference,
+    RegisteredSchema, SchemaType, SrAuthorization, SrCall, SubjectNameStrategy, SuppliedReference,
+    SuppliedSchema,
+};
+use tokio::io::AsyncReadExt;
 
 /// Settings used to do the calls to schema registry. For simple cases you can use `SrSettings::new`
 /// or the `SrSettingsBuilder`. But you can also use it directly so you can all the available
@@ -166,16 +168,6 @@ impl SrSettingsBuilder {
     }
 }
 
-/// Creates payload that can be included as a key or value on a kafka record
-pub fn get_payload(id: u32, encoded_bytes: Vec<u8>) -> Vec<u8> {
-    let mut payload = vec![0u8];
-    let mut buf = [0u8; 4];
-    BigEndian::write_u32(&mut buf, id);
-    payload.extend_from_slice(&buf);
-    payload.extend_from_slice(encoded_bytes.as_slice());
-    payload
-}
-
 /// Just analyses the bytes which are contained in the key or value of an kafka record. When valid
 /// it will return the id and the data bytes. The way schema registry messages are encoded is
 /// starting with a zero, with the next 4 bytes having the id. The other bytes are the encoded
@@ -185,7 +177,7 @@ pub async fn get_bytes_result(bytes: Option<&[u8]>) -> BytesResult {
         None => BytesResult::Null,
         Some(p) if p.len() > 4 && p[0] == 0 => {
             let mut buf = &p[1..5];
-            let id = buf.read_u32::<BigEndian>().unwrap();
+            let id = buf.read_u32().await.unwrap();
             BytesResult::Valid(id, p[5..].to_owned())
         }
         Some(p) => BytesResult::Invalid(p[..].to_owned()),
@@ -473,12 +465,14 @@ async fn perform_single_sr_call(
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
+    use mockito::{mock, server_address};
+
     use crate::async_impl::schema_registry::{
         get_bytes_result, get_schema_by_id, get_schema_by_id_and_type, SrSettings,
     };
     use crate::schema_registry_common::{BytesResult, SchemaType};
-    use mockito::{mock, server_address};
-    use std::time::Duration;
 
     #[tokio::test]
     async fn put_correct_url_as_second_check_header_set() {
@@ -546,13 +540,13 @@ mod tests {
 
     #[tokio::test]
     async fn get_bytes_result_valid() {
-        let result = get_bytes_result(Some(&vec![0, 0, 0, 0, 7, 101, 99])).await;
+        let result = get_bytes_result(Some(&[0, 0, 0, 0, 7, 101, 99])).await;
         assert_eq!(BytesResult::Valid(7, vec![101, 99]), result)
     }
 
     #[tokio::test]
     async fn get_bytes_result_invalid() {
-        let result = get_bytes_result(Some(&vec![0, 0, 0, 0])).await;
+        let result = get_bytes_result(Some(&[0, 0, 0, 0])).await;
         assert_eq!(BytesResult::Invalid(vec![0, 0, 0, 0]), result)
     }
 
