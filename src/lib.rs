@@ -28,6 +28,8 @@ pub mod avro_common;
 #[cfg(feature = "blocking")]
 pub mod blocking;
 pub mod error;
+#[cfg(feature = "json")]
+mod json_common;
 #[cfg(any(feature = "proto_decoder", feature = "proto_raw"))]
 mod proto_resolver;
 pub mod schema_registry_common;

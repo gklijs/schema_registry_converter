@@ -5,7 +5,6 @@ use std::collections::HashMap;
 use std::str;
 use std::time::Duration;
 
-use byteorder::{BigEndian, ReadBytesExt};
 use reqwest::blocking::Client;
 use reqwest::header;
 use reqwest::header::{HeaderName, ACCEPT, CONTENT_TYPE};
@@ -13,7 +12,7 @@ use serde_json::{json, Map, Value};
 
 use crate::error::SRCError;
 use crate::schema_registry_common::{
-    get_schema, get_subject, url_for_call, BytesResult, RawRegisteredSchema, RegisteredReference,
+    get_schema, get_subject, url_for_call, RawRegisteredSchema, RegisteredReference,
     RegisteredSchema, SchemaType, SrAuthorization, SrCall, SubjectNameStrategy, SuppliedReference,
     SuppliedSchema,
 };
@@ -170,22 +169,6 @@ impl SrSettingsBuilder {
     }
 }
 
-/// Just analyses the bytes which are contained in the key or value of an kafka record. When valid
-/// it will return the id and the data bytes. The way schema registry messages are encoded is
-/// starting with a zero, with the next 4 bytes having the id. The other bytes are the encoded
-/// message.
-pub fn get_bytes_result(bytes: Option<&[u8]>) -> BytesResult {
-    match bytes {
-        None => BytesResult::Null,
-        Some(p) if p.len() > 4 && p[0] == 0 => {
-            let mut buf = &p[1..5];
-            let id = buf.read_u32::<BigEndian>().unwrap();
-            BytesResult::Valid(id, p[5..].to_owned())
-        }
-        Some(p) => BytesResult::Invalid(p[..].to_owned()),
-    }
-}
-
 /// Gets a schema by an id. This is used to get the correct schema te deserialize bytes, with the
 /// id that is encoded in the bytes.
 pub fn get_schema_by_id(id: u32, sr_settings: &SrSettings) -> Result<RegisteredSchema, SRCError> {
@@ -208,8 +191,8 @@ pub fn get_schema_by_id_and_type(
     }
 }
 
-/// Gets the schema and the id by supplying a SubjectNameStrategy. This is used to correctly
-/// transform a vector to bytes.
+/// Gets the registered schema by supplying a SubjectNameStrategy. This is used to as part of the
+/// encoding so we get the correct schema and id, and possible references.
 pub fn get_schema_by_subject(
     sr_settings: &SrSettings,
     subject_name_strategy: &SubjectNameStrategy,

@@ -14,11 +14,10 @@ use serde_json::{json, Map, Value};
 
 use crate::error::SRCError;
 use crate::schema_registry_common::{
-    get_schema, get_subject, url_for_call, BytesResult, RawRegisteredSchema, RegisteredReference,
+    get_schema, get_subject, url_for_call, RawRegisteredSchema, RegisteredReference,
     RegisteredSchema, SchemaType, SrAuthorization, SrCall, SubjectNameStrategy, SuppliedReference,
     SuppliedSchema,
 };
-use tokio::io::AsyncReadExt;
 
 /// Settings used to do the calls to schema registry. For simple cases you can use `SrSettings::new`
 /// or the `SrSettingsBuilder`. But you can also use it directly so you can all the available
@@ -66,6 +65,10 @@ impl SrSettings {
             proxy: None,
             timeout: Duration::from_secs(30),
         }
+    }
+
+    pub(crate) fn url(&self) -> &str {
+        &*self.urls[0]
     }
 }
 
@@ -168,22 +171,6 @@ impl SrSettingsBuilder {
     }
 }
 
-/// Just analyses the bytes which are contained in the key or value of an kafka record. When valid
-/// it will return the id and the data bytes. The way schema registry messages are encoded is
-/// starting with a zero, with the next 4 bytes having the id. The other bytes are the encoded
-/// message.
-pub async fn get_bytes_result(bytes: Option<&[u8]>) -> BytesResult {
-    match bytes {
-        None => BytesResult::Null,
-        Some(p) if p.len() > 4 && p[0] == 0 => {
-            let mut buf = &p[1..5];
-            let id = buf.read_u32().await.unwrap();
-            BytesResult::Valid(id, p[5..].to_owned())
-        }
-        Some(p) => BytesResult::Invalid(p[..].to_owned()),
-    }
-}
-
 /// Gets a schema by an id. This is used to get the correct schema te deserialize bytes, with the
 /// id that is encoded in the bytes.
 pub async fn get_schema_by_id(
@@ -209,8 +196,8 @@ pub async fn get_schema_by_id_and_type(
     }
 }
 
-/// Gets the schema and the id by supplying a SubjectNameStrategy. This is used to correctly
-/// transform a vector to bytes.
+/// Gets the registered schema by supplying a SubjectNameStrategy. This is used to as part of the
+/// encoding so we get the correct schema and id, and possible references.
 pub async fn get_schema_by_subject(
     sr_settings: &SrSettings,
     subject_name_strategy: &SubjectNameStrategy,
@@ -470,9 +457,9 @@ mod tests {
     use mockito::{mock, server_address};
 
     use crate::async_impl::schema_registry::{
-        get_bytes_result, get_schema_by_id, get_schema_by_id_and_type, SrSettings,
+        get_schema_by_id, get_schema_by_id_and_type, SrSettings,
     };
-    use crate::schema_registry_common::{BytesResult, SchemaType};
+    use crate::schema_registry_common::SchemaType;
 
     #[tokio::test]
     async fn put_correct_url_as_second_check_header_set() {
@@ -530,24 +517,6 @@ mod tests {
             ),
             _ => panic!(),
         }
-    }
-
-    #[tokio::test]
-    async fn get_bytes_result_null() {
-        let result = get_bytes_result(None).await;
-        assert_eq!(BytesResult::Null, result)
-    }
-
-    #[tokio::test]
-    async fn get_bytes_result_valid() {
-        let result = get_bytes_result(Some(&[0, 0, 0, 0, 7, 101, 99])).await;
-        assert_eq!(BytesResult::Valid(7, vec![101, 99]), result)
-    }
-
-    #[tokio::test]
-    async fn get_bytes_result_invalid() {
-        let result = get_bytes_result(Some(&[0, 0, 0, 0])).await;
-        assert_eq!(BytesResult::Invalid(vec![0, 0, 0, 0]), result)
     }
 
     #[tokio::test]

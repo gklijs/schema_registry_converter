@@ -5,11 +5,11 @@ use bytes::Bytes;
 use protofish::{Context, MessageValue, Value};
 
 use crate::blocking::schema_registry::{
-    get_bytes_result, get_referenced_schema, get_schema_by_id_and_type, SrSettings,
+    get_referenced_schema, get_schema_by_id_and_type, SrSettings,
 };
 use crate::error::SRCError;
 use crate::proto_resolver::{to_index_and_data, MessageResolver};
-use crate::schema_registry_common::{BytesResult, RegisteredSchema, SchemaType};
+use crate::schema_registry_common::{get_bytes_result, BytesResult, RegisteredSchema, SchemaType};
 
 #[derive(Debug)]
 pub struct ProtoDecoder {
