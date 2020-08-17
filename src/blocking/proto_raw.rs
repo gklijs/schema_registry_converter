@@ -4,12 +4,13 @@ use std::collections::HashMap;
 use integer_encoding::VarInt;
 
 use crate::blocking::schema_registry::{
-    get_bytes_result, get_schema_by_id_and_type, get_schema_by_subject, SrSettings,
+    get_schema_by_id_and_type, get_schema_by_subject, SrSettings,
 };
 use crate::error::SRCError;
 use crate::proto_resolver::{to_index_and_data, IndexResolver, MessageResolver};
 use crate::schema_registry_common::{
-    get_payload, get_subject, BytesResult, RegisteredSchema, SchemaType, SubjectNameStrategy,
+    get_bytes_result, get_payload, get_subject, BytesResult, RegisteredSchema, SchemaType,
+    SubjectNameStrategy,
 };
 
 /// Encoder that works by prepending the correct bytes in order to make it valid schema registry

@@ -2,12 +2,14 @@ use std::collections::hash_map::{Entry, RandomState};
 use std::collections::HashMap;
 use std::str::FromStr;
 
+use futures::future::{BoxFuture, FutureExt, Shared};
+use futures::stream::{self, StreamExt};
 use serde_json::Value;
 use url::Url;
 use valico::json_schema::schema::ScopedSchema;
-use valico::json_schema::{Scope, ValidationState};
+use valico::json_schema::Scope;
 
-use crate::blocking::schema_registry::{
+use crate::async_impl::schema_registry::{
     get_referenced_schema, get_schema_by_id_and_type, get_schema_by_subject, SrSettings,
 };
 use crate::error::SRCError;
@@ -22,113 +24,125 @@ use crate::schema_registry_common::{
 /// but you need a protobuf struct that has introspection to make that work, and both protobuf and
 /// prost don't support that at the moment.
 #[derive(Debug)]
-pub struct JsonEncoder {
+pub struct JsonEncoder<'a> {
     sr_settings: SrSettings,
-    cache: HashMap<String, Result<EncodeContext, SRCError>, RandomState>,
-    scope: Scope,
+    cache: HashMap<String, Shared<BoxFuture<'a, Result<JsonSchema, SRCError>>>, RandomState>,
 }
 
-impl JsonEncoder {
+impl<'a> JsonEncoder<'a> {
     /// Creates a new json encoder
-    pub fn new(sr_settings: SrSettings) -> JsonEncoder {
+    pub fn new(sr_settings: SrSettings) -> JsonEncoder<'a> {
         JsonEncoder {
             sr_settings,
             cache: HashMap::new(),
-            scope: Scope::new(),
         }
     }
-    /// Removes errors from the cache, can be useful to retry failed encodings.
+    /// Removes errors from the cache, can be usefull to retry failed encodings.
     pub fn remove_errors_from_cache(&mut self) {
-        self.cache.retain(|_, v| v.is_ok());
+        self.cache.retain(|_, v| match v.peek() {
+            Some(r) => r.is_ok(),
+            None => true,
+        });
     }
     /// Encodes the bytes by adding a few bytes to the message with additional information. The full
     /// names is the optional package followed with the message name, and optionally inner messages.
-    pub fn encode(
+    pub async fn encode(
         &mut self,
         value: &Value,
-        subject_name_strategy: &SubjectNameStrategy,
+        subject_name_strategy: SubjectNameStrategy,
     ) -> Result<Vec<u8>, SRCError> {
-        let key = get_subject(subject_name_strategy)?;
-        let (validation, id) = self.validate(key, subject_name_strategy, value)?;
-        handle_validation(validation, value)?;
+        let key = get_subject(&subject_name_strategy)?;
+        let schema = self.get_schema(key, subject_name_strategy).clone().await?;
+        let id = schema.id;
+        validate(schema, value)?;
         to_bytes(id, value)
     }
 
-    fn validate(
+    fn get_schema(
         &mut self,
         key: String,
-        subject_name_strategy: &SubjectNameStrategy,
-        value: &Value,
-    ) -> Result<(ValidationState, u32), SRCError> {
-        let cached_context = match self.cache.entry(key) {
-            Entry::Occupied(e) => e.into_mut().as_ref(),
+        subject_name_strategy: SubjectNameStrategy,
+    ) -> &Shared<BoxFuture<'a, Result<JsonSchema, SRCError>>> {
+        match self.cache.entry(key) {
+            Entry::Occupied(e) => &*e.into_mut(),
             Entry::Vacant(e) => {
-                let v = match get_schema_by_subject(&self.sr_settings, &subject_name_strategy) {
-                    Ok(registered_schema) => match set_scoped_schema(
-                        &mut self.scope,
-                        &self.sr_settings,
-                        &registered_schema,
-                    ) {
-                        Ok(url) => Ok(EncodeContext {
-                            id: registered_schema.id,
-                            url,
-                        }),
+                let sr_settings = self.sr_settings.clone();
+                let v = async move {
+                    match get_schema_by_subject(&sr_settings, &subject_name_strategy).await {
+                        Ok(schema) => to_json_schema(&sr_settings, None, schema).await,
                         Err(e) => Err(e.into_cache()),
-                    },
-                    Err(e) => Err(e.into_cache()),
-                };
-                e.insert(v).as_ref()
+                    }
+                }
+                .boxed()
+                .shared();
+                &*e.insert(v)
             }
-        };
-        match cached_context {
-            Ok(context) => match self.scope.resolve(&context.url) {
-                Some(schema) => Ok((schema.validate(value), context.id)),
-                None => Err(SRCError::non_retryable_without_cause(
-                    "could not get schema from scope",
-                )),
-            },
-            Err(e) => Err(e.clone()),
         }
     }
 }
 
-#[derive(Debug)]
-struct EncodeContext {
-    id: u32,
-    url: Url,
+fn add_refs_to_scope(scope: &mut Scope, schema: JsonSchema) -> Result<ScopedSchema<'_>, SRCError> {
+    for reference in schema.references.into_iter() {
+        add_refs_to_scope(scope, reference)?;
+    }
+    match scope.compile_and_return_with_id(&schema.url, schema.schema, false) {
+        Ok(v) => Ok(v),
+        Err(e) => Err(SRCError::non_retryable_with_cause(
+            e,
+            "error compiling schema",
+        )),
+    }
+}
+
+pub fn validate(schema: JsonSchema, value: &Value) -> Result<(), SRCError> {
+    let mut scope = Scope::new();
+    let schema = add_refs_to_scope(&mut scope, schema)?;
+    let validation = schema.validate(value);
+    handle_validation(validation, value)
+}
+
+/// Schema as retrieved from the schema registry. It's close to the json received and doesn't do
+/// type specific transformations.
+#[derive(Clone, Debug)]
+pub struct JsonSchema {
+    pub id: u32,
+    pub url: Url,
+    pub schema: Value,
+    pub references: Vec<JsonSchema>,
 }
 
 #[derive(Debug)]
-pub struct JsonDecoder {
+pub struct JsonDecoder<'a> {
     sr_settings: SrSettings,
-    cache: HashMap<u32, Result<Url, SRCError>, RandomState>,
-    scope: Scope,
+    cache: HashMap<u32, Shared<BoxFuture<'a, Result<JsonSchema, SRCError>>>, RandomState>,
 }
 
-impl JsonDecoder {
+impl<'a> JsonDecoder<'a> {
     /// Creates a new decoder which will use the supplied url to fetch the schema's since the schema
     /// needed is encoded in the binary, independent of the SubjectNameStrategy we don't need any
     /// additional data. It's possible for recoverable errors to stay in the cache, when a result
     /// comes back as an error you can use remove_errors_from_cache to clean the cache, keeping the
     /// correctly fetched schema's
-    pub fn new(sr_settings: SrSettings) -> JsonDecoder {
+    pub fn new(sr_settings: SrSettings) -> JsonDecoder<'a> {
         JsonDecoder {
             sr_settings,
             cache: HashMap::new(),
-            scope: Scope::new(),
         }
     }
     /// Remove al the errors from the cache, you might need to/want to run this when a recoverable
     /// error is met. Errors are also cashed to prevent trying to get schema's that either don't
     /// exist or can't be parsed.
     pub fn remove_errors_from_cache(&mut self) {
-        self.cache.retain(|_, v| v.is_ok());
+        self.cache.retain(|_, v| match v.peek() {
+            Some(r) => r.is_ok(),
+            None => true,
+        });
     }
     /// Reads the bytes to get the name, and gives back the data bytes.
-    pub fn decode(&mut self, bytes: Option<&[u8]>) -> Result<Option<DecodeResult>, SRCError> {
+    pub async fn decode(&mut self, bytes: Option<&[u8]>) -> Result<Option<DecodeResult>, SRCError> {
         match get_bytes_result(bytes) {
             BytesResult::Null => Ok(None),
-            BytesResult::Valid(id, bytes) => Ok(Some(self.deserialize(id, &bytes)?)),
+            BytesResult::Valid(id, bytes) => Ok(Some(self.deserialize(id, &bytes).await?)),
             BytesResult::Invalid(i) => Err(SRCError::non_retryable_without_cause(&*format!(
                 "Invalid bytes: {:?}",
                 i
@@ -137,8 +151,8 @@ impl JsonDecoder {
     }
     /// The actual deserialization trying to get the id from the bytes to retrieve the schema, and
     /// using a reader transforms the bytes to a value.
-    fn deserialize(&mut self, id: u32, bytes: &[u8]) -> Result<DecodeResult, SRCError> {
-        let schema = self.get_schema(id)?;
+    async fn deserialize(&mut self, id: u32, bytes: &[u8]) -> Result<DecodeResult, SRCError> {
+        let schema = self.get_schema(id).clone().await?;
         match serde_json::from_slice(bytes) {
             Ok(value) => Ok(DecodeResult { schema, value }),
             Err(e) => Err(SRCError::non_retryable_with_cause(
@@ -149,91 +163,76 @@ impl JsonDecoder {
     }
     /// Gets the Context object, either from the cache, or from the schema registry and then putting
     /// it into the cache.
-    fn get_schema(&mut self, id: u32) -> Result<ScopedSchema, SRCError> {
-        let url = match self.cache.entry(id) {
+    fn get_schema(&mut self, id: u32) -> &Shared<BoxFuture<'a, Result<JsonSchema, SRCError>>> {
+        match self.cache.entry(id) {
             Entry::Occupied(e) => &*e.into_mut(),
             Entry::Vacant(e) => {
-                let v = match get_schema_by_id_and_type(id, &self.sr_settings, SchemaType::Json) {
-                    Ok(r) => match set_scoped_schema(&mut self.scope, &self.sr_settings, &r) {
-                        Ok(schema) => Ok(schema),
+                let sr_settings = self.sr_settings.clone();
+                let v = async move {
+                    match get_schema_by_id_and_type(id, &sr_settings, SchemaType::Json).await {
+                        Ok(schema) => to_json_schema(&sr_settings, None, schema).await,
                         Err(e) => Err(e.into_cache()),
-                    },
-                    Err(e) => Err(e.into_cache()),
-                };
+                    }
+                }
+                .boxed()
+                .shared();
                 &*e.insert(v)
             }
-        };
-        match url {
-            Ok(id) => match self.scope.resolve(id) {
-                Some(schema) => Ok(schema),
-                None => Err(SRCError::non_retryable_without_cause(
-                    "could not get schema from scope",
-                )),
-            },
-            Err(e) => Err(e.clone()),
         }
     }
 }
 
-fn add_refs_to_scope(
-    scope: &mut Scope,
-    sr_settings: &SrSettings,
-    refs: &[RegisteredReference],
-) -> Result<(), SRCError> {
-    for rr in refs.iter() {
-        let rs = get_referenced_schema(sr_settings, rr)?;
-        let id = match Url::from_str(&*rr.name) {
-            Ok(v) => v,
-            Err(e) => return Err(SRCError::non_retryable_with_cause(e, &*format!("reference schema with subject {} and version {} has invalid id {}, it has to be a fully qualified url", rr.subject, rr.version, rr.name)))
-        };
-        // if it's already part of the scope, it's assumed any references are also already part of the scope.
-        if scope.resolve(&id).is_some() {
-            return Ok(());
-        }
-        add_refs_to_scope(scope, sr_settings, &rs.references)?;
-        let def: Value = to_value(&*rs.schema)?;
-        scope.compile_with_id(&id, def, false).unwrap();
+fn reference_url(rr: &RegisteredReference) -> Result<Url, SRCError> {
+    match Url::from_str(&*rr.name) {
+        Ok(v) => Ok(v),
+        Err(e) => Err(SRCError::non_retryable_with_cause(e, &*format!("reference schema with subject {} and version {} has invalid id {}, it has to be a fully qualified url", rr.subject, rr.version, rr.name)))
     }
-    Ok(())
 }
 
-fn set_scoped_schema(
-    scope: &mut Scope,
-    sr_settings: &SrSettings,
-    registered_schema: &RegisteredSchema,
-) -> Result<Url, SRCError> {
-    add_refs_to_scope(scope, sr_settings, &registered_schema.references)?;
-    let def: Value = match serde_json::from_str(&*registered_schema.schema) {
-        Ok(v) => v,
-        Err(e) => {
-            return Err(SRCError::non_retryable_with_cause(
-                e,
-                &*format!(
-                    "could not parse schema {} with id {} to a value",
-                    registered_schema.schema, registered_schema.id
-                ),
-            ))
-        }
-    };
-    let id = match fetch_id(&def) {
+fn main_url(schema: &Value, sr_settings: &SrSettings, id: u32) -> Url {
+    match fetch_id(schema) {
         Some(url) => url,
-        None => fetch_fallback(sr_settings.url(), registered_schema.id),
-    };
-    match scope.compile_with_id(&id, def, false) {
-        Ok(_) => (),
-        Err(e) => {
-            return Err(SRCError::non_retryable_with_cause(
-                e,
-                &*format!("could not compile schema with id {}", registered_schema.id),
-            ))
-        }
-    };
-    Ok(id)
+        None => fetch_fallback(sr_settings.url(), id),
+    }
 }
 
+fn to_json_schema(
+    sr_settings: &SrSettings,
+    optional_url: Option<Url>,
+    registered_schema: RegisteredSchema,
+) -> BoxFuture<Result<JsonSchema, SRCError>> {
+    async move {
+        let refs: Result<Vec<JsonSchema>, SRCError> = stream::iter(registered_schema.references)
+            .then(|rr| async move {
+                let url = reference_url(&rr)?;
+                let rs = get_referenced_schema(sr_settings, &rr).await?;
+                to_json_schema(sr_settings, Some(url), rs).await
+            })
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .collect();
+        let references = refs?;
+        let schema: Value = to_value(&*registered_schema.schema)?;
+        let url = match optional_url {
+            Some(v) => v,
+            None => main_url(&schema, sr_settings, registered_schema.id),
+        };
+        Ok(JsonSchema {
+            id: registered_schema.id,
+            url,
+            schema,
+            references,
+        })
+    }
+    .boxed()
+}
+
+/// This decode result is not validated yet, if you want to validate you need to call the validate
+/// function.
 #[derive(Debug)]
-pub struct DecodeResult<'a> {
-    pub schema: ScopedSchema<'a>,
+pub struct DecodeResult {
+    pub schema: JsonSchema,
     pub value: Value,
 }
 
@@ -242,11 +241,10 @@ mod tests {
     use std::fs::{read_to_string, File};
 
     use mockito::{mock, server_address};
-    use serde_json::{from_str, to_string_pretty, Value};
-    use valico::json_dsl;
+    use serde_json::Value;
 
-    use crate::blocking::json::{JsonDecoder, JsonEncoder};
-    use crate::blocking::schema_registry::SrSettings;
+    use crate::async_impl::json::{validate, JsonDecoder, JsonEncoder};
+    use crate::async_impl::schema_registry::SrSettings;
     use crate::schema_registry_common::{get_payload, SubjectNameStrategy};
 
     fn get_json_body(schema: &str, id: u32) -> String {
@@ -293,27 +291,8 @@ mod tests {
         ]
     }
 
-    #[test]
-    fn using_the_dsl_builder_might_be_used_after_decode_to_coerce() {
-        let params = json_dsl::Builder::build(|params| {
-            params.req_nested("user", json_dsl::array(), |params| {
-                params.req_typed("name", json_dsl::string());
-                params.req_typed("friend_ids", json_dsl::array_of(json_dsl::u64()))
-            });
-        });
-
-        let mut obj = from_str(r#"{"user": [{"name": "Frodo", "friend_ids": ["1223"]}]}"#).unwrap();
-
-        let state = params.process(&mut obj, None);
-        if state.is_valid() {
-            println!("Result object is {}", to_string_pretty(&obj).unwrap());
-        } else {
-            panic!("Errors during process: {:?}", state);
-        }
-    }
-
-    #[test]
-    fn test_encode_java_compatibility() {
+    #[tokio::test]
+    async fn test_encode_java_compatibility() {
         let _m = mock("GET", "/subjects/testresult-value/versions/latest")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
@@ -327,13 +306,13 @@ mod tests {
             serde_json::from_reader(File::open("tests/schema/result-example.json").unwrap())
                 .unwrap();
 
-        let encoded_data = encoder.encode(&result_example, &strategy).unwrap();
+        let encoded_data = encoder.encode(&result_example, strategy).await.unwrap();
 
         assert_eq!(encoded_data, result_java_bytes())
     }
 
-    #[test]
-    fn test_encode_schema_with_id() {
+    #[tokio::test]
+    async fn test_encode_schema_with_id() {
         let _m = mock("GET", "/subjects/testresult-value/versions/latest")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
@@ -347,13 +326,13 @@ mod tests {
             serde_json::from_reader(File::open("tests/schema/result-example.json").unwrap())
                 .unwrap();
 
-        let encoded_data = encoder.encode(&result_example, &strategy).unwrap();
+        let encoded_data = encoder.encode(&result_example, strategy).await.unwrap();
 
         assert_eq!(encoded_data, result_java_bytes())
     }
 
-    #[test]
-    fn test_encode_clean_cache() {
+    #[tokio::test]
+    async fn test_encode_clean_cache() {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
         let mut encoder = JsonEncoder::new(sr_settings);
         let strategy = SubjectNameStrategy::TopicNameStrategy(String::from("testresult"), false);
@@ -361,7 +340,7 @@ mod tests {
             serde_json::from_reader(File::open("tests/schema/result-example.json").unwrap())
                 .unwrap();
 
-        let encoded_data = encoder.encode(&result_example, &strategy);
+        let encoded_data = encoder.encode(&result_example, strategy.clone()).await;
         assert_eq!(true, encoded_data.is_err());
 
         let _m = mock("GET", "/subjects/testresult-value/versions/latest")
@@ -370,17 +349,17 @@ mod tests {
             .with_body(&get_json_body(result_schema(), 10))
             .create();
 
-        let encoded_data = encoder.encode(&result_example, &strategy);
+        let encoded_data = encoder.encode(&result_example, strategy.clone()).await;
         assert_eq!(true, encoded_data.is_err());
 
         encoder.remove_errors_from_cache();
 
-        let encoded_data = encoder.encode(&result_example, &strategy);
-        assert_eq!(false, encoded_data.is_err());
+        let encoded_data = encoder.encode(&result_example, strategy).await;
+        assert_eq!(true, encoded_data.is_ok());
     }
 
-    #[test]
-    fn test_decoder_default() {
+    #[tokio::test]
+    async fn test_decoder_default() {
         let result_value: String = read_to_string("tests/schema/result-example.json")
             .unwrap()
             .parse()
@@ -393,16 +372,12 @@ mod tests {
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
         let mut decoder = JsonDecoder::new(sr_settings);
-        let result = decoder.decode(Some(&*get_payload(7, result_value.into_bytes())));
-
-        let message = match result {
-            Ok(Some(x)) => x,
-            Err(e) => panic!("Error: {:?}, while none expected", e),
-            Ok(v) => panic!("Other value: {:?} than expected Message", v),
-        };
-        let validation = message.schema.validate(&message.value);
-        assert_eq!(true, validation.is_strictly_valid());
-        assert_eq!(true, validation.errors.is_empty());
+        let message = decoder
+            .decode(Some(&*get_payload(7, result_value.into_bytes())))
+            .await
+            .unwrap()
+            .unwrap();
+        validate(message.schema, &message.value).unwrap();
         assert_eq!(
             "string",
             message
@@ -427,8 +402,8 @@ mod tests {
         )
     }
 
-    #[test]
-    fn test_decoder_clean_cache() {
+    #[tokio::test]
+    async fn test_decoder_clean_cache() {
         let result_value: String = read_to_string("tests/schema/result-example.json")
             .unwrap()
             .parse()
@@ -438,14 +413,10 @@ mod tests {
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
         let mut decoder = JsonDecoder::new(sr_settings);
-        let result = decoder.decode(Some(&*get_payload(7, bytes.clone())));
-
-        let error = match result {
-            Ok(Some(_)) => panic!("expected error"),
-            Err(e) => e,
-            Ok(v) => panic!("Other value: {:?} than expected Message", v),
-        };
-
+        let error = decoder
+            .decode(Some(&*get_payload(7, bytes.clone())))
+            .await
+            .unwrap_err();
         assert_eq!(true, error.cached);
 
         let _m = mock("GET", "/schemas/ids/7")
@@ -454,29 +425,25 @@ mod tests {
             .with_body(&get_json_body(result_schema(), 7))
             .create();
 
-        let result = decoder.decode(Some(&*get_payload(7, bytes.clone())));
-        let error = match result {
-            Ok(Some(_)) => panic!("expected error"),
-            Err(e) => e,
-            Ok(v) => panic!("Other value: {:?} than expected Message", v),
-        };
-
+        let error = decoder
+            .decode(Some(&*get_payload(7, bytes.clone())))
+            .await
+            .unwrap_err();
         assert_eq!(true, error.cached);
 
         decoder.remove_errors_from_cache();
 
-        let result = decoder.decode(Some(&*get_payload(7, bytes)));
-        let message = match result {
-            Ok(Some(x)) => x,
-            Err(e) => panic!("Error: {:?}, while none expected", e),
-            Ok(v) => panic!("Other value: {:?} than expected Message", v),
-        };
-
-        assert_eq!(true, message.value.is_object())
+        let message = decoder
+            .decode(Some(&*get_payload(7, bytes)))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(true, message.value.is_object());
+        validate(message.schema, &message.value).unwrap();
     }
 
-    #[test]
-    fn test_decoder_java_compatibility() {
+    #[tokio::test]
+    async fn test_decoder_java_compatibility() {
         let _m = mock("GET", "/schemas/ids/10")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
@@ -485,16 +452,12 @@ mod tests {
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
         let mut decoder = JsonDecoder::new(sr_settings);
-        let result = decoder.decode(Some(result_java_bytes()));
-
-        let message = match result {
-            Ok(Some(x)) => x,
-            Err(e) => panic!("Error: {:?}, while none expected", e),
-            Ok(v) => panic!("Other value: {:?} than expected Message", v),
-        };
-        let validation = message.schema.validate(&message.value);
-        assert_eq!(true, validation.is_strictly_valid());
-        assert_eq!(true, validation.errors.is_empty());
+        let message = decoder
+            .decode(Some(result_java_bytes()))
+            .await
+            .unwrap()
+            .unwrap();
+        validate(message.schema, &message.value).unwrap();
         assert_eq!(
             "string",
             message
@@ -519,8 +482,8 @@ mod tests {
         )
     }
 
-    #[test]
-    fn test_decoder_value_can_not_be_read() {
+    #[tokio::test]
+    async fn test_decoder_value_can_not_be_read() {
         let _m = mock("GET", "/schemas/ids/10")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
@@ -529,15 +492,15 @@ mod tests {
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
         let mut decoder = JsonDecoder::new(sr_settings);
-        let result = decoder.decode(Some(incorrect_bytes())).unwrap_err();
+        let result = decoder.decode(Some(incorrect_bytes())).await.unwrap_err();
         assert_eq!(
             String::from("could not create value from bytes"),
             result.error
         )
     }
 
-    #[test]
-    fn add_referred_schema() {
+    #[tokio::test]
+    async fn add_referred_schema() {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
         let mut decoder = JsonDecoder::new(sr_settings);
         let bytes = [
@@ -566,11 +529,8 @@ mod tests {
             .with_body(&get_json_body(result_schema(), 4))
             .create();
 
-        let result = match decoder.decode(Some(&bytes)) {
-            Ok(Some(v)) => v.value,
-            _ => panic!("Not a value while that was expected"),
-        };
-        match result {
+        let value = decoder.decode(Some(&bytes)).await.unwrap().unwrap().value;
+        match value {
             Value::Object(v) => {
                 assert_eq!(&Value::String(String::from("Java")), v.get("by").unwrap())
             }
@@ -578,8 +538,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn error_in_referred_schema() {
+    #[tokio::test]
+    async fn error_in_refered_schema() {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
         let mut decoder = JsonDecoder::new(sr_settings);
         let bytes = [
@@ -608,12 +568,12 @@ mod tests {
             .with_body(&get_json_body(&result_schema()[0..30], 4))
             .create();
 
-        let error = decoder.decode(Some(&bytes)).unwrap_err();
+        let error = decoder.decode(Some(&bytes)).await.unwrap_err();
         assert_eq!(true, error.error.starts_with("could not parse schema {"))
     }
 
-    #[test]
-    fn encounter_same_reference_again() {
+    #[tokio::test]
+    async fn encounter_same_reference_again() {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
         let mut decoder = JsonDecoder::new(sr_settings);
         let bytes_id_5 = [
@@ -661,21 +621,25 @@ mod tests {
             .with_body(&get_json_body(result_schema(), 4))
             .create();
 
-        let result = match decoder.decode(Some(&bytes_id_5)) {
-            Ok(Some(v)) => v.value,
-            _ => panic!("Not a value while that was expected"),
-        };
-        match result {
+        let value = decoder
+            .decode(Some(&bytes_id_5))
+            .await
+            .unwrap()
+            .unwrap()
+            .value;
+        match value {
             Value::Object(v) => {
                 assert_eq!(&Value::String(String::from("Java")), v.get("by").unwrap())
             }
             _ => panic!("Not an Object that was expected"),
         }
-        let result = match decoder.decode(Some(&bytes_id_7)) {
-            Ok(Some(v)) => v.value,
-            _ => panic!("Not a value while that was expected"),
-        };
-        match result {
+        let value = decoder
+            .decode(Some(&bytes_id_7))
+            .await
+            .unwrap()
+            .unwrap()
+            .value;
+        match value {
             Value::Object(v) => {
                 assert_eq!(&Value::String(String::from("Java")), v.get("by").unwrap())
             }
@@ -687,8 +651,9 @@ mod tests {
     fn display_encode() {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
         let encoder = JsonEncoder::new(sr_settings);
+        println!("{:?}", encoder);
         assert_eq!(true,
-            format!("{:?}", encoder).starts_with("JsonEncoder { sr_settings: SrSettings { urls: [\"http://127.0.0.1:1234\"], client: Client, authorization: None }, cache: {}, scope: Scope {")
+            format!("{:?}", encoder).starts_with("JsonEncoder { sr_settings: SrSettings { urls: [\"http://127.0.0.1:1234\"], client: Client { accepts: Accepts")
         )
     }
 
@@ -696,13 +661,14 @@ mod tests {
     fn display_decode() {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
         let decoder = JsonDecoder::new(sr_settings);
+        println!("{:?}", decoder);
         assert_eq!(true,
-                   format!("{:?}", decoder).starts_with("JsonDecoder { sr_settings: SrSettings { urls: [\"http://127.0.0.1:1234\"], client: Client, authorization: None }, cache: {}, scope: Scope {")
+                   format!("{:?}", decoder).starts_with("JsonDecoder { sr_settings: SrSettings { urls: [\"http://127.0.0.1:1234\"], client: Client { accepts: Accepts")
         )
     }
 
-    #[test]
-    fn test_encode_not_valid() {
+    #[tokio::test]
+    async fn test_encode_not_valid() {
         let _m = mock("GET", "/subjects/testresult-value/versions/latest")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
@@ -714,7 +680,7 @@ mod tests {
         let strategy = SubjectNameStrategy::TopicNameStrategy(String::from("testresult"), false);
         let result_example: Value = Value::String(String::from("Foo"));
 
-        let error = encoder.encode(&result_example, &strategy).unwrap_err();
+        let error = encoder.encode(&result_example, strategy).await.unwrap_err();
 
         assert_eq!(
             error.error,
@@ -724,8 +690,8 @@ mod tests {
         )
     }
 
-    #[test]
-    fn test_encode_missing_ref() {
+    #[tokio::test]
+    async fn test_encode_missing_ref() {
         let _m = mock("GET", "/subjects/testresult-value/versions/latest")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
@@ -739,7 +705,7 @@ mod tests {
             serde_json::from_reader(File::open("tests/schema/jsontest-example.json").unwrap())
                 .unwrap();
 
-        let error = encoder.encode(&result_example, &strategy).unwrap_err();
+        let error = encoder.encode(&result_example, strategy).await.unwrap_err();
 
         assert_eq!(
             true,
@@ -749,11 +715,11 @@ mod tests {
         )
     }
 
-    #[test]
-    fn decode_invalid_bytes() {
+    #[tokio::test]
+    async fn decode_invalid_bytes() {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
         let mut decoder = JsonDecoder::new(sr_settings);
-        let result = decoder.decode(Some(&[1, 0])).unwrap_err();
+        let result = decoder.decode(Some(&[1, 0])).await.unwrap_err();
         assert_eq!(String::from("Invalid bytes: [1, 0]"), result.error)
     }
 }

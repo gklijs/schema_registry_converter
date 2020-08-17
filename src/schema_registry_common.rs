@@ -1,7 +1,8 @@
 //! Contains structs, enums' and functions common to async and blocking implementation of schema
 //! registry. So stuff dealing with the responses from schema registry, determining the subject, etc.
-use byteorder::{BigEndian, ByteOrder};
 use core::fmt;
+
+use byteorder::{BigEndian, ByteOrder, ReadBytesExt};
 use serde::{Deserialize, Serialize};
 
 use crate::error::SRCError;
@@ -185,11 +186,27 @@ pub fn get_payload(id: u32, encoded_bytes: Vec<u8>) -> Vec<u8> {
     payload
 }
 
+/// Just analyses the bytes which are contained in the key or value of an kafka record. When valid
+/// it will return the id and the data bytes. The way schema registry messages are encoded is
+/// starting with a zero, with the next 4 bytes having the id. The other bytes are the encoded
+/// message.
+pub fn get_bytes_result(bytes: Option<&[u8]>) -> BytesResult {
+    match bytes {
+        None => BytesResult::Null,
+        Some(p) if p.len() > 4 && p[0] == 0 => {
+            let mut buf = &p[1..5];
+            let id = buf.read_u32::<BigEndian>().unwrap();
+            BytesResult::Valid(id, p[5..].to_owned())
+        }
+        Some(p) => BytesResult::Invalid(p[..].to_owned()),
+    }
+}
+
 #[cfg(test)]
 mod test {
     use crate::error::SRCError;
     use crate::schema_registry_common::{
-        get_subject, BytesResult, RegisteredSchema, SchemaType, SrAuthorization,
+        get_bytes_result, get_subject, BytesResult, RegisteredSchema, SchemaType, SrAuthorization,
         SubjectNameStrategy, SuppliedSchema,
     };
 
@@ -293,5 +310,23 @@ mod test {
                 "name is mandatory in SuppliedSchema when used in TopicRecordNameStrategyWithSchema"
             ))
         );
+    }
+
+    #[test]
+    fn get_bytes_result_null() {
+        let result = get_bytes_result(None);
+        assert_eq!(BytesResult::Null, result)
+    }
+
+    #[test]
+    fn get_bytes_result_valid() {
+        let result = get_bytes_result(Some(&[0, 0, 0, 0, 7, 101, 99]));
+        assert_eq!(BytesResult::Valid(7, vec![101, 99]), result)
+    }
+
+    #[test]
+    fn get_bytes_result_invalid() {
+        let result = get_bytes_result(Some(&[0, 0, 0, 0]));
+        assert_eq!(BytesResult::Invalid(vec![0, 0, 0, 0]), result)
     }
 }

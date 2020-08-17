@@ -34,15 +34,14 @@ use serde::ser::Serialize;
 use serde_json::value;
 
 use crate::async_impl::schema_registry::{
-    get_bytes_result, get_referenced_schema, get_schema_by_id_and_type, get_schema_by_subject,
-    SrSettings,
+    get_referenced_schema, get_schema_by_id_and_type, get_schema_by_subject, SrSettings,
 };
 use crate::avro_common::{
     get_name, item_to_bytes, replace_reference, values_to_bytes, AvroSchema, DecodeResult,
 };
 use crate::error::SRCError;
 use crate::schema_registry_common::{
-    get_subject, BytesResult, RegisteredReference, RegisteredSchema, SchemaType,
+    get_bytes_result, get_subject, BytesResult, RegisteredReference, RegisteredSchema, SchemaType,
     SubjectNameStrategy,
 };
 
@@ -166,7 +165,7 @@ impl<'a> AvroDecoder<'a> {
     /// }
     /// ```
     pub async fn decode(&mut self, bytes: Option<&[u8]>) -> Result<DecodeResult, SRCError> {
-        match get_bytes_result(bytes).await {
+        match get_bytes_result(bytes) {
             BytesResult::Null => Ok(DecodeResult {
                 name: None,
                 value: Value::Null,

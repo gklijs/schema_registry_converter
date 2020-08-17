@@ -35,12 +35,11 @@ use crate::avro_common::{
     get_name, item_to_bytes, replace_reference, values_to_bytes, AvroSchema, DecodeResult,
 };
 use crate::blocking::schema_registry::{
-    get_bytes_result, get_referenced_schema, get_schema_by_id_and_type, get_schema_by_subject,
-    SrSettings,
+    get_referenced_schema, get_schema_by_id_and_type, get_schema_by_subject, SrSettings,
 };
 use crate::error::SRCError;
 use crate::schema_registry_common::{
-    get_subject, BytesResult, RegisteredReference, RegisteredSchema, SchemaType,
+    get_bytes_result, get_subject, BytesResult, RegisteredReference, RegisteredSchema, SchemaType,
     SubjectNameStrategy,
 };
 
@@ -529,9 +528,9 @@ mod tests {
     use serde::{Deserialize, Serialize};
 
     use crate::avro_common::get_supplied_schema;
+    use crate::schema_registry_common::SuppliedSchema;
 
     use super::*;
-    use crate::schema_registry_common::SuppliedSchema;
 
     #[derive(Debug, Deserialize, Serialize)]
     struct Heartbeat {
