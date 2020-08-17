@@ -76,7 +76,7 @@ fn do_avro_test(
         get_brokers(),
         "test",
         get_schema_registry_url(),
-        &vec![topic],
+        &[topic],
         true,
         test_beat_value(key_value, value_value),
     )
@@ -219,7 +219,7 @@ fn test7_test_avro_from_java_test_app() {
         get_brokers(),
         "test",
         get_schema_registry_url(),
-        &vec![topic],
+        &[topic],
         false,
         test,
     )

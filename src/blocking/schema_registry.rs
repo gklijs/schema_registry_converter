@@ -1,20 +1,22 @@
 //! This module contains the code specific for the schema registry.
 
+use std::collections::hash_map::RandomState;
+use std::collections::HashMap;
+use std::str;
+use std::time::Duration;
+
+use byteorder::{BigEndian, ReadBytesExt};
+use reqwest::blocking::Client;
+use reqwest::header;
+use reqwest::header::{HeaderName, ACCEPT, CONTENT_TYPE};
+use serde_json::{json, Map, Value};
+
 use crate::error::SRCError;
 use crate::schema_registry_common::{
     get_schema, get_subject, url_for_call, BytesResult, RawRegisteredSchema, RegisteredReference,
     RegisteredSchema, SchemaType, SrAuthorization, SrCall, SubjectNameStrategy, SuppliedReference,
     SuppliedSchema,
 };
-use byteorder::{BigEndian, ByteOrder, ReadBytesExt};
-use reqwest::blocking::Client;
-use reqwest::header;
-use reqwest::header::{HeaderName, ACCEPT, CONTENT_TYPE};
-use serde_json::{json, Map, Value};
-use std::collections::hash_map::RandomState;
-use std::collections::HashMap;
-use std::str;
-use std::time::Duration;
 
 /// Settings used to do the calls to schema registry. For simple cases you can use `SrSettings::new`
 /// or the `SrSettingsBuilder`. But you can also use it directly so you can all the available
@@ -166,16 +168,6 @@ impl SrSettingsBuilder {
             )),
         }
     }
-}
-
-/// Creates payload that can be included as a key or value on a kafka record
-pub fn get_payload(id: u32, encoded_bytes: Vec<u8>) -> Vec<u8> {
-    let mut payload = vec![0u8];
-    let mut buf = [0u8; 4];
-    BigEndian::write_u32(&mut buf, id);
-    payload.extend_from_slice(&buf);
-    payload.extend_from_slice(encoded_bytes.as_slice());
-    payload
 }
 
 /// Just analyses the bytes which are contained in the key or value of an kafka record. When valid
@@ -461,9 +453,11 @@ fn perform_single_sr_call(
 
 #[cfg(test)]
 mod tests {
-    use crate::blocking::schema_registry::{get_schema_by_id, SrSettings};
-    use mockito::{mock, server_address};
     use std::time::Duration;
+
+    use mockito::{mock, server_address};
+
+    use crate::blocking::schema_registry::{get_schema_by_id, SrSettings};
 
     #[test]
     fn put_correct_url_as_second_check_header_set() {

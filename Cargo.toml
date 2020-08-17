@@ -19,7 +19,7 @@ json = ["url", "valico"]
 proto_decoder = ["bytes", "integer-encoding", "logos", "protofish"]
 proto_raw = ["integer-encoding", "logos"]
 kafka_test = []
-default = ["futures"]
+default = ["futures", "tokio"]
 
 [dependencies.avro-rs]
 version = "^0.10"
@@ -61,6 +61,10 @@ features = ["derive"]
 
 [dependencies.serde_json]
 version = "^1.0"
+
+[dependencies.tokio]
+version = "0.2.22"
+optional = true
 
 [dependencies.url]
 version = "^2"

@@ -1,8 +1,10 @@
 //! Contains structs, enums' and functions common to async and blocking implementation of schema
 //! registry. So stuff dealing with the responses from schema registry, determining the subject, etc.
-use crate::error::SRCError;
+use byteorder::{BigEndian, ByteOrder};
 use core::fmt;
 use serde::{Deserialize, Serialize};
+
+use crate::error::SRCError;
 
 #[derive(Clone)]
 pub(crate) enum SrAuthorization {
@@ -171,6 +173,16 @@ pub(crate) fn url_for_call(call: &SrCall, base_url: &str) -> String {
         SrCall::PostNew(subject, _) => format!("{}/subjects/{}/versions", base_url, subject),
         SrCall::PostForVersion(subject, _) => format!("{}/subjects/{}", base_url, subject),
     }
+}
+
+/// Creates payload that can be included as a key or value on a kafka record
+pub fn get_payload(id: u32, encoded_bytes: Vec<u8>) -> Vec<u8> {
+    let mut payload = vec![0u8];
+    let mut buf = [0u8; 4];
+    BigEndian::write_u32(&mut buf, id);
+    payload.extend_from_slice(&buf);
+    payload.extend_from_slice(encoded_bytes.as_slice());
+    payload
 }
 
 #[cfg(test)]

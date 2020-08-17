@@ -23,7 +23,11 @@
 //! [avro-rs]: https://crates.io/crates/avro-rs
 #[cfg(any(not(feature = "blocking"), feature = "kafka_test"))]
 pub mod async_impl;
+#[cfg(feature = "avro")]
+pub mod avro_common;
 #[cfg(feature = "blocking")]
 pub mod blocking;
 pub mod error;
+#[cfg(any(feature = "proto_decoder", feature = "proto_raw"))]
+mod proto_resolver;
 pub mod schema_registry_common;

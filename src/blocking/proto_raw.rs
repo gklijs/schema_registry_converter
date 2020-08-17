@@ -1,14 +1,16 @@
-use crate::blocking::proto_resolver::{to_index_and_data, IndexResolver, MessageResolver};
-use crate::blocking::schema_registry::{
-    get_bytes_result, get_payload, get_schema_by_id_and_type, get_schema_by_subject, SrSettings,
-};
-use crate::error::SRCError;
-use crate::schema_registry_common::{
-    get_subject, BytesResult, RegisteredSchema, SchemaType, SubjectNameStrategy,
-};
-use integer_encoding::VarInt;
 use std::collections::hash_map::{Entry, RandomState};
 use std::collections::HashMap;
+
+use integer_encoding::VarInt;
+
+use crate::blocking::schema_registry::{
+    get_bytes_result, get_schema_by_id_and_type, get_schema_by_subject, SrSettings,
+};
+use crate::error::SRCError;
+use crate::proto_resolver::{to_index_and_data, IndexResolver, MessageResolver};
+use crate::schema_registry_common::{
+    get_payload, get_subject, BytesResult, RegisteredSchema, SchemaType, SubjectNameStrategy,
+};
 
 /// Encoder that works by prepending the correct bytes in order to make it valid schema registry
 /// bytes. Ideally you want to make sure the bytes are based on the exact schema used for encoding
@@ -196,12 +198,13 @@ pub struct RawDecodeResult<'a> {
 
 #[cfg(test)]
 mod tests {
+    use mockito::{mock, server_address};
+
     use crate::blocking::proto_raw::{ProtoRawDecoder, ProtoRawEncoder};
     use crate::blocking::schema_registry::SrSettings;
     use crate::schema_registry_common::{
         SchemaType, SubjectNameStrategy, SuppliedReference, SuppliedSchema,
     };
-    use mockito::{mock, server_address};
 
     fn get_proto_hb_schema() -> &'static str {
         r#"syntax = \"proto3\";package nl.openweb.data;message Heartbeat {uint64 beat = 1;}"#
