@@ -5,12 +5,12 @@ use std::io::BufReader;
 use integer_encoding::VarIntReader;
 use logos::Logos;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct MessageResolver {
     map: HashMap<Vec<i32>, String, RandomState>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct IndexResolver {
     map: HashMap<String, Vec<i32>, RandomState>,
 }
