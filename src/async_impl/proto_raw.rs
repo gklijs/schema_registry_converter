@@ -1,7 +1,7 @@
 use std::collections::hash_map::{Entry, RandomState};
 use std::collections::HashMap;
 
-use crate::blocking::schema_registry::{
+use crate::async_impl::schema_registry::{
     get_schema_by_id_and_type, get_schema_by_subject, SrSettings,
 };
 use crate::error::SRCError;
@@ -10,20 +10,22 @@ use crate::proto_resolver::{to_index_and_data, IndexResolver};
 use crate::schema_registry_common::{
     get_bytes_result, get_subject, BytesResult, RegisteredSchema, SchemaType, SubjectNameStrategy,
 };
+use futures::future::{BoxFuture, Shared};
+use futures::FutureExt;
 
 /// Encoder that works by prepending the correct bytes in order to make it valid schema registry
 /// bytes. Ideally you want to make sure the bytes are based on the exact schema used for encoding
 /// but you need a protobuf struct that has introspection to make that work, and both protobuf and
 /// prost don't support that at the moment.
 #[derive(Debug)]
-pub struct ProtoRawEncoder {
+pub struct ProtoRawEncoder<'a> {
     sr_settings: SrSettings,
-    cache: HashMap<String, Result<EncodeContext, SRCError>, RandomState>,
+    cache: HashMap<String, Shared<BoxFuture<'a, Result<EncodeContext, SRCError>>>, RandomState>,
 }
 
-impl ProtoRawEncoder {
+impl<'a> ProtoRawEncoder<'a> {
     /// Creates a new encoder
-    pub fn new(sr_settings: SrSettings) -> ProtoRawEncoder {
+    pub fn new(sr_settings: SrSettings) -> ProtoRawEncoder<'a> {
         ProtoRawEncoder {
             sr_settings,
             cache: HashMap::new(),
@@ -31,38 +33,47 @@ impl ProtoRawEncoder {
     }
     /// Removes errors from the cache, can be useful to retry failed encodings.
     pub fn remove_errors_from_cache(&mut self) {
-        self.cache.retain(|_, v| v.is_ok());
+        self.cache.retain(|_, v| match v.peek() {
+            Some(r) => r.is_ok(),
+            None => true,
+        });
     }
     /// Encodes the bytes by adding a few bytes to the message with additional information. The full
     /// names is the optional package followed with the message name, and optionally inner messages.
-    pub fn encode(
+    pub async fn encode(
         &mut self,
         bytes: &[u8],
         full_name: &str,
-        subject_name_strategy: &SubjectNameStrategy,
+        subject_name_strategy: SubjectNameStrategy,
     ) -> Result<Vec<u8>, SRCError> {
-        let key = get_subject(subject_name_strategy)?;
-        match self.get_encoding_context(key, subject_name_strategy) {
-            Ok(encode_context) => to_bytes(encode_context, bytes, full_name),
-            Err(e) => Err(Clone::clone(e)),
-        }
+        let key = get_subject(&subject_name_strategy)?;
+        let encode_context = self
+            .get_encoding_context(key, subject_name_strategy)
+            .clone()
+            .await?;
+        to_bytes(&encode_context, bytes, full_name)
     }
 
     fn get_encoding_context(
         &mut self,
         key: String,
-        subject_name_strategy: &SubjectNameStrategy,
-    ) -> &mut Result<EncodeContext, SRCError> {
+        subject_name_strategy: SubjectNameStrategy,
+    ) -> &Shared<BoxFuture<'a, Result<EncodeContext, SRCError>>> {
         match self.cache.entry(key) {
             Entry::Occupied(e) => e.into_mut(),
             Entry::Vacant(e) => {
-                let v = match get_schema_by_subject(&self.sr_settings, &subject_name_strategy) {
-                    Ok(registered_schema) => Ok(EncodeContext {
-                        id: registered_schema.id,
-                        resolver: IndexResolver::new(&*registered_schema.schema),
-                    }),
-                    Err(e) => Err(e.into_cache()),
-                };
+                let sr_settings = self.sr_settings.clone();
+                let v = async move {
+                    match get_schema_by_subject(&sr_settings, &subject_name_strategy).await {
+                        Ok(registered_schema) => Ok(EncodeContext {
+                            id: registered_schema.id,
+                            resolver: IndexResolver::new(&*registered_schema.schema),
+                        }),
+                        Err(e) => Err(e.into_cache()),
+                    }
+                }
+                .boxed()
+                .shared();
                 e.insert(v)
             }
         }
@@ -70,18 +81,18 @@ impl ProtoRawEncoder {
 }
 
 #[derive(Debug)]
-pub struct ProtoRawDecoder {
+pub struct ProtoRawDecoder<'a> {
     sr_settings: SrSettings,
-    cache: HashMap<u32, Result<DecodeContext, SRCError>, RandomState>,
+    cache: HashMap<u32, Shared<BoxFuture<'a, Result<DecodeContext, SRCError>>>, RandomState>,
 }
 
-impl ProtoRawDecoder {
+impl<'a> ProtoRawDecoder<'a> {
     /// Creates a new decoder which will use the supplied url to fetch the schema's since the schema
     /// needed is encoded in the binary, independent of the SubjectNameStrategy we don't need any
     /// additional data. It's possible for recoverable errors to stay in the cache, when a result
     /// comes back as an error you can use remove_errors_from_cache to clean the cache, keeping the
     /// correctly fetched schema's
-    pub fn new(sr_settings: SrSettings) -> ProtoRawDecoder {
+    pub fn new(sr_settings: SrSettings) -> ProtoRawDecoder<'a> {
         ProtoRawDecoder {
             sr_settings,
             cache: HashMap::new(),
@@ -91,13 +102,19 @@ impl ProtoRawDecoder {
     /// error is met. Errors are also cashed to prevent trying to get schema's that either don't
     /// exist or can't be parsed.
     pub fn remove_errors_from_cache(&mut self) {
-        self.cache.retain(|_, v| v.is_ok());
+        self.cache.retain(|_, v| match v.peek() {
+            Some(r) => r.is_ok(),
+            None => true,
+        });
     }
     /// Reads the bytes to get the name, and gives back the data bytes.
-    pub fn decode(&mut self, bytes: Option<&[u8]>) -> Result<Option<RawDecodeResult>, SRCError> {
+    pub async fn decode(
+        &mut self,
+        bytes: Option<&[u8]>,
+    ) -> Result<Option<RawDecodeResult>, SRCError> {
         match get_bytes_result(bytes) {
             BytesResult::Null => Ok(None),
-            BytesResult::Valid(id, bytes) => Ok(Some(self.deserialize(id, &bytes)?)),
+            BytesResult::Valid(id, bytes) => Ok(Some(self.deserialize(id, &bytes).await?)),
             BytesResult::Invalid(i) => Err(SRCError::non_retryable_without_cause(&*format!(
                 "Invalid bytes {:?}",
                 i
@@ -106,39 +123,40 @@ impl ProtoRawDecoder {
     }
     /// The actual deserialization trying to get the id from the bytes to retrieve the schema, and
     /// using a reader transforms the bytes to a value.
-    fn deserialize(&mut self, id: u32, bytes: &[u8]) -> Result<RawDecodeResult, SRCError> {
-        match self.get_context(id) {
-            Ok(s) => {
-                let (index, data) = to_index_and_data(bytes);
-                let full_name = match s.resolver.find_name(&index) {
-                    Some(n) => n,
-                    None => {
-                        return Err(SRCError::non_retryable_without_cause(&*format!(
-                            "Could not retrieve name for index: {:?}",
-                            index
-                        )))
-                    }
-                };
-                Ok(RawDecodeResult {
-                    schema: &s.schema,
-                    full_name,
-                    bytes: data,
-                })
+    async fn deserialize(&mut self, id: u32, bytes: &[u8]) -> Result<RawDecodeResult, SRCError> {
+        let context = self.get_context(id).clone().await?;
+        let (index, data) = to_index_and_data(bytes);
+        let full_name = match context.resolver.find_name(&index) {
+            Some(n) => n.clone(),
+            None => {
+                return Err(SRCError::non_retryable_without_cause(&*format!(
+                    "Could not retrieve name for index: {:?}",
+                    index
+                )))
             }
-            Err(e) => Err(Clone::clone(e)),
-        }
+        };
+        let schema = context.schema;
+        Ok(RawDecodeResult {
+            schema,
+            full_name,
+            bytes: data,
+        })
     }
     /// Gets the Context object, either from the cache, or from the schema registry and then putting
     /// it into the cache.
-    fn get_context(&mut self, id: u32) -> &Result<DecodeContext, SRCError> {
+    fn get_context(&mut self, id: u32) -> &Shared<BoxFuture<'a, Result<DecodeContext, SRCError>>> {
         match self.cache.entry(id) {
             Entry::Occupied(e) => &*e.into_mut(),
             Entry::Vacant(e) => {
-                let v = match get_schema_by_id_and_type(id, &self.sr_settings, SchemaType::Protobuf)
-                {
-                    Ok(r) => Ok(to_decode_context(r)),
-                    Err(e) => Err(e.into_cache()),
-                };
+                let sr_settings = self.sr_settings.clone();
+                let v = async move {
+                    match get_schema_by_id_and_type(id, &sr_settings, SchemaType::Protobuf).await {
+                        Ok(r) => Ok(to_decode_context(r)),
+                        Err(e) => Err(e.into_cache()),
+                    }
+                }
+                .boxed()
+                .shared();
                 &*e.insert(v)
             }
         }
@@ -146,9 +164,9 @@ impl ProtoRawDecoder {
 }
 
 #[derive(Debug)]
-pub struct RawDecodeResult<'a> {
-    pub schema: &'a RegisteredSchema,
-    pub full_name: &'a str,
+pub struct RawDecodeResult {
+    pub schema: RegisteredSchema,
+    pub full_name: String,
     pub bytes: Vec<u8>,
 }
 
@@ -156,8 +174,8 @@ pub struct RawDecodeResult<'a> {
 mod tests {
     use mockito::{mock, server_address};
 
-    use crate::blocking::proto_raw::{ProtoRawDecoder, ProtoRawEncoder};
-    use crate::blocking::schema_registry::SrSettings;
+    use crate::async_impl::proto_raw::{ProtoRawDecoder, ProtoRawEncoder};
+    use crate::async_impl::schema_registry::SrSettings;
     use crate::schema_registry_common::{
         SchemaType, SubjectNameStrategy, SuppliedReference, SuppliedSchema,
     };
@@ -212,8 +230,8 @@ mod tests {
         r#"{"name": "result.proto", "subject": "result.proto", "version": 1}"#
     }
 
-    #[test]
-    fn test_encode_default() {
+    #[tokio::test]
+    async fn test_encode_default() {
         let _m = mock("GET", "/subjects/nl.openweb.data.Heartbeat/versions/latest")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
@@ -229,15 +247,16 @@ mod tests {
             .encode(
                 get_proto_hb_101_only_data(),
                 "nl.openweb.data.Heartbeat",
-                &strategy,
+                strategy,
             )
+            .await
             .unwrap();
 
         assert_eq!(encoded_data, get_proto_hb_101())
     }
 
-    #[test]
-    fn test_encode_complex() {
+    #[tokio::test]
+    async fn test_encode_complex() {
         let _m = mock("POST", "/subjects/result.proto/versions")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
@@ -277,8 +296,9 @@ mod tests {
             .encode(
                 get_proto_complex_proto_test_message_data_only(),
                 "org.schema_registry_test_app.proto.ProtoTest",
-                &strategy,
+                strategy,
             )
+            .await
             .unwrap();
 
         assert_eq!(encoded_data, get_proto_complex_proto_test_message())
@@ -289,14 +309,14 @@ mod tests {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
         let decoder = ProtoRawEncoder::new(sr_settings);
         assert_eq!(
-            "ProtoRawEncoder { sr_settings: SrSettings { urls: [\"http://127.0.0.1:1234\"], client: Client, authorization: None }, cache: {} }"
+            true
                 .to_owned(),
-            format!("{:?}", decoder)
+            format!("{:?}", decoder).starts_with("ProtoRawEncoder { sr_settings: SrSettings { urls: [\"http://127.0.0.1:1234\"], client: Client")
         )
     }
 
-    #[test]
-    fn test_decoder_default() {
+    #[tokio::test]
+    async fn test_decoder_default() {
         let _m = mock("GET", "/schemas/ids/7")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
@@ -305,20 +325,18 @@ mod tests {
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
         let mut decoder = ProtoRawDecoder::new(sr_settings);
-        let heartbeat = decoder.decode(Some(get_proto_hb_101()));
-
-        let raw_result = match heartbeat {
-            Ok(Some(v)) => v,
-            Err(e) => panic!("Error: {:?}, while none expected", e),
-            Ok(v) => panic!("Other value: {:?} than expected Message", v),
-        };
+        let raw_result = decoder
+            .decode(Some(get_proto_hb_101()))
+            .await
+            .unwrap()
+            .unwrap();
 
         assert_eq!(raw_result.bytes, get_proto_hb_101_only_data());
         assert_eq!(raw_result.full_name, "nl.openweb.data.Heartbeat")
     }
 
-    #[test]
-    fn test_decoder_complex() {
+    #[tokio::test]
+    async fn test_decoder_complex() {
         let _m = mock("GET", "/schemas/ids/6")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
@@ -337,13 +355,12 @@ mod tests {
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
         let mut decoder = ProtoRawDecoder::new(sr_settings);
-        let proto_test = decoder.decode(Some(get_proto_complex_proto_test_message()));
+        let raw_result = decoder
+            .decode(Some(get_proto_complex_proto_test_message()))
+            .await
+            .unwrap()
+            .unwrap();
 
-        let raw_result = match proto_test {
-            Ok(Some(x)) => x,
-            Err(e) => panic!("Error: {:?}, while none expected", e),
-            Ok(v) => panic!("Other value: {:?} than expected Message", v),
-        };
         assert_eq!(
             raw_result.bytes,
             get_proto_complex_proto_test_message_data_only()
@@ -355,9 +372,9 @@ mod tests {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
         let decoder = ProtoRawDecoder::new(sr_settings);
         assert_eq!(
-            "ProtoRawDecoder { sr_settings: SrSettings { urls: [\"http://127.0.0.1:1234\"], client: Client, authorization: None }, cache: {} }"
+            true
                 .to_owned(),
-            format!("{:?}", decoder)
+            format!("{:?}", decoder).starts_with("ProtoRawDecoder { sr_settings: SrSettings { urls: [\"http://127.0.0.1:1234\"], client: Client")
         )
     }
 }
