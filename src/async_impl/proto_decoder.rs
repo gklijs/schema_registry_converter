@@ -2,28 +2,32 @@ use std::collections::hash_map::{Entry, RandomState};
 use std::collections::HashMap;
 
 use bytes::Bytes;
+use futures::future::{BoxFuture, Shared};
+use futures::FutureExt;
 use protofish::{Context, MessageValue, Value};
 
-use crate::blocking::schema_registry::{
+use crate::async_impl::schema_registry::{
     get_referenced_schema, get_schema_by_id_and_type, SrSettings,
 };
 use crate::error::SRCError;
 use crate::proto_resolver::{to_index_and_data, MessageResolver};
 use crate::schema_registry_common::{get_bytes_result, BytesResult, RegisteredSchema, SchemaType};
 
+type SharedFutureOfSchemas<'a> = Shared<BoxFuture<'a, Result<Vec<String>, SRCError>>>;
+
 #[derive(Debug)]
-pub struct ProtoDecoder {
+pub struct ProtoDecoder<'a> {
     sr_settings: SrSettings,
-    cache: HashMap<u32, Result<DecodeContext, SRCError>, RandomState>,
+    cache: HashMap<u32, SharedFutureOfSchemas<'a>, RandomState>,
 }
 
-impl ProtoDecoder {
+impl<'a> ProtoDecoder<'a> {
     /// Creates a new decoder which will use the supplied url used in creating the sr settings to
     /// fetch the schema's since the schema needed is encoded in the binary, independent of the
     /// SubjectNameStrategy we don't need any additional data. It's possible for recoverable errors
     /// to stay in the cache, when a result comes back as an error you can use
     /// remove_errors_from_cache to clean the cache, keeping the correctly fetched schema's
-    pub fn new(sr_settings: SrSettings) -> ProtoDecoder {
+    pub fn new(sr_settings: SrSettings) -> ProtoDecoder<'a> {
         ProtoDecoder {
             sr_settings,
             cache: HashMap::new(),
@@ -33,71 +37,78 @@ impl ProtoDecoder {
     /// error is met. Errors are also cashed to prevent trying to get schema's that either don't
     /// exist or can't be parsed.
     pub fn remove_errors_from_cache(&mut self) {
-        self.cache.retain(|_, v| v.is_ok());
+        self.cache.retain(|_, v| match v.peek() {
+            Some(r) => r.is_ok(),
+            None => true,
+        });
     }
     /// Decodes bytes into a value.
     /// The choice to use Option<&[u8]> as type us made so it plays nice with the BorrowedMessage
     /// struct from rdkafka, for example if we have m: &'a BorrowedMessage and decoder: &'a mut
     /// Decoder we can use decoder.decode(m.payload()) to decode the payload or
     /// decoder.decode(m.key()) to get the decoded key.
-    pub fn decode(&mut self, bytes: Option<&[u8]>) -> Result<Value, SRCError> {
+    pub async fn decode(&mut self, bytes: Option<&[u8]>) -> Result<Value, SRCError> {
         match get_bytes_result(bytes) {
             BytesResult::Null => Ok(Value::Bytes(Bytes::new())),
-            BytesResult::Valid(id, bytes) => {
-                Ok(Value::Message(Box::from(self.deserialize(id, &bytes)?)))
-            }
+            BytesResult::Valid(id, bytes) => Ok(Value::Message(Box::from(
+                self.deserialize(id, &bytes).await?,
+            ))),
             BytesResult::Invalid(i) => Ok(Value::Bytes(Bytes::from(i))),
         }
     }
     /// The actual deserialization trying to get the id from the bytes to retrieve the schema, and
     /// using a reader transforms the bytes to a value.
-    fn deserialize(&mut self, id: u32, bytes: &[u8]) -> Result<MessageValue, SRCError> {
-        match self.get_context(id) {
-            Ok(s) => {
-                let (index, data) = to_index_and_data(bytes);
-                let full_name = match s.resolver.find_name(&index) {
-                    Some(n) => n,
-                    None => {
-                        return Err(SRCError::non_retryable_without_cause(&*format!(
-                            "Could not retrieve name for index: {:?}",
-                            index
-                        )))
-                    }
-                };
-                let message_info = s.context.get_message(full_name).unwrap();
-                Ok(message_info.decode(&data, &s.context))
+    async fn deserialize(&mut self, id: u32, bytes: &[u8]) -> Result<MessageValue, SRCError> {
+        let vec_of_schemas = self.get_vec_of_schemas(id).clone().await?;
+        let context = into_decode_context(&vec_of_schemas)?;
+        let (index, data) = to_index_and_data(bytes);
+        let full_name = match context.resolver.find_name(&index) {
+            Some(n) => n,
+            None => {
+                return Err(SRCError::non_retryable_without_cause(&*format!(
+                    "Could not retrieve name for index: {:?}",
+                    index
+                )))
             }
-            Err(e) => Err(Clone::clone(e)),
-        }
+        };
+        let message_info = context.context.get_message(full_name).unwrap();
+        Ok(message_info.decode(&data, &context.context))
     }
     /// Gets the Context object, either from the cache, or from the schema registry and then putting
     /// it into the cache.
-    fn get_context(&mut self, id: u32) -> &Result<DecodeContext, SRCError> {
+    fn get_vec_of_schemas(&mut self, id: u32) -> &SharedFutureOfSchemas<'a> {
         match self.cache.entry(id) {
             Entry::Occupied(e) => &*e.into_mut(),
             Entry::Vacant(e) => {
-                let v = match get_schema_by_id_and_type(id, &self.sr_settings, SchemaType::Protobuf)
-                {
-                    Ok(v) => to_resolve_context(&self.sr_settings, v),
-                    Err(e) => Err(e.into_cache()),
-                };
+                let sr_settings = self.sr_settings.clone();
+                let v = async move {
+                    match get_schema_by_id_and_type(id, &sr_settings, SchemaType::Protobuf).await {
+                        Ok(v) => to_vec_of_schemas(&sr_settings, v).await,
+                        Err(e) => Err(e.into_cache()),
+                    }
+                }
+                .boxed()
+                .shared();
                 &*e.insert(v)
             }
         }
     }
 }
 
-fn add_files(
-    sr_settings: &SrSettings,
+fn add_files<'a>(
+    sr_settings: &'a SrSettings,
     registered_schema: RegisteredSchema,
-    files: &mut Vec<String>,
-) -> Result<(), SRCError> {
-    for r in registered_schema.references {
-        let child_schema = get_referenced_schema(sr_settings, &r)?;
-        add_files(sr_settings, child_schema, files)?;
+    files: &'a mut Vec<String>,
+) -> BoxFuture<'a, Result<(), SRCError>> {
+    async move {
+        for r in registered_schema.references {
+            let child_schema = get_referenced_schema(sr_settings, &r).await?;
+            add_files(sr_settings, child_schema, files).await?;
+        }
+        files.push(registered_schema.schema);
+        Ok(())
     }
-    files.push(registered_schema.schema);
-    Ok(())
+    .boxed()
 }
 
 #[derive(Debug)]
@@ -106,14 +117,9 @@ struct DecodeContext {
     context: Context,
 }
 
-fn to_resolve_context(
-    sr_settings: &SrSettings,
-    registered_schema: RegisteredSchema,
-) -> Result<DecodeContext, SRCError> {
-    let resolver = MessageResolver::new(&registered_schema.schema);
-    let mut files = Vec::new();
-    add_files(sr_settings, registered_schema, &mut files)?;
-    match Context::parse(&files) {
+fn into_decode_context(vec_of_schemas: &[String]) -> Result<DecodeContext, SRCError> {
+    let resolver = MessageResolver::new(vec_of_schemas.last().unwrap());
+    match Context::parse(vec_of_schemas) {
         Ok(context) => Ok(DecodeContext { resolver, context }),
         Err(e) => Err(SRCError::non_retryable_with_cause(
             e,
@@ -122,13 +128,22 @@ fn to_resolve_context(
     }
 }
 
+async fn to_vec_of_schemas(
+    sr_settings: &SrSettings,
+    registered_schema: RegisteredSchema,
+) -> Result<Vec<String>, SRCError> {
+    let mut vec_of_schemas = Vec::new();
+    add_files(sr_settings, registered_schema, &mut vec_of_schemas).await?;
+    Ok(vec_of_schemas)
+}
+
 #[cfg(test)]
 mod tests {
     use mockito::{mock, server_address};
     use protofish::Value;
 
-    use crate::blocking::proto_decoder::ProtoDecoder;
-    use crate::blocking::schema_registry::SrSettings;
+    use crate::async_impl::proto_decoder::ProtoDecoder;
+    use crate::async_impl::schema_registry::SrSettings;
 
     fn get_proto_hb_schema() -> &'static str {
         r#"syntax = \"proto3\";package nl.openweb.data;message Heartbeat {uint64 beat = 1;}"#
@@ -172,8 +187,8 @@ mod tests {
         )
     }
 
-    #[test]
-    fn test_decoder_default() {
+    #[tokio::test]
+    async fn test_decoder_default() {
         let _m = mock("GET", "/schemas/ids/7")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
@@ -182,19 +197,18 @@ mod tests {
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
         let mut decoder = ProtoDecoder::new(sr_settings);
-        let heartbeat = decoder.decode(Some(get_proto_hb_101()));
+        let heartbeat = decoder.decode(Some(get_proto_hb_101())).await.unwrap();
 
         let message = match heartbeat {
-            Ok(Value::Message(x)) => *x,
-            Err(e) => panic!("Error: {:?}, while none expected", e),
-            Ok(v) => panic!("Other value: {:?} than expected Message", v),
+            Value::Message(x) => *x,
+            v => panic!("Other value: {:?} than expected Message", v),
         };
 
         assert_eq!(Value::UInt64(101u64), message.fields[0].value)
     }
 
-    #[test]
-    fn test_decoder_complex() {
+    #[tokio::test]
+    async fn test_decoder_complex() {
         let _m = mock("GET", "/schemas/ids/6")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
@@ -213,12 +227,14 @@ mod tests {
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
         let mut decoder = ProtoDecoder::new(sr_settings);
-        let proto_test = decoder.decode(Some(get_proto_complex_proto_test_message()));
+        let proto_test = decoder
+            .decode(Some(get_proto_complex_proto_test_message()))
+            .await
+            .unwrap();
 
         let message = match proto_test {
-            Ok(Value::Message(x)) => *x,
-            Err(e) => panic!("Error: {:?}, while none expected", e),
-            Ok(v) => panic!("Other value: {:?} than expected Message", v),
+            Value::Message(x) => *x,
+            v => panic!("Other value: {:?} than expected Message", v),
         };
         assert_eq!(message.fields[1].value, Value::Int64(1))
     }
@@ -228,9 +244,9 @@ mod tests {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
         let decoder = ProtoDecoder::new(sr_settings);
         assert_eq!(
-            "ProtoDecoder { sr_settings: SrSettings { urls: [\"http://127.0.0.1:1234\"], client: Client, authorization: None }, cache: {} }"
+            true
                 .to_owned(),
-            format!("{:?}", decoder)
+            format!("{:?}", decoder).starts_with("ProtoDecoder { sr_settings: SrSettings { urls: [\"http://127.0.0.1:1234\"], client: Client {")
         )
     }
 }
