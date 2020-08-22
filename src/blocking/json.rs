@@ -248,50 +248,11 @@ mod tests {
     use crate::blocking::json::{JsonDecoder, JsonEncoder};
     use crate::blocking::schema_registry::SrSettings;
     use crate::schema_registry_common::{get_payload, SubjectNameStrategy};
-
-    fn get_json_body(schema: &str, id: u32) -> String {
-        format!(
-            "{{\"schema\":\"{}\", \"schemaType\":\"JSON\", \"id\":{}}}",
-            schema, id
-        )
-    }
-
-    fn get_json_body_with_reference(schema: &str, id: u32, reference: &str) -> String {
-        format!(
-            "{{\"schema\":\"{}\", \"schemaType\":\"JSON\", \"id\":{}, \"references\":[{}]}}",
-            schema, id, reference
-        )
-    }
-
-    fn result_schema() -> &'static str {
-        r#"{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"title\":\"Json Test\",\"type\":\"object\",\"additionalProperties\":false,\"javaType\":\"org.schema_registry_test_app.json.Result\",\"properties\":{\"up\":{\"type\":\"string\"},\"down\":{\"type\":\"string\"}},\"required\":[\"up\",\"down\"]}"#
-    }
-
-    fn result_schema_with_id() -> &'static str {
-        r#"{\"$id\":\"http://www.example.com/result.json\",\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"title\":\"Json Test\",\"type\":\"object\",\"additionalProperties\":false,\"javaType\":\"org.schema_registry_test_app.json.Result\",\"properties\":{\"up\":{\"type\":\"string\"},\"down\":{\"type\":\"string\"}},\"required\":[\"up\",\"down\"]}"#
-    }
-
-    fn test_ref_schema() -> &'static str {
-        r#"{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"title\":\"Json Test\",\"type\":\"object\",\"additionalProperties\":false,\"javaType\":\"org.schema_registry_test_app.json.JsonTest\",\"properties\":{\"id\":{\"type\":\"array\",\"items\":{\"type\":\"integer\"}},\"by\":{\"type\":\"string\",\"enum\":[\"Java\",\"Rust\",\"Js\",\"Python\",\"Go\",\"C\"]},\"counter\":{\"type\":\"integer\"},\"input\":{\"type\":\"string\"},\"results\":{\"type\":\"array\",\"items\":{\"$ref\":\"http://www.example.com/result.json\"}}},\"required\":[\"id\",\"by\",\"counter\",\"results\"]}"#
-    }
-
-    fn get_result_references() -> &'static str {
-        r#"{"name": "http://www.example.com/result.json", "subject": "result.json", "version": 1}"#
-    }
-
-    fn result_java_bytes() -> &'static [u8] {
-        &[
-            0, 0, 0, 0, 10, 123, 34, 100, 111, 119, 110, 34, 58, 34, 115, 116, 114, 105, 110, 103,
-            34, 44, 34, 117, 112, 34, 58, 34, 83, 84, 82, 73, 78, 71, 34, 125,
-        ]
-    }
-
-    fn incorrect_bytes() -> &'static [u8] {
-        &[
-            0, 0, 0, 0, 10, 0, 34, 100, 111, 119, 110, 34, 58, 34, 115, 116, 114, 105, 110, 103,
-            34, 44, 34, 117, 112, 34, 58, 34, 83, 84, 82, 73, 78, 71, 34, 125,
-        ]
-    }
+    use test_utils::{
+        get_json_body, get_json_body_with_reference, json_get_result_references,
+        json_incorrect_bytes, json_result_java_bytes, json_result_schema,
+        json_result_schema_with_id, json_test_ref_schema,
+    };
 
     #[test]
     fn using_the_dsl_builder_might_be_used_after_decode_to_coerce() {
@@ -317,7 +278,7 @@ mod tests {
         let _m = mock("GET", "/subjects/testresult-value/versions/latest")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_json_body(result_schema(), 10))
+            .with_body(&get_json_body(json_result_schema(), 10))
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
@@ -329,7 +290,7 @@ mod tests {
 
         let encoded_data = encoder.encode(&result_example, &strategy).unwrap();
 
-        assert_eq!(encoded_data, result_java_bytes())
+        assert_eq!(encoded_data, json_result_java_bytes())
     }
 
     #[test]
@@ -337,7 +298,7 @@ mod tests {
         let _m = mock("GET", "/subjects/testresult-value/versions/latest")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_json_body(result_schema_with_id(), 10))
+            .with_body(&get_json_body(json_result_schema_with_id(), 10))
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
@@ -349,7 +310,7 @@ mod tests {
 
         let encoded_data = encoder.encode(&result_example, &strategy).unwrap();
 
-        assert_eq!(encoded_data, result_java_bytes())
+        assert_eq!(encoded_data, json_result_java_bytes())
     }
 
     #[test]
@@ -367,7 +328,7 @@ mod tests {
         let _m = mock("GET", "/subjects/testresult-value/versions/latest")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_json_body(result_schema(), 10))
+            .with_body(&get_json_body(json_result_schema(), 10))
             .create();
 
         let encoded_data = encoder.encode(&result_example, &strategy);
@@ -388,7 +349,7 @@ mod tests {
         let _m = mock("GET", "/schemas/ids/7")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_json_body(result_schema(), 7))
+            .with_body(&get_json_body(json_result_schema(), 7))
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
@@ -438,20 +399,16 @@ mod tests {
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
         let mut decoder = JsonDecoder::new(sr_settings);
-        let result = decoder.decode(Some(&*get_payload(7, bytes.clone())));
-
-        let error = match result {
-            Ok(Some(_)) => panic!("expected error"),
-            Err(e) => e,
-            Ok(v) => panic!("Other value: {:?} than expected Message", v),
-        };
+        let error = decoder
+            .decode(Some(&*get_payload(7, bytes.clone())))
+            .unwrap_err();
 
         assert_eq!(true, error.cached);
 
         let _m = mock("GET", "/schemas/ids/7")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_json_body(result_schema(), 7))
+            .with_body(&get_json_body(json_result_schema(), 7))
             .create();
 
         let result = decoder.decode(Some(&*get_payload(7, bytes.clone())));
@@ -480,12 +437,12 @@ mod tests {
         let _m = mock("GET", "/schemas/ids/10")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_json_body(result_schema(), 10))
+            .with_body(&get_json_body(json_result_schema(), 10))
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
         let mut decoder = JsonDecoder::new(sr_settings);
-        let result = decoder.decode(Some(result_java_bytes()));
+        let result = decoder.decode(Some(json_result_java_bytes()));
 
         let message = match result {
             Ok(Some(x)) => x,
@@ -524,12 +481,12 @@ mod tests {
         let _m = mock("GET", "/schemas/ids/10")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_json_body(result_schema(), 10))
+            .with_body(&get_json_body(json_result_schema(), 10))
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
         let mut decoder = JsonDecoder::new(sr_settings);
-        let result = decoder.decode(Some(incorrect_bytes())).unwrap_err();
+        let result = decoder.decode(Some(json_incorrect_bytes())).unwrap_err();
         assert_eq!(
             String::from("could not create value from bytes"),
             result.error
@@ -555,15 +512,15 @@ mod tests {
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(&get_json_body_with_reference(
-                test_ref_schema(),
+                json_test_ref_schema(),
                 5,
-                get_result_references(),
+                json_get_result_references(),
             ))
             .create();
         let _m = mock("GET", "/subjects/result.json/versions/1")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_json_body(result_schema(), 4))
+            .with_body(&get_json_body(json_result_schema(), 4))
             .create();
 
         let result = match decoder.decode(Some(&bytes)) {
@@ -597,15 +554,15 @@ mod tests {
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(&get_json_body_with_reference(
-                test_ref_schema(),
+                json_test_ref_schema(),
                 5,
-                get_result_references(),
+                json_get_result_references(),
             ))
             .create();
         let _m = mock("GET", "/subjects/result.json/versions/1")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_json_body(&result_schema()[0..30], 4))
+            .with_body(&get_json_body(&json_result_schema()[0..30], 4))
             .create();
 
         let error = decoder.decode(Some(&bytes)).unwrap_err();
@@ -641,24 +598,24 @@ mod tests {
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(&get_json_body_with_reference(
-                test_ref_schema(),
+                json_test_ref_schema(),
                 5,
-                get_result_references(),
+                json_get_result_references(),
             ))
             .create();
         let _m = mock("GET", "/schemas/ids/7")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(&get_json_body_with_reference(
-                test_ref_schema(),
+                json_test_ref_schema(),
                 7,
-                get_result_references(),
+                json_get_result_references(),
             ))
             .create();
         let _m = mock("GET", "/subjects/result.json/versions/1")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_json_body(result_schema(), 4))
+            .with_body(&get_json_body(json_result_schema(), 4))
             .create();
 
         let result = match decoder.decode(Some(&bytes_id_5)) {
@@ -706,7 +663,7 @@ mod tests {
         let _m = mock("GET", "/subjects/testresult-value/versions/latest")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_json_body(result_schema(), 10))
+            .with_body(&get_json_body(json_result_schema(), 10))
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
@@ -729,7 +686,7 @@ mod tests {
         let _m = mock("GET", "/subjects/testresult-value/versions/latest")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_json_body(test_ref_schema(), 10))
+            .with_body(&get_json_body(json_test_ref_schema(), 10))
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));

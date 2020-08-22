@@ -2,6 +2,7 @@ use std::collections::hash_map::RandomState;
 use std::collections::HashMap;
 use std::io::BufReader;
 
+use crate::error::SRCError;
 use integer_encoding::VarIntReader;
 use logos::Logos;
 
@@ -166,6 +167,19 @@ pub(crate) fn to_index_and_data(bytes: &[u8]) -> (Vec<i32>, Vec<u8>) {
             index.push(reader.read_varint().unwrap())
         }
         (index, reader.buffer().to_vec())
+    }
+}
+
+pub(crate) fn resolve_name<'a>(
+    resolver: &'a MessageResolver,
+    index: &[i32],
+) -> Result<&'a String, SRCError> {
+    match resolver.find_name(&index) {
+        Some(n) => Ok(n),
+        None => Err(SRCError::non_retryable_without_cause(&*format!(
+            "Could not retrieve name for index: {:?}",
+            index
+        ))),
     }
 }
 

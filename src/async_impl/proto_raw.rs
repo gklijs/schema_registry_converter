@@ -6,7 +6,7 @@ use crate::async_impl::schema_registry::{
 };
 use crate::error::SRCError;
 use crate::proto_raw_common::{to_bytes, to_decode_context, DecodeContext, EncodeContext};
-use crate::proto_resolver::{to_index_and_data, IndexResolver};
+use crate::proto_resolver::{resolve_name, to_index_and_data, IndexResolver};
 use crate::schema_registry_common::{
     get_bytes_result, get_subject, BytesResult, RegisteredSchema, SchemaType, SubjectNameStrategy,
 };
@@ -31,7 +31,7 @@ impl<'a> ProtoRawEncoder<'a> {
             cache: HashMap::new(),
         }
     }
-    /// Removes errors from the cache, can be useful to retry failed encodings.
+    /// Removes errors from the cache, might be useful to retry failed encodings.
     pub fn remove_errors_from_cache(&mut self) {
         self.cache.retain(|_, v| match v.peek() {
             Some(r) => r.is_ok(),
@@ -126,15 +126,7 @@ impl<'a> ProtoRawDecoder<'a> {
     async fn deserialize(&mut self, id: u32, bytes: &[u8]) -> Result<RawDecodeResult, SRCError> {
         let context = self.get_context(id).clone().await?;
         let (index, data) = to_index_and_data(bytes);
-        let full_name = match context.resolver.find_name(&index) {
-            Some(n) => n.clone(),
-            None => {
-                return Err(SRCError::non_retryable_without_cause(&*format!(
-                    "Could not retrieve name for index: {:?}",
-                    index
-                )))
-            }
-        };
+        let full_name = resolve_name(&context.resolver, &index)?.clone();
         let schema = context.schema;
         Ok(RawDecodeResult {
             schema,
@@ -179,56 +171,12 @@ mod tests {
     use crate::schema_registry_common::{
         SchemaType, SubjectNameStrategy, SuppliedReference, SuppliedSchema,
     };
-
-    fn get_proto_hb_schema() -> &'static str {
-        r#"syntax = \"proto3\";package nl.openweb.data;message Heartbeat {uint64 beat = 1;}"#
-    }
-
-    fn get_proto_result() -> &'static str {
-        r#"syntax = \"proto3\"; package org.schema_registry_test_app.proto; message Result { string up = 1; string down = 2; } "#
-    }
-
-    fn get_proto_complex() -> &'static str {
-        r#"syntax = \"proto3\"; import \"result.proto\"; message A {bytes id = 1;} message B {bytes id = 1;} message C {bytes id = 1; D d = 2; message D {int64 counter = 1;}} package org.schema_registry_test_app.proto; message ProtoTest {bytes id = 1; enum Language {Java = 0;Rust = 1;} Language by = 2;int64 counter = 3;string input = 4;repeated A results = 5;}"#
-    }
-
-    fn get_proto_hb_101_only_data() -> &'static [u8] {
-        &get_proto_hb_101()[6..]
-    }
-
-    fn get_proto_hb_101() -> &'static [u8] {
-        &[0, 0, 0, 0, 7, 0, 8, 101]
-    }
-
-    fn get_proto_complex_proto_test_message_data_only() -> &'static [u8] {
-        &get_proto_complex_proto_test_message()[7..]
-    }
-
-    fn get_proto_complex_proto_test_message() -> &'static [u8] {
-        &[
-            0, 0, 0, 0, 6, 2, 6, 10, 16, 11, 134, 69, 48, 212, 168, 77, 40, 147, 167, 30, 246, 208,
-            32, 252, 79, 24, 1, 34, 6, 83, 116, 114, 105, 110, 103, 42, 16, 10, 6, 83, 84, 82, 73,
-            78, 71, 18, 6, 115, 116, 114, 105, 110, 103,
-        ]
-    }
-
-    fn get_proto_body(schema: &str, id: u32) -> String {
-        format!(
-            "{{\"schema\":\"{}\", \"schemaType\":\"PROTOBUF\", \"id\":{}}}",
-            schema, id
-        )
-    }
-
-    fn get_proto_body_with_reference(schema: &str, id: u32, reference: &str) -> String {
-        format!(
-            "{{\"schema\":\"{}\", \"schemaType\":\"PROTOBUF\", \"id\":{}, \"references\":[{}]}}",
-            schema, id, reference
-        )
-    }
-
-    fn get_complex_references() -> &'static str {
-        r#"{"name": "result.proto", "subject": "result.proto", "version": 1}"#
-    }
+    use test_utils::{
+        get_proto_body, get_proto_body_with_reference, get_proto_complex,
+        get_proto_complex_proto_test_message, get_proto_complex_proto_test_message_data_only,
+        get_proto_complex_references, get_proto_hb_101, get_proto_hb_101_only_data,
+        get_proto_hb_schema, get_proto_result,
+    };
 
     #[tokio::test]
     async fn test_encode_default() {
@@ -343,7 +291,7 @@ mod tests {
             .with_body(&get_proto_body_with_reference(
                 get_proto_complex(),
                 2,
-                get_complex_references(),
+                get_proto_complex_references(),
             ))
             .create();
 

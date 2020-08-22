@@ -78,6 +78,7 @@ optional = true
 mockito = "^0.27.0"
 rdkafka = { version = "^0.23.1", features = ["cmake-build"] }
 rand = "^0.7.3"
+test_utils = {path = "test_utils"}
 tokio = { version = "^0.2.22", features = ["macros"] }
 
 [package.metadata.docs.rs]
