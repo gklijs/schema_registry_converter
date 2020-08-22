@@ -10,7 +10,7 @@ use crate::async_impl::schema_registry::{
     get_referenced_schema, get_schema_by_id_and_type, SrSettings,
 };
 use crate::error::SRCError;
-use crate::proto_resolver::{to_index_and_data, MessageResolver};
+use crate::proto_resolver::{resolve_name, to_index_and_data, MessageResolver};
 use crate::schema_registry_common::{get_bytes_result, BytesResult, RegisteredSchema, SchemaType};
 
 type SharedFutureOfSchemas<'a> = Shared<BoxFuture<'a, Result<Vec<String>, SRCError>>>;
@@ -62,15 +62,7 @@ impl<'a> ProtoDecoder<'a> {
         let vec_of_schemas = self.get_vec_of_schemas(id).clone().await?;
         let context = into_decode_context(&vec_of_schemas)?;
         let (index, data) = to_index_and_data(bytes);
-        let full_name = match context.resolver.find_name(&index) {
-            Some(n) => n,
-            None => {
-                return Err(SRCError::non_retryable_without_cause(&*format!(
-                    "Could not retrieve name for index: {:?}",
-                    index
-                )))
-            }
-        };
+        let full_name = resolve_name(&context.resolver, &index)?;
         let message_info = context.context.get_message(full_name).unwrap();
         Ok(message_info.decode(&data, &context.context))
     }
@@ -144,34 +136,10 @@ mod tests {
 
     use crate::async_impl::proto_decoder::ProtoDecoder;
     use crate::async_impl::schema_registry::SrSettings;
-
-    fn get_proto_hb_schema() -> &'static str {
-        r#"syntax = \"proto3\";package nl.openweb.data;message Heartbeat {uint64 beat = 1;}"#
-    }
-
-    fn get_proto_result() -> &'static str {
-        r#"syntax = \"proto3\"; package org.schema_registry_test_app.proto; message Result { string up = 1; string down = 2; } "#
-    }
-
-    fn get_proto_complex() -> &'static str {
-        r#"syntax = \"proto3\"; import \"result.proto\"; message A {bytes id = 1;} message B {bytes id = 1;} message C {bytes id = 1; D d = 2; message D {int64 counter = 1;}} package org.schema_registry_test_app.proto; message ProtoTest {bytes id = 1; enum Language {Java = 0;Rust = 1;} Language by = 2;int64 counter = 3;string input = 4;repeated A results = 5;}"#
-    }
-
-    fn get_complex_references() -> &'static str {
-        r#"{"name": "result.proto", "subject": "result.proto", "version": 1}"#
-    }
-
-    fn get_proto_hb_101() -> &'static [u8] {
-        &[0, 0, 0, 0, 7, 0, 8, 101]
-    }
-
-    fn get_proto_complex_proto_test_message() -> &'static [u8] {
-        &[
-            0, 0, 0, 0, 6, 2, 6, 10, 16, 11, 134, 69, 48, 212, 168, 77, 40, 147, 167, 30, 246, 208,
-            32, 252, 79, 24, 1, 34, 6, 83, 116, 114, 105, 110, 103, 42, 16, 10, 6, 83, 84, 82, 73,
-            78, 71, 18, 6, 115, 116, 114, 105, 110, 103,
-        ]
-    }
+    use test_utils::{
+        get_proto_complex, get_proto_complex_proto_test_message, get_proto_complex_references,
+        get_proto_hb_101, get_proto_hb_schema, get_proto_result,
+    };
 
     fn get_proto_body(schema: &str, id: u32) -> String {
         format!(
@@ -215,7 +183,7 @@ mod tests {
             .with_body(&get_proto_body_with_reference(
                 get_proto_complex(),
                 2,
-                get_complex_references(),
+                get_proto_complex_references(),
             ))
             .create();
 

@@ -1,0 +1,9 @@
+[package]
+name = "test_utils"
+version = "1.0.0"
+authors = ["Gerard Klijs <g.klijs@gmail.com>"]
+description = "test utils for schema_registry_converter"
+homepage = "https://github.com/gklijs/schema_registry_converter"
+repository = "https://github.com/gklijs/schema_registry_converter"
+license = "MIT/Apache-2.0"
+edition = "2018"

@@ -31,12 +31,21 @@ For producing messages which can be properly consumed by other clients, the prop
 [schema_registry_converter.rs is available on crates.io](https://crates.io/crates/schema_registry_converter).
 It is recommended to look there for the newest and more elaborate documentation.
 
+To use it to convert using avro async use:
+
 ```toml
 [dependencies]
-schema_registry_converter = "2.0.0"
+schema_registry_converter = { version = "2.0.0", features = ["avro"] }
 ```
 
 ...and see the [docs](https://docs.rs/schema_registry_converter) for how to use it.
+
+All the converters also have a blocking (non async) version, in that case use something like:
+
+```toml
+[dependencies]
+schema_registry_converter = { version = "2.0.0", default-features = false, features = ["avro", "blocking"]}
+```
 
 # Example with consumer and producer
 
