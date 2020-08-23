@@ -463,7 +463,7 @@ mod tests {
 
     #[tokio::test]
     async fn put_correct_url_as_second_check_header_set() {
-        let _m = mock("GET", "/schemas/ids/1")
+        let _m = mock("GET", "/schemas/ids/1?deleted=true")
             .match_header("foo", "bar")
             .match_header("authorization", "Bearer some_json_web_token_for_example")
             .with_status(200)
@@ -494,7 +494,7 @@ mod tests {
 
     #[tokio::test]
     async fn basic_authorization() {
-        let _m = mock("GET", "/schemas/ids/1")
+        let _m = mock("GET", "/schemas/ids/1?deleted=true")
             .match_header("authorization", "Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
@@ -521,7 +521,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_schema_by_id_and_type() {
-        let _m = mock("GET", "/schemas/ids/1")
+        let _m = mock("GET", "/schemas/ids/1?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)

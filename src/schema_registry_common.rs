@@ -166,13 +166,15 @@ pub(crate) enum SrCall<'a> {
 
 pub(crate) fn url_for_call(call: &SrCall, base_url: &str) -> String {
     match call {
-        SrCall::GetById(id) => format!("{}/schemas/ids/{}", base_url, id),
+        SrCall::GetById(id) => format!("{}/schemas/ids/{}?deleted=true", base_url, id),
         SrCall::GetLatest(subject) => format!("{}/subjects/{}/versions/latest", base_url, subject),
         SrCall::GetBySubjectAndVersion(subject, version) => {
             format!("{}/subjects/{}/versions/{}", base_url, subject, version)
         }
         SrCall::PostNew(subject, _) => format!("{}/subjects/{}/versions", base_url, subject),
-        SrCall::PostForVersion(subject, _) => format!("{}/subjects/{}", base_url, subject),
+        SrCall::PostForVersion(subject, _) => {
+            format!("{}/subjects/{}?deleted=false", base_url, subject)
+        }
     }
 }
 
