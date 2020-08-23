@@ -7,12 +7,12 @@
 [![docs.rs](https://docs.rs/schema_registry_converter/badge.svg)](https://docs.rs/schema_registry_converter/)
 ---
 
-This library provides a way of using the Confluent Schema Registry in a way that is compliant with the usual jvm usage.
+This library provides a way of using the Confluent Schema Registry in a way that is compliant with the Java client.
 The release notes can be found on [github](https://github.com/gklijs/schema_registry_converter/blob/master/RELEASE_NOTES.md)
-Consuming/decoding and producing/encoding is supported. It's also possible to provide the schema to use when decoding. When no schema is provided, the latest
-schema with the same `subject` will be used. It's feature complete compared to the confluent java version. However it does not yet support adding credentials
-to the requests to the schema registry like done for [java as part of the 5.3 release](https://github.com/confluentinc/schema-registry/pull/1130). Please create
-and issue if you would like to use this feature.
+Consuming/decoding and producing/encoding is supported. It's also possible to provide the schema to use when decoding.
+You can also include references when decoding.
+When no schema is provided, the latestschema with the same `subject` will be used.
+It's supposed to be feature complete compared to the Java version. If anything is missing or not working as expected please create an issue.
 
 ## Consumer
 
@@ -47,20 +47,23 @@ All the converters also have a blocking (non async) version, in that case use so
 schema_registry_converter = { version = "2.0.0", default-features = false, features = ["avro", "blocking"]}
 ```
 
-# Example with consumer and producer
+# Example with consumer and producer using Avro
 
 Two examples of but consuming/decoding and producing/encoding.
-To use structs the must have an implementation of either the `serde::Deserialize` or `serde::Serialize` trait to work. 
+To use structs with Avro they must have an implementation of either the `serde::Deserialize` or `serde::Serialize` trait to work. 
 
 ```rust
 use rdkafka::message::{Message, BorrowedMessage};
 use avro_rs::types::Value;
-use schema_registry_converter::{Decoder, Encoder};
-use schema_registry_converter::schema_registry::SubjectNameStrategy;
+use schema_registry_converter::blocking::{Decoder, Encoder};
+use schema_registry_converter::blocking::schema_registry::SubjectNameStrategy;
 
 fn main() {
     let mut decoder = Decoder::new(String::from("http://localhost:8081"));
     let mut encoder = Encoder::new(String::from("http://localhost:8081"));
+    let hb = get_heartbeat(msg, decoder);
+    let record = get_future_record_from_struct("hb", Some("id"), hb, encoder);
+    producer.send(record);
 }
 
 fn get_value<'a>(
@@ -144,7 +147,7 @@ fn get_future_record_from_struct<'a>(
 # Example using to post schema to schema registry
 
 ```rust
-use schema_registry_converter::schema_registry::{
+use schema_registry_converter::blocking::schema_registry::{
     post_schema,
     SuppliedSchema
 };
@@ -166,16 +169,20 @@ fn main(){
 The avro part of the conversion is handled by avro-rs. As such, I don't include tests for every possible schema.
 While I used rdkafka in combination to successfully consume from and produce to kafka, and while it's used in the example, this crate has no direct dependency on it.
 All this crate does is convert [u8] <-> Some Value (based on converter used).
+With Json and Protobuf some other dependencies are pulled in, by using said features.
+I have tried to encapsulate all the errors in the SRCError type.
+So even when you get a pannic/error that's an SRCError it could be an error from one of the dependencies.
+Please make sure you are using the library correctly, and the error is not caused by a depency, before creating an issue.
 
 # Tests
 
 Due to mockito, used for mocking the schema registry responses, being run in a separate thread, tests have to be run using ` --test-threads=1` for example like
-`cargo +stable test --color=always --features avro -- --nocapture --test-threads=1`
+`cargo +stable test --color=always --features avro,json,proto_decoder,proto_raw -- --nocapture --test-threads=1`
 
 # Integration test
 
 The integration tests require a Kafka cluster running on the default ports. It will create topics, register schema's, produce and consume some messages.
-They are marked with `kafka_test` so to include them in testing `cargo +stable test --all-features --color=always -- --nocapture --test-threads=1` need to be run.
+They are only included when compiled with the `kafka_test` feature, so to include them in testing `cargo +stable test --all-features --color=always -- --nocapture --test-threads=1` needs to be run.
 The easiest way to run them is with the confluent cli. The 'prepare_integration_test.sh' script can be used to create the 3 topics needed for the tests, but even without those the test pass.
 To ensure Java compatibility it's also needed to run the [schema-registry-test-app](https://hub.docker.com/repository/docker/gklijs/schema-registry-test-app) docker image.
 

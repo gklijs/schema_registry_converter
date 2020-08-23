@@ -19,7 +19,7 @@ json = ["url", "valico"]
 proto_decoder = ["bytes", "integer-encoding", "logos", "protofish"]
 proto_raw = ["integer-encoding", "logos"]
 kafka_test = []
-default = ["futures", "tokio"]
+default = ["futures"]
 
 [dependencies.avro-rs]
 version = "^0.10"

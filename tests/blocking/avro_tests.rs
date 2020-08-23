@@ -1,10 +1,7 @@
 extern crate schema_registry_converter;
 
-mod kafka_consumer;
-mod kafka_producer;
-
-use crate::kafka_consumer::{consume_avro, DeserializedAvroRecord};
-use crate::kafka_producer::get_producer;
+use crate::blocking::kafka_consumer::{consume_avro, DeserializedAvroRecord};
+use crate::blocking::kafka_producer::get_producer;
 use avro_rs::types::Value;
 use rand::Rng;
 use schema_registry_converter::schema_registry_common::{
@@ -83,7 +80,6 @@ fn do_avro_test(
 }
 
 #[test]
-#[cfg_attr(not(feature = "kafka_test"), ignore)]
 fn test1_topic_name_strategy_with_schema() {
     let topic = "topicnamestrategy";
     let key_strategy = SubjectNameStrategy::TopicNameStrategyWithSchema(
@@ -100,7 +96,6 @@ fn test1_topic_name_strategy_with_schema() {
 }
 
 #[test]
-#[cfg_attr(not(feature = "kafka_test"), ignore)]
 fn test2_record_name_strategy_with_schema() {
     let topic = "recordnamestrategy";
     let key_strategy = SubjectNameStrategy::RecordNameStrategyWithSchema(get_heartbeat_schema());
@@ -109,7 +104,6 @@ fn test2_record_name_strategy_with_schema() {
 }
 
 #[test]
-#[cfg_attr(not(feature = "kafka_test"), ignore)]
 fn test3_topic_record_name_strategy_with_schema() {
     let topic = "topicrecordnamestrategy";
     let key_strategy = SubjectNameStrategy::TopicRecordNameStrategyWithSchema(
@@ -124,7 +118,6 @@ fn test3_topic_record_name_strategy_with_schema() {
 }
 
 #[test]
-#[cfg_attr(not(feature = "kafka_test"), ignore)]
 fn test4_topic_name_strategy_schema_now_available() {
     let topic = "topicnamestrategy";
     let key_strategy = SubjectNameStrategy::TopicNameStrategy(String::from(topic), true);
@@ -133,7 +126,6 @@ fn test4_topic_name_strategy_schema_now_available() {
 }
 
 #[test]
-#[cfg_attr(not(feature = "kafka_test"), ignore)]
 fn test5_record_name_strategy_schema_now_available() {
     let topic = "recordnamestrategy";
     let key_strategy =
@@ -144,7 +136,6 @@ fn test5_record_name_strategy_schema_now_available() {
 }
 
 #[test]
-#[cfg_attr(not(feature = "kafka_test"), ignore)]
 fn test6_topic_record_name_strategy_schema_now_available() {
     let topic = "topicrecordnamestrategy";
     let key_strategy = SubjectNameStrategy::TopicRecordNameStrategy(
@@ -159,7 +150,6 @@ fn test6_topic_record_name_strategy_schema_now_available() {
 }
 
 #[test]
-#[cfg_attr(not(feature = "kafka_test"), ignore)]
 fn test7_test_avro_from_java_test_app() {
     let topic = "testavro";
     let test = Box::new(move |rec: DeserializedAvroRecord| {
