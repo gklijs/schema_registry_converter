@@ -61,7 +61,7 @@ use crate::schema_registry_common::{
 /// use schema_registry_converter::blocking::schema_registry::SrSettings;
 /// use schema_registry_converter::blocking::avro::AvroDecoder;
 ///
-/// let _m = mock("GET", "/schemas/ids/1")
+/// let _m = mock("GET", "/schemas/ids/1?deleted=true")
 ///     .with_status(200)
 ///     .with_header("content-type", "application/vnd.schemaregistry.v1+json")
 ///     .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
@@ -106,7 +106,7 @@ impl AvroDecoder {
     /// let mut decoder = AvroDecoder::new(sr_settings);
     /// let bytes = [0,0,0,0,2,6];
     ///
-    /// let _m = mock("GET", "/schemas/ids/2")
+    /// let _m = mock("GET", "/schemas/ids/2?deleted=true")
     ///     .with_status(404)
     ///     .with_header("content-type", "application/vnd.schemaregistry.v1+json")
     ///     .with_body(r#"{"error_code":40403,"message":"Schema not found"}"#)
@@ -116,7 +116,7 @@ impl AvroDecoder {
     ///
     /// assert_eq!(heartbeat, Err(SRCError::new("Could not get raw schema from response", None, false).into_cache()));
     ///
-    /// let _m = mock("GET", "/schemas/ids/2")
+    /// let _m = mock("GET", "/schemas/ids/2?deleted=true")
     ///     .with_status(200)
     ///     .with_header("content-type", "application/vnd.schemaregistry.v1+json")
     ///     .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
@@ -550,7 +550,7 @@ mod tests {
 
     #[test]
     fn test_decoder_default() {
-        let _m = mock("GET", "/schemas/ids/1")
+        let _m = mock("GET", "/schemas/ids/1?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
@@ -574,7 +574,7 @@ mod tests {
 
     #[test]
     fn test_decoder_with_name() {
-        let _m = mock("GET", "/schemas/ids/1")
+        let _m = mock("GET", "/schemas/ids/1?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
@@ -663,7 +663,7 @@ mod tests {
 
     #[test]
     fn test_decoder_wrong_data() {
-        let _m = mock("GET", "/schemas/ids/1")
+        let _m = mock("GET", "/schemas/ids/1?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
@@ -685,7 +685,7 @@ mod tests {
 
     #[test]
     fn test_decoder_with_name_wrong_data() {
-        let _m = mock("GET", "/schemas/ids/1")
+        let _m = mock("GET", "/schemas/ids/1?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
@@ -707,7 +707,7 @@ mod tests {
 
     #[test]
     fn test_decoder_no_json_response() {
-        let _m = mock("GET", "/schemas/ids/1")
+        let _m = mock("GET", "/schemas/ids/1?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(r#"{"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
@@ -732,7 +732,7 @@ mod tests {
 
     #[test]
     fn test_decoder_with_name_no_json_response() {
-        let _m = mock("GET", "/schemas/ids/1")
+        let _m = mock("GET", "/schemas/ids/1?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(r#"{"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
@@ -769,7 +769,7 @@ mod tests {
 
     #[test]
     fn test_decoder_default_no_schema_in_response() {
-        let _m = mock("GET", "/schemas/ids/1")
+        let _m = mock("GET", "/schemas/ids/1?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(r#"{"no-schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
@@ -787,7 +787,7 @@ mod tests {
 
     #[test]
     fn test_decoder_default_wrong_schema_in_response() {
-        let _m = mock("GET", "/schemas/ids/1")
+        let _m = mock("GET", "/schemas/ids/1?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\"}"}"#)
@@ -811,7 +811,7 @@ mod tests {
 
     #[test]
     fn test_decoder_fixed_with_enum() {
-        let _m = mock("GET", "/schemas/ids/6")
+        let _m = mock("GET", "/schemas/ids/6?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"ConfirmAccountCreation\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"id\",\"type\":{\"type\":\"fixed\",\"name\":\"Uuid\",\"size\":16}},{\"name\":\"a_type\",\"type\":{\"type\":\"enum\",\"name\":\"Atype\",\"symbols\":[\"AUTO\",\"MANUAL\"]}}]}"}"#)
@@ -851,7 +851,7 @@ mod tests {
         let mut decoder = AvroDecoder::new(sr_settings);
         let bytes = [0, 0, 0, 0, 2, 6];
 
-        let _m = mock("GET", "/schemas/ids/2")
+        let _m = mock("GET", "/schemas/ids/2?deleted=true")
             .with_status(404)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(r#"{"error_code":40403,"message":"Schema not found"}"#)
@@ -861,7 +861,7 @@ mod tests {
             heartbeat,
             Err(SRCError::new("Could not get raw schema from response", None, false).into_cache())
         );
-        let _m = mock("GET", "/schemas/ids/2")
+        let _m = mock("GET", "/schemas/ids/2?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
@@ -1334,7 +1334,7 @@ mod tests {
             114, 105, 110, 103, 0,
         ];
 
-        let _m = mock("GET", "/schemas/ids/5")
+        let _m = mock("GET", "/schemas/ids/5?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"AvroTest\",\"namespace\":\"org.schema_registry_test_app.avro\",\"fields\":[{\"name\":\"id\",\"type\":{\"type\":\"fixed\",\"name\":\"Uuid\",\"size\":16}},{\"name\":\"by\",\"type\":{\"type\":\"enum\",\"name\":\"Language\",\"symbols\":[\"Java\",\"Rust\",\"Js\",\"Python\",\"Go\",\"C\"]}},{\"name\":\"counter\",\"type\":\"long\"},{\"name\":\"input\",\"type\":[\"null\",\"string\"],\"default\":null},{\"name\":\"results\",\"type\":{\"type\":\"array\",\"items\":\"Result\"}}]}","references":[{"name":"org.schema_registry_test_app.avro.Result","subject":"avro-result","version":1}]}"#)

@@ -157,7 +157,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_decoder_default() {
-        let _m = mock("GET", "/schemas/ids/7")
+        let _m = mock("GET", "/schemas/ids/7?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(&get_proto_body(get_proto_hb_schema(), 1))
@@ -177,7 +177,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_decoder_complex() {
-        let _m = mock("GET", "/schemas/ids/6")
+        let _m = mock("GET", "/schemas/ids/6?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(&get_proto_body_with_reference(

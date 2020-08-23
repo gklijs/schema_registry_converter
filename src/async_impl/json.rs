@@ -325,7 +325,7 @@ mod tests {
             .unwrap()
             .parse()
             .unwrap();
-        let _m = mock("GET", "/schemas/ids/7")
+        let _m = mock("GET", "/schemas/ids/7?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(&get_json_body(json_result_schema(), 7))
@@ -380,7 +380,7 @@ mod tests {
             .unwrap_err();
         assert_eq!(true, error.cached);
 
-        let _m = mock("GET", "/schemas/ids/7")
+        let _m = mock("GET", "/schemas/ids/7?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(&get_json_body(json_result_schema(), 7))
@@ -405,7 +405,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_decoder_java_compatibility() {
-        let _m = mock("GET", "/schemas/ids/10")
+        let _m = mock("GET", "/schemas/ids/10?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(&get_json_body(json_result_schema(), 10))
@@ -445,7 +445,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_decoder_value_can_not_be_read() {
-        let _m = mock("GET", "/schemas/ids/10")
+        let _m = mock("GET", "/schemas/ids/10?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(&get_json_body(json_result_schema(), 10))
@@ -478,7 +478,7 @@ mod tests {
             115, 116, 114, 105, 110, 103, 34, 125, 93, 125,
         ];
 
-        let _m = mock("GET", "/schemas/ids/5")
+        let _m = mock("GET", "/schemas/ids/5?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(&get_json_body_with_reference(
@@ -517,7 +517,7 @@ mod tests {
             115, 116, 114, 105, 110, 103, 34, 125, 93, 125,
         ];
 
-        let _m = mock("GET", "/schemas/ids/5")
+        let _m = mock("GET", "/schemas/ids/5?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(&get_json_body_with_reference(
@@ -561,7 +561,7 @@ mod tests {
             115, 116, 114, 105, 110, 103, 34, 125, 93, 125,
         ];
 
-        let _m = mock("GET", "/schemas/ids/5")
+        let _m = mock("GET", "/schemas/ids/5?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(&get_json_body_with_reference(
@@ -570,7 +570,7 @@ mod tests {
                 json_get_result_references(),
             ))
             .create();
-        let _m = mock("GET", "/schemas/ids/7")
+        let _m = mock("GET", "/schemas/ids/7?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(&get_json_body_with_reference(
