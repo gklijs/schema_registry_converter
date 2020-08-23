@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 pub fn get_json_body(schema: &str, id: u32) -> String {
     format!(
         "{{\"schema\":\"{}\", \"schemaType\":\"JSON\", \"id\":{}}}",
@@ -90,4 +92,41 @@ pub fn json_incorrect_bytes() -> &'static [u8] {
         0, 0, 0, 0, 10, 0, 34, 100, 111, 119, 110, 34, 58, 34, 115, 116, 114, 105, 110, 103,
         34, 44, 34, 117, 112, 34, 58, 34, 83, 84, 82, 73, 78, 71, 34, 125,
     ]
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct Heartbeat {
+    pub beat: i64,
+}
+
+#[derive(Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Clone, Deserialize, Serialize)]
+pub enum Atype {
+    #[serde(rename = "AUTO")]
+    Auto,
+    #[serde(rename = "MANUAL")]
+    Manual,
+}
+
+impl Default for Atype {
+    fn default() -> Self {
+        Atype::Auto
+    }
+}
+
+pub type Uuid = [u8; 16];
+
+#[serde(default)]
+#[derive(Debug, PartialEq, Clone, Deserialize, Serialize)]
+pub struct ConfirmAccountCreation {
+    pub id: Uuid,
+    pub a_type: Atype,
+}
+
+impl Default for ConfirmAccountCreation {
+    fn default() -> ConfirmAccountCreation {
+        ConfirmAccountCreation {
+            id: Uuid::default(),
+            a_type: Atype::Auto,
+        }
+    }
 }

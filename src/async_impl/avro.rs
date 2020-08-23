@@ -571,17 +571,12 @@ fn add_references<'a>(
 mod tests {
     use avro_rs::from_value;
     use mockito::{mock, server_address};
-    use serde::{Deserialize, Serialize};
 
     use crate::avro_common::get_supplied_schema;
     use crate::schema_registry_common::SuppliedSchema;
 
     use super::*;
-
-    #[derive(Debug, Deserialize, Serialize)]
-    struct Heartbeat {
-        beat: i64,
-    }
+    use test_utils::Heartbeat;
 
     #[test]
     fn display_decoder() {

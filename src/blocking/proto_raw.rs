@@ -185,6 +185,48 @@ mod tests {
     }
 
     #[test]
+    fn test_encode_cache() {
+        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let mut encoder = ProtoRawEncoder::new(sr_settings);
+        let strategy =
+            SubjectNameStrategy::RecordNameStrategy(String::from("nl.openweb.data.Heartbeat"));
+        let error = encoder
+            .encode(
+                get_proto_hb_101_only_data(),
+                "nl.openweb.data.Heartbeat",
+                &strategy,
+            )
+            .unwrap_err();
+        assert_eq!(true, error.cached);
+
+        let _m = mock("GET", "/subjects/nl.openweb.data.Heartbeat/versions/latest")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(&get_proto_body(get_proto_hb_schema(), 7))
+            .create();
+
+        let error = encoder
+            .encode(
+                get_proto_hb_101_only_data(),
+                "nl.openweb.data.Heartbeat",
+                &strategy,
+            )
+            .unwrap_err();
+        assert_eq!(true, error.cached);
+        encoder.remove_errors_from_cache();
+
+        let encoded_data = encoder
+            .encode(
+                get_proto_hb_101_only_data(),
+                "nl.openweb.data.Heartbeat",
+                &strategy,
+            )
+            .unwrap();
+
+        assert_eq!(encoded_data, get_proto_hb_101())
+    }
+
+    #[test]
     fn test_encode_complex() {
         let _m = mock("POST", "/subjects/result.proto/versions")
             .with_status(200)
@@ -260,6 +302,31 @@ mod tests {
             Err(e) => panic!("Error: {:?}, while none expected", e),
             Ok(v) => panic!("Other value: {:?} than expected Message", v),
         };
+
+        assert_eq!(raw_result.bytes, get_proto_hb_101_only_data());
+        assert_eq!(raw_result.full_name, "nl.openweb.data.Heartbeat")
+    }
+
+    #[test]
+    fn test_decoder_cache() {
+        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let mut decoder = ProtoRawDecoder::new(sr_settings);
+
+        let error = decoder.decode(Some(get_proto_hb_101())).unwrap_err();
+        assert_eq!(true, error.cached);
+
+        let _m = mock("GET", "/schemas/ids/7?deleted=true")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(&get_proto_body(get_proto_hb_schema(), 7))
+            .create();
+
+        let error = decoder.decode(Some(get_proto_hb_101())).unwrap_err();
+        assert_eq!(true, error.cached);
+
+        decoder.remove_errors_from_cache();
+
+        let raw_result = decoder.decode(Some(get_proto_hb_101())).unwrap().unwrap();
 
         assert_eq!(raw_result.bytes, get_proto_hb_101_only_data());
         assert_eq!(raw_result.full_name, "nl.openweb.data.Heartbeat")
