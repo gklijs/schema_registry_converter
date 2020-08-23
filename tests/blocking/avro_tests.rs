@@ -1,6 +1,6 @@
 extern crate schema_registry_converter;
 
-use crate::blocking::kafka_consumer::{consume_avro, DeserializedAvroRecord};
+use crate::blocking::avro_consumer::{consume_avro, DeserializedAvroRecord};
 use crate::blocking::kafka_producer::get_producer;
 use avro_rs::types::Value;
 use rand::Rng;

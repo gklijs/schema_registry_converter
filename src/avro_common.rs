@@ -170,47 +170,10 @@ pub fn get_supplied_schema(schema: &Schema) -> Box<SuppliedSchema> {
 mod tests {
     use avro_rs::types::Value;
     use avro_rs::Schema;
-    use serde::{Deserialize, Serialize};
 
     use crate::avro_common::{values_to_bytes, AvroSchema};
     use crate::error::SRCError;
-
-    #[derive(Debug, Deserialize, Serialize)]
-    struct Heartbeat {
-        beat: i64,
-    }
-
-    #[derive(Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Clone, Deserialize, Serialize)]
-    pub enum Atype {
-        #[serde(rename = "AUTO")]
-        Auto,
-        #[serde(rename = "MANUAL")]
-        Manual,
-    }
-
-    impl Default for Atype {
-        fn default() -> Self {
-            Atype::Auto
-        }
-    }
-
-    pub type Uuid = [u8; 16];
-
-    #[serde(default)]
-    #[derive(Debug, PartialEq, Clone, Deserialize, Serialize)]
-    pub struct ConfirmAccountCreation {
-        pub id: Uuid,
-        pub a_type: Atype,
-    }
-
-    impl Default for ConfirmAccountCreation {
-        fn default() -> ConfirmAccountCreation {
-            ConfirmAccountCreation {
-                id: Uuid::default(),
-                a_type: Atype::Auto,
-            }
-        }
-    }
+    use test_utils::{Atype, ConfirmAccountCreation, Heartbeat};
 
     #[test]
     fn to_bytes_no_record() {

@@ -7,3 +7,7 @@ homepage = "https://github.com/gklijs/schema_registry_converter"
 repository = "https://github.com/gklijs/schema_registry_converter"
 license = "MIT/Apache-2.0"
 edition = "2018"
+
+[dependencies.serde]
+version = "^1.0"
+features = ["derive"]

@@ -204,6 +204,52 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_encode_cache() {
+        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let mut encoder = ProtoRawEncoder::new(sr_settings);
+        let strategy =
+            SubjectNameStrategy::RecordNameStrategy(String::from("nl.openweb.data.Heartbeat"));
+        let error = encoder
+            .encode(
+                get_proto_hb_101_only_data(),
+                "nl.openweb.data.Heartbeat",
+                strategy.clone(),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(true, error.cached);
+
+        let _m = mock("GET", "/subjects/nl.openweb.data.Heartbeat/versions/latest")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(&get_proto_body(get_proto_hb_schema(), 7))
+            .create();
+
+        let error = encoder
+            .encode(
+                get_proto_hb_101_only_data(),
+                "nl.openweb.data.Heartbeat",
+                strategy.clone(),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(true, error.cached);
+
+        encoder.remove_errors_from_cache();
+
+        let encoded_data = encoder
+            .encode(
+                get_proto_hb_101_only_data(),
+                "nl.openweb.data.Heartbeat",
+                strategy,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(encoded_data, get_proto_hb_101())
+    }
+
+    #[tokio::test]
     async fn test_encode_complex() {
         let _m = mock("POST", "/subjects/result.proto/versions")
             .with_status(200)
@@ -273,6 +319,35 @@ mod tests {
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
         let mut decoder = ProtoRawDecoder::new(sr_settings);
+        let raw_result = decoder
+            .decode(Some(get_proto_hb_101()))
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(raw_result.bytes, get_proto_hb_101_only_data());
+        assert_eq!(raw_result.full_name, "nl.openweb.data.Heartbeat")
+    }
+
+    #[tokio::test]
+    async fn test_decoder_cache() {
+        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let mut decoder = ProtoRawDecoder::new(sr_settings);
+
+        let error = decoder.decode(Some(get_proto_hb_101())).await.unwrap_err();
+        assert_eq!(true, error.cached);
+
+        let _m = mock("GET", "/schemas/ids/7?deleted=true")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(&get_proto_body(get_proto_hb_schema(), 7))
+            .create();
+
+        let error = decoder.decode(Some(get_proto_hb_101())).await.unwrap_err();
+        assert_eq!(true, error.cached);
+
+        decoder.remove_errors_from_cache();
+
         let raw_result = decoder
             .decode(Some(get_proto_hb_101()))
             .await

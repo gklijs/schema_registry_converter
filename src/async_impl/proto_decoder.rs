@@ -176,6 +176,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_decoder_cache() {
+        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let mut decoder = ProtoDecoder::new(sr_settings);
+        let error = decoder.decode(Some(get_proto_hb_101())).await.unwrap_err();
+        assert_eq!(true, error.cached);
+
+        let _m = mock("GET", "/schemas/ids/7?deleted=true")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(&get_proto_body(get_proto_hb_schema(), 1))
+            .create();
+
+        let error = decoder.decode(Some(get_proto_hb_101())).await.unwrap_err();
+        assert_eq!(true, error.cached);
+
+        decoder.remove_errors_from_cache();
+
+        let heartbeat = decoder.decode(Some(get_proto_hb_101())).await.unwrap();
+
+        let message = match heartbeat {
+            Value::Message(x) => *x,
+            v => panic!("Other value: {:?} than expected Message", v),
+        };
+
+        assert_eq!(Value::UInt64(101u64), message.fields[0].value);
+    }
+
+    #[tokio::test]
     async fn test_decoder_complex() {
         let _m = mock("GET", "/schemas/ids/6?deleted=true")
             .with_status(200)
