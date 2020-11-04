@@ -20,7 +20,7 @@ use crate::schema_registry_common::{
 /// Settings used to do the calls to schema registry. For simple cases you can use `SrSettings::new`
 /// or the `SrSettingsBuilder`. But you can also use it directly so you can all the available
 /// settings from reqwest.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SrSettings {
     urls: Vec<String>,
     client: Client,
