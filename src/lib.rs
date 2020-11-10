@@ -21,7 +21,7 @@
 //! automatically does retries.
 //!
 //! [avro-rs]: https://crates.io/crates/avro-rs
-#[cfg(any(not(feature = "blocking"), feature = "kafka_test"))]
+#[cfg(feature = "futures")]
 pub mod async_impl;
 #[cfg(feature = "avro")]
 pub mod avro_common;

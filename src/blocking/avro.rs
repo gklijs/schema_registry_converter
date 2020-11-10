@@ -666,16 +666,9 @@ mod tests {
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
         let mut decoder = AvroDecoder::new(sr_settings);
-        let heartbeat = decoder.decode(Some(&[0, 0, 0, 0, 1]));
+        let err = decoder.decode(Some(&[0, 0, 0, 0, 1])).unwrap_err();
 
-        assert_eq!(
-            heartbeat,
-            Err(SRCError::new(
-                "Could not transform bytes using schema",
-                Some(String::from("failed to fill whole buffer")),
-                false,
-            ))
-        )
+        assert_eq!(err.error, "Could not transform bytes using schema")
     }
 
     #[test]
@@ -688,16 +681,9 @@ mod tests {
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
         let mut decoder = AvroDecoder::new(sr_settings);
-        let heartbeat = decoder.decode(Some(&[0, 0, 0, 0, 1]));
+        let err = decoder.decode(Some(&[0, 0, 0, 0, 1])).unwrap_err();
 
-        assert_eq!(
-            heartbeat,
-            Err(SRCError::new(
-                "Could not transform bytes using schema",
-                Some(String::from("failed to fill whole buffer")),
-                false,
-            ))
-        )
+        assert_eq!(err.error, "Could not transform bytes using schema")
     }
 
     #[test]
@@ -790,17 +776,11 @@ mod tests {
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
         let mut decoder = AvroDecoder::new(sr_settings);
-        let heartbeat = decoder.decode(Some(&[0, 0, 0, 0, 1, 6]));
+        let err = decoder.decode(Some(&[0, 0, 0, 0, 1, 6])).unwrap_err();
 
         assert_eq!(
-            heartbeat,
-            Err(SRCError::new(
-                "Supplied raw value \"{\\\"type\\\":\\\"record\\\",\\\"name\\\":\\\"Heartbeat\\\",\\\"namespace\\\":\\\"nl.openweb.data\\\"}\" cant be turned into a Schema",
-                Some(String::from(
-                    "Failed to parse schema: No `fields` in record"
-                )),
-                false,
-            ))
+            err.error,
+           "Supplied raw value \"{\\\"type\\\":\\\"record\\\",\\\"name\\\":\\\"Heartbeat\\\",\\\"namespace\\\":\\\"nl.openweb.data\\\"}\" cant be turned into a Schema",
         )
     }
 
@@ -1241,17 +1221,10 @@ mod tests {
             references: vec![],
         };
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let result = match to_avro_schema(&sr_settings, registered_schema) {
-            Err(e) => e,
-            _ => panic!(),
-        };
+        let err = to_avro_schema(&sr_settings, registered_schema).unwrap_err();
         assert_eq!(
-            result,
-            SRCError::new(
-                "Supplied raw value \"{\\\"type\\\":\\\"record\\\",\\\"name\\\":\\\"Name\\\"}\" cant be turned into a Schema",
-                Some(String::from("Failed to parse schema: No `fields` in record")),
-                false,
-            )
+            err.error,
+            "Supplied raw value \"{\\\"type\\\":\\\"record\\\",\\\"name\\\":\\\"Name\\\"}\" cant be turned into a Schema"
         )
     }
 

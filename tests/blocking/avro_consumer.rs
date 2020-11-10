@@ -20,7 +20,7 @@ pub fn consume_avro(
     registry: String,
     topics: &[&str],
     auto_commit: bool,
-    test: Box<dyn Fn(DeserializedAvroRecord) -> ()>,
+    test: Box<dyn Fn(DeserializedAvroRecord)>,
 ) {
     let sr_settings = SrSettings::new(registry);
     let mut decoder = AvroDecoder::new(sr_settings);

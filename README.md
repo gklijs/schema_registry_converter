@@ -35,7 +35,7 @@ To use it to convert using avro async use:
 
 ```toml
 [dependencies]
-schema_registry_converter = { version = "2.0.0", features = ["avro"] }
+schema_registry_converter = { version = "2.0.1", features = ["avro"] }
 ```
 
 ...and see the [docs](https://docs.rs/schema_registry_converter) for how to use it.
@@ -44,7 +44,14 @@ All the converters also have a blocking (non async) version, in that case use so
 
 ```toml
 [dependencies]
-schema_registry_converter = { version = "2.0.0", default-features = false, features = ["avro", "blocking"]}
+schema_registry_converter = { version = "2.0.1", default-features = false, features = ["avro", "blocking"]}
+```
+
+If you need to use both in a project you can use something like, but have to be weary you import the correct paths depending on your use.
+
+```toml
+[dependencies]
+schema_registry_converter = { version = "2.0.1", features = ["avro", "blocking"]}
 ```
 
 # Example with consumer and producer using Avro

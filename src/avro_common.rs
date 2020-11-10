@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use avro_rs::schema::{Name, Schema};
-use avro_rs::types::{Record, ToAvro, Value};
+use avro_rs::types::{Record, Value};
 use avro_rs::{to_avro_datum, to_value};
 use serde::ser::Serialize;
 use serde_json::{value, Map};
@@ -95,7 +95,7 @@ pub(crate) fn replace_reference(parent: value::Value, child: value::Value) -> va
     }
 }
 
-fn to_bytes<T: ToAvro>(avro_schema: &AvroSchema, record: T) -> Result<Vec<u8>, SRCError> {
+fn to_bytes(avro_schema: &AvroSchema, record: Value) -> Result<Vec<u8>, SRCError> {
     match to_avro_datum(&avro_schema.parsed, record) {
         Ok(v) => Ok(get_payload(avro_schema.id, v)),
         Err(e) => Err(SRCError::non_retryable_with_cause(
@@ -124,7 +124,7 @@ pub(crate) fn values_to_bytes(
     for value in values {
         record.put(value.0, value.1)
     }
-    to_bytes(avro_schema, record)
+    to_bytes(avro_schema, Value::from(record))
 }
 
 /// Using the schema with an item implementing serialize the item will be correctly deserialized
@@ -200,17 +200,8 @@ mod tests {
             raw: String::from(r#"{"type":"record","name":"Name","namespace":"nl.openweb.data","fields":[{"name":"name","type":"string","avro.java.string":"String"}]}"#),
             parsed: Schema::parse_str(r#"{"type":"record","name":"Name","namespace":"nl.openweb.data","fields":[{"name":"name","type":"string","avro.java.string":"String"}]}"#).unwrap(),
         };
-        let result = values_to_bytes(&schema, vec![("beat", Value::Long(3))]);
-        assert_eq!(
-            result,
-            Err(SRCError::new(
-                "Could not get Avro bytes",
-                Some(String::from(
-                    "Validation error: value does not match schema"
-                )),
-                false,
-            ))
-        )
+        let err = values_to_bytes(&schema, vec![("beat", Value::Long(3))]).unwrap_err();
+        assert_eq!(err.error, "Could not get Avro bytes")
     }
     #[test]
     fn item_to_bytes_no_tranfer_wrong() {
@@ -224,16 +215,7 @@ mod tests {
             ).unwrap(),
         };
         let err = crate::avro_common::item_to_bytes(&schema, Heartbeat { beat: 3 }).unwrap_err();
-        assert_eq!(
-            err,
-            SRCError::new(
-                "Failed to resolve",
-                Some(String::from(
-                    "Schema resoulution error: missing field name in record"
-                )),
-                false,
-            )
-        )
+        assert_eq!(err.error, "Failed to resolve")
     }
 
     #[test]
@@ -253,14 +235,7 @@ mod tests {
             ],
             a_type: Atype::Manual,
         };
-        let result = crate::avro_common::item_to_bytes(&schema, item).unwrap_err();
-        assert_eq!(
-            result,
-            SRCError::new(
-                "Failed to resolve",
-                Some(String::from("Schema resoulution error: String expected, got Array([Int(204), Int(240), Int(237), Int(74), Int(227), Int(188), Int(75), Int(46), Int(183), Int(163), Int(122), Int(214), Int(178), Int(72), Int(118), Int(162)])")),
-                false,
-            )
-        )
+        let err = crate::avro_common::item_to_bytes(&schema, item).unwrap_err();
+        assert_eq!(err.error, "Failed to resolve")
     }
 }
