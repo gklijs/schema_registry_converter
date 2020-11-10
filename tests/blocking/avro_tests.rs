@@ -27,7 +27,7 @@ fn get_heartbeat_schema() -> Box<SuppliedSchema> {
     })
 }
 
-fn test_beat_value(key_value: i64, value_value: i64) -> Box<dyn Fn(DeserializedAvroRecord) -> ()> {
+fn test_beat_value(key_value: i64, value_value: i64) -> Box<dyn Fn(DeserializedAvroRecord)> {
     Box::new(move |rec: DeserializedAvroRecord| {
         println!("testing record {:#?}", rec);
         let key_values = match rec.key {
