@@ -39,7 +39,7 @@ version = "^0.13"
 optional = true
 
 [dependencies.bytes]
-version = "^1.0"
+version = "^0.5"
 optional = true
 
 [dependencies.futures]
