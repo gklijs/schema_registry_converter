@@ -35,7 +35,7 @@ impl<'a> RecordProducer {
             timestamp: None,
             headers: None,
         };
-        self.producer.send(fr, 0);
+        self.producer.send_result(fr).unwrap();
     }
 }
 

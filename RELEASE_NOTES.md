@@ -1,5 +1,9 @@
 ## Release notes
 
+### 2.0.2
+
+Updated dependencies
+
 ### 2.0.1
 
 Maintenance release with mainly updated dependencies, making the blocking sr settings cloneable and no longer needs `kafka_test` feature to use both blocking and async in the same project.
@@ -14,7 +18,7 @@ Another major change is by default support for async.
 
 To use the new version of the library, and continue to use it in a blocking way like it was before, you need to use the library like:
 ```toml
-schema_registry_converter = { version = "2.0.1", default-features = false, features = ["avro", "blocking"]}
+schema_registry_converter = { version = "2.0.2", default-features = false, features = ["avro", "blocking"]}
 ```
 Also the Converters are moved to the blocking module, and to create the converters you need a SrSettings object, which can be created with just the
 schema registry url. 
@@ -62,5 +66,6 @@ instead of the `encode` function on the encoder.
 #### Contributors
 
 - [@cbzehner](https://github.com/cbzehner)
+- [@j-halbert](https://github.com/j-halbert)  
 - [@kitsuneninetails](https://github.com/kitsuneninetails)
-- [@j-halbert](https://github.com/j-halbert)
+- [@naamancurtis](https://github.com/naamancurtis)
