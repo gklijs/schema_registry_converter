@@ -51,6 +51,7 @@ services:
 
   it-test-java-app:
     image: gklijs/schema-registry-test-app:latest
+    container_name: test-app
     environment:
       SCHEMA_REGISTRY_URL: 'http://schema-registry:8081'
       BOOTSTRAP_SERVERS: 'broker:29092'
