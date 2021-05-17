@@ -9,7 +9,7 @@ use futures::future::{BoxFuture, FutureExt};
 use futures::stream::{self, StreamExt};
 use reqwest::header;
 use reqwest::header::{HeaderName, ACCEPT, CONTENT_TYPE};
-use reqwest::Client;
+use reqwest::{Client, ClientBuilder};
 use serde_json::{json, Map, Value};
 
 use crate::error::SRCError;
@@ -130,8 +130,33 @@ impl SrSettingsBuilder {
         self
     }
 
+    /// Build the settings with your own HTTP client.
+    ///
+    /// This method allows you to bring your own TLS client and configuration.
+    ///
+    /// NOTE: The other values (headers, proxy, etc.) will still be merged in
+    /// and they all have higher precedence than your own builder's configuration.
+    /// This means that if you set a proxy both with this builde rand your
+    /// client's builder, this builder will overwrite the client's builder.
+    pub fn build_with(&mut self, builder: ClientBuilder) -> Result<SrSettings, SRCError> {
+        let client = self.build_client(builder)?;
+        let urls = self.urls.clone();
+        let authorization = self.authorization.clone();
+        Ok(SrSettings {
+            urls,
+            client,
+            authorization,
+        })
+    }
+
+    /// Build the settings.
+    ///
+    /// If you need your own client, see `build_with`.
     pub fn build(&mut self) -> Result<SrSettings, SRCError> {
-        let mut builder = Client::builder();
+        self.build_with(Client::builder())
+    }
+
+    fn build_client(&mut self, mut builder: ClientBuilder) -> Result<Client, SRCError> {
         if !self.headers.is_empty() {
             let mut header_map = header::HeaderMap::new();
             for (k, v) in self.headers.iter() {
@@ -155,18 +180,14 @@ impl SrSettingsBuilder {
             };
         }
         builder = builder.timeout(self.timeout);
-        let urls = self.urls.clone();
-        let authorization = self.authorization.clone();
         match builder.build() {
-            Ok(client) => Ok(SrSettings {
-                urls,
-                client,
-                authorization,
-            }),
-            Err(e) => Err(SRCError::non_retryable_with_cause(
-                e,
-                "could not create new client",
-            )),
+            Ok(client) => Ok(client),
+            Err(e) => {
+                return Err(SRCError::non_retryable_with_cause(
+                    e,
+                    "could not create new client",
+                ))
+            }
         }
     }
 }
