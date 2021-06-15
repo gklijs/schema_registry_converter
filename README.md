@@ -1,6 +1,6 @@
 > #schema_registry_converter
 
-[![Build Status](https://github.com/github/gklijs/schema_registry_converter/workflows/ci.yml/badge.svg)](https://travis-ci.org/gklijs/schema_registry_converter)
+[![Build Status](https://github.com/gklijs/schema_registry_converter/actions/workflows/ci.yml/badge.svg)](https://github.com/gklijs/schema_registry_converter/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/gklijs/schema_registry_converter/branch/master/graph/badge.svg)](https://codecov.io/gh/gklijs/schema_registry_converter)
 [![Crates.io](https://img.shields.io/crates/d/schema_registry_converter.svg?maxAge=2592000)](https://crates.io/crates/schema_registry_converter)
 [![Crates.io](https://img.shields.io/crates/v/schema_registry_converter.svg?maxAge=2592000)](https://crates.io/crates/schema_registry_converter)
