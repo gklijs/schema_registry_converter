@@ -1,0 +1,33 @@
+name: Rust
+
+on: [push, pull_request]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  RUSTFLAGS: "-C link-dead-code"
+  CARGO_MAKE_RUN_CODECOV: true
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install
+        run: cargo install --debug cargo-make
+      - name: Build
+        run: cargo build --verbose
+      - name: prepare env
+        run: docker-compose up -d
+      - name: check test app done
+        run: ./check_test_app_done.sh
+        shell: bash
+      - name: prepare inegration test
+        run: ./prepare_integration_test.sh
+        shell: bash
+      - name: test
+        run: cargo test --verbose --all-features -- --test-threads=1
+      - name: ci-flow
+        run: cargo make --makefile make.toml ci-flow
