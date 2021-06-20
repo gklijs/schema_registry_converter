@@ -1,11 +1,10 @@
+use std::error::Error;
 use std::fmt;
 use std::fmt::Display;
 
-use failure::Fail;
-
 /// Error struct which makes it easy to know if the resulting error is also preserved in the cache
 /// or not. And whether trying it again might not cause an error.
-#[derive(Debug, PartialEq, Fail)]
+#[derive(Debug, PartialEq)]
 pub struct SRCError {
     pub error: String,
     pub cause: Option<String>,
@@ -13,16 +12,15 @@ pub struct SRCError {
     pub cached: bool,
 }
 
+/// Implements standard error so error handling can be simplified
+impl Error for SRCError {}
+
 /// Implements clone so when an error is returned from the cache, a copy can be returned
 impl Clone for SRCError {
     fn clone(&self) -> SRCError {
-        let side = match &self.cause {
-            Some(v) => Some(v.clone()),
-            None => None,
-        };
         SRCError {
             error: self.error.clone(),
-            cause: side,
+            cause: self.cause.as_ref().cloned(),
             retriable: self.retriable,
             cached: self.cached,
         }
