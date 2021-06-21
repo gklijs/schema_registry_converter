@@ -44,6 +44,10 @@ impl IndexResolver {
     pub(crate) fn find_index(&self, name: &str) -> Option<&Vec<i32>> {
         self.map.get(name)
     }
+
+    pub(crate) fn is_single_message(&self) -> bool {
+        self.map.len() == 1
+    }
 }
 
 struct ResolverHelper {
