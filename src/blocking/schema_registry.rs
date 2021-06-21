@@ -180,12 +180,10 @@ impl SrSettingsBuilder {
         builder = builder.timeout(self.timeout);
         match builder.build() {
             Ok(client) => Ok(client),
-            Err(e) => {
-                return Err(SRCError::non_retryable_with_cause(
-                    e,
-                    "could not create new client",
-                ))
-            }
+            Err(e) => Err(SRCError::non_retryable_with_cause(
+                e,
+                "could not create new client",
+            )),
         }
     }
 }

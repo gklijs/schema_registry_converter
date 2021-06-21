@@ -5,7 +5,9 @@ use crate::async_impl::schema_registry::{
     get_schema_by_id_and_type, get_schema_by_subject, SrSettings,
 };
 use crate::error::SRCError;
-use crate::proto_raw_common::{to_bytes, to_decode_context, DecodeContext, EncodeContext};
+use crate::proto_raw_common::{
+    to_bytes, to_bytes_single_message, to_decode_context, DecodeContext, EncodeContext,
+};
 use crate::proto_resolver::{resolve_name, to_index_and_data, IndexResolver};
 use crate::schema_registry_common::{
     get_bytes_result, get_subject, BytesResult, RegisteredSchema, SchemaType, SubjectNameStrategy,
@@ -52,6 +54,21 @@ impl<'a> ProtoRawEncoder<'a> {
             .clone()
             .await?;
         to_bytes(&encode_context, bytes, full_name)
+    }
+
+    /// Encodes the bytes by adding a few bytes to the message with additional information.
+    /// This should only be used when the schema only had one message
+    pub async fn encode_single_message(
+        &mut self,
+        bytes: &[u8],
+        subject_name_strategy: SubjectNameStrategy,
+    ) -> Result<Vec<u8>, SRCError> {
+        let key = get_subject(&subject_name_strategy)?;
+        let encode_context = self
+            .get_encoding_context(key, subject_name_strategy)
+            .clone()
+            .await?;
+        to_bytes_single_message(&encode_context, bytes)
     }
 
     fn get_encoding_context(
@@ -195,6 +212,30 @@ mod tests {
             .encode(
                 get_proto_hb_101_only_data(),
                 "nl.openweb.data.Heartbeat",
+                strategy,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(encoded_data, get_proto_hb_101())
+    }
+
+    #[tokio::test]
+    async fn test_encode_single_message() {
+        let _m = mock("GET", "/subjects/nl.openweb.data.Heartbeat/versions/latest")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(&get_proto_body(get_proto_hb_schema(), 7))
+            .create();
+
+        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let mut encoder = ProtoRawEncoder::new(sr_settings);
+        let strategy =
+            SubjectNameStrategy::RecordNameStrategy(String::from("nl.openweb.data.Heartbeat"));
+
+        let encoded_data = encoder
+            .encode_single_message(
+                get_proto_hb_101_only_data(),
                 strategy,
             )
             .await

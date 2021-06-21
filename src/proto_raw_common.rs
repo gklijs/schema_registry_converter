@@ -28,6 +28,23 @@ pub(crate) fn to_bytes(
     Ok(get_payload(encode_context.id, index_bytes))
 }
 
+pub(crate) fn to_bytes_single_message(
+    encode_context: &EncodeContext,
+    bytes: &[u8],
+) -> Result<Vec<u8>, SRCError> {
+    if encode_context.resolver.is_single_message() {
+        let mut index_bytes = vec![0u8];
+        index_bytes.extend(bytes);
+        Ok(get_payload(encode_context.id, index_bytes))
+    } else {
+        Err(SRCError::new(
+            "Schema was no single message schema",
+            None,
+            false,
+        ))
+    }
+}
+
 pub(crate) fn to_decode_context(registered_schema: RegisteredSchema) -> DecodeContext {
     let schema = String::from(&registered_schema.schema);
     DecodeContext {
