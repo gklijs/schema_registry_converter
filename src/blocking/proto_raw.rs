@@ -169,7 +169,7 @@ mod tests {
     };
     use test_utils::{
         get_proto_body, get_proto_body_with_reference, get_proto_complex,
-        get_proto_complex_proto_test_message, get_proto_complex_proto_test_message_data_only,
+        get_proto_complex_only_data, get_proto_complex_proto_test_message,
         get_proto_complex_references, get_proto_hb_101, get_proto_hb_101_only_data,
         get_proto_hb_schema, get_proto_result,
     };
@@ -212,13 +212,31 @@ mod tests {
             SubjectNameStrategy::RecordNameStrategy(String::from("nl.openweb.data.Heartbeat"));
 
         let encoded_data = encoder
-            .encode_single_message(
-                get_proto_hb_101_only_data(),
-                &strategy,
-            )
+            .encode_single_message(get_proto_hb_101_only_data(), &strategy)
             .unwrap();
 
         assert_eq!(encoded_data, get_proto_hb_101())
+    }
+
+    #[test]
+    fn test_encode_single_message_multiple_in_schema() {
+        let _m = mock("GET", "/subjects/nl.openweb.data.Heartbeat/versions/latest")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(&get_proto_body(get_proto_complex(), 7))
+            .create();
+
+        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let mut encoder = ProtoRawEncoder::new(sr_settings);
+        let strategy =
+            SubjectNameStrategy::RecordNameStrategy(String::from("nl.openweb.data.Heartbeat"));
+
+        assert_eq!(
+            encoder
+                .encode_single_message(get_proto_complex_only_data(), &strategy,)
+                .is_err(),
+            true
+        )
     }
 
     #[test]
@@ -302,7 +320,7 @@ mod tests {
 
         let encoded_data = encoder
             .encode(
-                get_proto_complex_proto_test_message_data_only(),
+                get_proto_complex_only_data(),
                 "org.schema_registry_test_app.proto.ProtoTest",
                 &strategy,
             )
@@ -396,10 +414,7 @@ mod tests {
             Err(e) => panic!("Error: {:?}, while none expected", e),
             Ok(v) => panic!("Other value: {:?} than expected Message", v),
         };
-        assert_eq!(
-            raw_result.bytes,
-            get_proto_complex_proto_test_message_data_only()
-        )
+        assert_eq!(raw_result.bytes, get_proto_complex_only_data())
     }
 
     #[test]

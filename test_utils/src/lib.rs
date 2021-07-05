@@ -34,7 +34,7 @@ pub fn get_proto_hb_101() -> &'static [u8] {
     &[0, 0, 0, 0, 7, 0, 8, 101]
 }
 
-pub fn get_proto_complex_proto_test_message_data_only() -> &'static [u8] {
+pub fn get_proto_complex_only_data() -> &'static [u8] {
     &get_proto_complex_proto_test_message()[7..]
 }
 
