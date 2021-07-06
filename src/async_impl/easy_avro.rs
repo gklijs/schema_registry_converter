@@ -1,0 +1,142 @@
+use crate::async_impl::avro::{AvroDecoder, AvroEncoder};
+use crate::async_impl::schema_registry::SrSettings;
+use crate::avro_common::DecodeResult;
+use crate::error::SRCError;
+use crate::schema_registry_common::SubjectNameStrategy;
+use avro_rs::types::Value;
+use serde::Serialize;
+use std::sync::Arc;
+use tokio::sync::Mutex;
+
+/// A decoder used to transform bytes to a [DecodeResult], its much like [AvroDecoder] but includes a mutex, so the user does not need to care about mutability.
+pub struct EasyAvroDecoder {
+    decoder: Arc<Mutex<AvroDecoder<'static>>>,
+}
+
+impl EasyAvroDecoder {
+    pub fn new(sr_settings: SrSettings) -> EasyAvroDecoder {
+        let decoder = Arc::new(Mutex::new(AvroDecoder::new(sr_settings)));
+        EasyAvroDecoder { decoder }
+    }
+    pub async fn decode(&self, bytes: Option<&[u8]>) -> Result<DecodeResult, SRCError> {
+        let mut lock = self.decoder.lock().await;
+        lock.decode(bytes).await
+    }
+}
+
+/// An encoder used to transform a [Value] to bytes, its much like [AvroEncoder] but includes a mutex, so the user does not need to care about mutability.
+pub struct EasyAvroEncoder {
+    encoder: Arc<Mutex<AvroEncoder<'static>>>,
+}
+
+impl EasyAvroEncoder {
+    pub fn new(sr_settings: SrSettings) -> EasyAvroEncoder {
+        let encoder = Arc::new(Mutex::new(AvroEncoder::new(sr_settings)));
+        EasyAvroEncoder { encoder }
+    }
+    pub async fn encode(
+        &self,
+        values: Vec<(&'static str, Value)>,
+        subject_name_strategy: SubjectNameStrategy,
+    ) -> Result<Vec<u8>, SRCError> {
+        let mut lock = self.encoder.lock().await;
+        lock.encode(values, subject_name_strategy).await
+    }
+    pub async fn encode_struct(
+        &self,
+        item: impl Serialize,
+        subject_name_strategy: &SubjectNameStrategy,
+    ) -> Result<Vec<u8>, SRCError> {
+        let mut lock = self.encoder.lock().await;
+        lock.encode_struct(item, subject_name_strategy).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::async_impl::easy_avro::{EasyAvroDecoder, EasyAvroEncoder};
+    use crate::async_impl::schema_registry::SrSettings;
+    use crate::avro_common::get_supplied_schema;
+    use crate::schema_registry_common::SubjectNameStrategy;
+    use avro_rs::types::Value;
+    use avro_rs::{from_value, Schema};
+    use mockito::{mock, server_address};
+    use test_utils::Heartbeat;
+
+    #[tokio::test]
+    async fn test_decoder_default() {
+        let _m = mock("GET", "/schemas/ids/1?deleted=true")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
+            .create();
+
+        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let decoder = EasyAvroDecoder::new(sr_settings);
+        let heartbeat = decoder
+            .decode(Some(&[0, 0, 0, 0, 1, 6]))
+            .await
+            .unwrap()
+            .value;
+
+        assert_eq!(
+            heartbeat,
+            Value::Record(vec![("beat".to_string(), Value::Long(3))])
+        );
+
+        let item = match from_value::<Heartbeat>(&heartbeat) {
+            Ok(h) => h,
+            Err(_) => unreachable!(),
+        };
+        assert_eq!(item.beat, 3i64);
+    }
+
+    #[tokio::test]
+    async fn test_encode_value() {
+        let _m = mock("GET", "/subjects/heartbeat-value/versions/latest")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(r#"{"subject":"heartbeat-value","version":1,"id":3,"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
+            .create();
+
+        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let encoder = EasyAvroEncoder::new(sr_settings);
+
+        let value_strategy =
+            SubjectNameStrategy::TopicNameStrategy(String::from("heartbeat"), false);
+        let bytes = encoder
+            .encode(vec![("beat", Value::Long(3))], value_strategy)
+            .await
+            .unwrap();
+
+        assert_eq!(bytes, vec![0, 0, 0, 0, 3, 6])
+    }
+
+    #[tokio::test]
+    async fn test_primitive_schema() {
+        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let encoder = EasyAvroEncoder::new(sr_settings);
+
+        let _n = mock("POST", "/subjects/heartbeat-key/versions")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(r#"{"id":4}"#)
+            .create();
+
+        let primitive_schema_strategy = SubjectNameStrategy::TopicNameStrategyWithSchema(
+            String::from("heartbeat"),
+            true,
+            get_supplied_schema(&Schema::String),
+        );
+        let bytes = encoder
+            .encode_struct("key-value", &primitive_schema_strategy)
+            .await;
+
+        assert_eq!(
+            bytes,
+            Ok(vec![
+                0, 0, 0, 0, 4, 18, 107, 101, 121, 45, 118, 97, 108, 117, 101
+            ])
+        );
+    }
+}

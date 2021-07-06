@@ -19,6 +19,8 @@ use futures::FutureExt;
 /// bytes. Ideally you want to make sure the bytes are based on the exact schema used for encoding
 /// but you need a protobuf struct that has introspection to make that work, and both protobuf and
 /// prost don't support that at the moment.
+/// This wil just add the magic byte, schema reference, and message reference. The bytes should already be valid proto bytes for the schema used.
+/// When a schema with multiple messages is used the full_name needs to be supplied to properly encode the message reference.
 #[derive(Debug)]
 pub struct ProtoRawEncoder<'a> {
     sr_settings: SrSettings,

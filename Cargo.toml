@@ -18,6 +18,7 @@ blocking = ["reqwest/blocking"]
 json = ["url", "valico"]
 proto_decoder = ["bytes", "integer-encoding", "logos", "protofish"]
 proto_raw = ["integer-encoding", "logos"]
+easy = ["tokio"]
 kafka_test = []
 default = ["futures"]
 
@@ -66,6 +67,11 @@ optional = true
 version = "^2"
 optional = true
 
+[dependencies.tokio]
+version = "^1.2.0"
+features = ["macros"]
+optional = true
+
 [dependencies.valico]
 version = "^3.5"
 optional = true
@@ -75,7 +81,6 @@ mockito = "^0.29.0"
 rdkafka = { version = "^0.25.0", features = ["cmake-build"] }
 rand = "^0.8.3"
 test_utils = {path = "test_utils"}
-tokio = { version = "^1.2.0", features = ["macros"] }
 
 [package.metadata.docs.rs]
 all-features = true
