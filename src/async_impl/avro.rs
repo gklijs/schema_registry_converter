@@ -936,7 +936,19 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(bytes, vec![0, 0, 0, 0, 3, 6])
+        assert_eq!(bytes, vec![0, 0, 0, 0, 3, 6]);
+
+        let value_strategy =
+            SubjectNameStrategy::TopicNameStrategy(String::from("heartbeat"), true);
+        let bytes = encoder
+            .encode(
+                vec![("name", Value::String(String::from("x")))],
+                value_strategy,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(bytes, vec![0, 0, 0, 0, 4, 2, 120])
     }
 
     #[tokio::test]

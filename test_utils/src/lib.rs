@@ -115,8 +115,8 @@ impl Default for Atype {
 
 pub type Uuid = [u8; 16];
 
-#[serde(default)]
 #[derive(Debug, PartialEq, Clone, Deserialize, Serialize)]
+#[serde(default)]
 pub struct ConfirmAccountCreation {
     pub id: Uuid,
     pub a_type: Atype,
