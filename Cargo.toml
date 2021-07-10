@@ -13,13 +13,16 @@ license = "MIT/Apache-2.0"
 edition = "2018"
 
 [features]
+native_tls = ["reqwest/native-tls"]
+rustls_tls = ["reqwest/rustls-tls"]
+
 avro = ["avro-rs"]
 blocking = ["reqwest/blocking"]
 json = ["url", "valico"]
 proto_decoder = ["bytes", "integer-encoding", "logos", "protofish"]
 proto_raw = ["integer-encoding", "logos"]
 kafka_test = []
-default = ["futures"]
+default = ["futures","native_tls"]
 
 [dependencies.byteorder]
 version = "^1.4"
@@ -29,6 +32,7 @@ version = "^0.1"
 
 [dependencies.reqwest]
 version = "^0.11"
+default-features = false
 features = ["json"]
 
 [dependencies.serde]
