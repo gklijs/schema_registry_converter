@@ -4,7 +4,6 @@ use std::collections::HashMap;
 use bytes::Bytes;
 use futures::future::{BoxFuture, Shared};
 use futures::FutureExt;
-use protofish::{Context, MessageValue, Value};
 
 use crate::async_impl::schema_registry::{
     get_referenced_schema, get_schema_by_id_and_type, SrSettings,
@@ -12,6 +11,8 @@ use crate::async_impl::schema_registry::{
 use crate::error::SRCError;
 use crate::proto_resolver::{resolve_name, to_index_and_data, MessageResolver};
 use crate::schema_registry_common::{get_bytes_result, BytesResult, RegisteredSchema, SchemaType};
+use protofish::context::Context;
+use protofish::decode::{MessageValue, Value};
 
 type SharedFutureOfSchemas<'a> = Shared<BoxFuture<'a, Result<Vec<String>, SRCError>>>;
 
@@ -59,7 +60,7 @@ impl<'a> ProtoDecoder<'a> {
     /// The actual deserialization trying to get the id from the bytes to retrieve the schema, and
     /// using a reader transforms the bytes to a value.
     async fn deserialize(&mut self, id: u32, bytes: &[u8]) -> Result<MessageValue, SRCError> {
-        let vec_of_schemas = self.get_vec_of_schemas(id).clone().await?;
+        let vec_of_schemas = self.vec_of_schemas(id).clone().await?;
         let context = into_decode_context(&vec_of_schemas)?;
         let (index, data) = to_index_and_data(bytes);
         let full_name = resolve_name(&context.resolver, &index)?;
@@ -68,7 +69,7 @@ impl<'a> ProtoDecoder<'a> {
     }
     /// Gets the Context object, either from the cache, or from the schema registry and then putting
     /// it into the cache.
-    fn get_vec_of_schemas(&mut self, id: u32) -> &SharedFutureOfSchemas<'a> {
+    fn vec_of_schemas(&mut self, id: u32) -> &SharedFutureOfSchemas<'a> {
         match self.cache.entry(id) {
             Entry::Occupied(e) => &*e.into_mut(),
             Entry::Vacant(e) => {
@@ -132,10 +133,10 @@ async fn to_vec_of_schemas(
 #[cfg(test)]
 mod tests {
     use mockito::{mock, server_address};
-    use protofish::Value;
 
     use crate::async_impl::proto_decoder::ProtoDecoder;
     use crate::async_impl::schema_registry::SrSettings;
+    use protofish::prelude::Value;
     use test_utils::{
         get_proto_complex, get_proto_complex_proto_test_message, get_proto_complex_references,
         get_proto_hb_101, get_proto_hb_schema, get_proto_result,

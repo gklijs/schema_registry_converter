@@ -44,7 +44,7 @@ impl ProtoRawEncoder {
         subject_name_strategy: &SubjectNameStrategy,
     ) -> Result<Vec<u8>, SRCError> {
         let key = get_subject(subject_name_strategy)?;
-        match self.get_encoding_context(key, subject_name_strategy) {
+        match self.encoding_context(key, subject_name_strategy) {
             Ok(encode_context) => to_bytes(encode_context, bytes, full_name),
             Err(e) => Err(Clone::clone(e)),
         }
@@ -56,13 +56,13 @@ impl ProtoRawEncoder {
         subject_name_strategy: &SubjectNameStrategy,
     ) -> Result<Vec<u8>, SRCError> {
         let key = get_subject(subject_name_strategy)?;
-        match self.get_encoding_context(key, subject_name_strategy) {
+        match self.encoding_context(key, subject_name_strategy) {
             Ok(encode_context) => to_bytes_single_message(encode_context, bytes),
             Err(e) => Err(Clone::clone(e)),
         }
     }
 
-    fn get_encoding_context(
+    fn encoding_context(
         &mut self,
         key: String,
         subject_name_strategy: &SubjectNameStrategy,
@@ -121,7 +121,7 @@ impl ProtoRawDecoder {
     /// The actual deserialization trying to get the id from the bytes to retrieve the schema, and
     /// using a reader transforms the bytes to a value.
     fn deserialize(&mut self, id: u32, bytes: &[u8]) -> Result<RawDecodeResult, SRCError> {
-        match self.get_context(id) {
+        match self.context(id) {
             Ok(s) => {
                 let (index, data) = to_index_and_data(bytes);
                 let full_name = resolve_name(&s.resolver, &index)?;
@@ -136,7 +136,7 @@ impl ProtoRawDecoder {
     }
     /// Gets the Context object, either from the cache, or from the schema registry and then putting
     /// it into the cache.
-    fn get_context(&mut self, id: u32) -> &Result<DecodeContext, SRCError> {
+    fn context(&mut self, id: u32) -> &Result<DecodeContext, SRCError> {
         match self.cache.entry(id) {
             Entry::Occupied(e) => &*e.into_mut(),
             Entry::Vacant(e) => {

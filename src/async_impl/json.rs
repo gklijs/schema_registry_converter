@@ -152,7 +152,7 @@ impl<'a> JsonDecoder<'a> {
     /// The actual deserialization trying to get the id from the bytes to retrieve the schema, and
     /// using a reader transforms the bytes to a value.
     async fn deserialize(&mut self, id: u32, bytes: &[u8]) -> Result<DecodeResult, SRCError> {
-        let schema = self.get_schema(id).clone().await?;
+        let schema = self.schema(id).clone().await?;
         match serde_json::from_slice(bytes) {
             Ok(value) => Ok(DecodeResult { schema, value }),
             Err(e) => Err(SRCError::non_retryable_with_cause(
@@ -163,7 +163,7 @@ impl<'a> JsonDecoder<'a> {
     }
     /// Gets the Context object, either from the cache, or from the schema registry and then putting
     /// it into the cache.
-    fn get_schema(&mut self, id: u32) -> &Shared<BoxFuture<'a, Result<JsonSchema, SRCError>>> {
+    fn schema(&mut self, id: u32) -> &Shared<BoxFuture<'a, Result<JsonSchema, SRCError>>> {
         match self.cache.entry(id) {
             Entry::Occupied(e) => &*e.into_mut(),
             Entry::Vacant(e) => {

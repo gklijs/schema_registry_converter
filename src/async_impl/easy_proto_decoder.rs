@@ -1,7 +1,7 @@
 use crate::async_impl::proto_decoder::ProtoDecoder;
 use crate::async_impl::schema_registry::SrSettings;
 use crate::error::SRCError;
-use protofish::Value;
+use protofish::decode::Value;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -28,7 +28,7 @@ mod tests {
     use crate::async_impl::easy_proto_decoder::EasyProtoDecoder;
     use crate::async_impl::schema_registry::SrSettings;
     use mockito::{mock, server_address};
-    use protofish::Value;
+    use protofish::decode::Value;
     use test_utils::{get_proto_body, get_proto_hb_101, get_proto_hb_schema};
 
     #[tokio::test]
