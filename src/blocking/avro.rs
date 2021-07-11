@@ -169,7 +169,7 @@ impl AvroDecoder {
     /// The actual deserialization trying to get the id from the bytes to retrieve the schema, and
     /// using a reader transforms the bytes to a value.
     fn deserialize(&mut self, id: u32, bytes: &[u8]) -> Result<DecodeResult, SRCError> {
-        let schema = self.get_schema(id);
+        let schema = self.schema(id);
         let mut reader = Cursor::new(bytes);
         match schema {
             Ok(s) => match from_avro_datum(&s.parsed, &mut reader, None) {
@@ -186,7 +186,7 @@ impl AvroDecoder {
         }
     }
 
-    fn get_schema(&mut self, id: u32) -> &Result<AvroSchema, SRCError> {
+    fn schema(&mut self, id: u32) -> &Result<AvroSchema, SRCError> {
         let sr_settings = &self.sr_settings;
         match self.cache.entry(id) {
             Entry::Occupied(e) => &*e.into_mut(),

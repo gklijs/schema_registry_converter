@@ -52,7 +52,7 @@ impl<'a> ProtoRawEncoder<'a> {
     ) -> Result<Vec<u8>, SRCError> {
         let key = get_subject(&subject_name_strategy)?;
         let encode_context = self
-            .get_encoding_context(key, subject_name_strategy)
+            .encoding_context(key, subject_name_strategy)
             .clone()
             .await?;
         to_bytes(&encode_context, bytes, full_name)
@@ -67,13 +67,13 @@ impl<'a> ProtoRawEncoder<'a> {
     ) -> Result<Vec<u8>, SRCError> {
         let key = get_subject(&subject_name_strategy)?;
         let encode_context = self
-            .get_encoding_context(key, subject_name_strategy)
+            .encoding_context(key, subject_name_strategy)
             .clone()
             .await?;
         to_bytes_single_message(&encode_context, bytes)
     }
 
-    fn get_encoding_context(
+    fn encoding_context(
         &mut self,
         key: String,
         subject_name_strategy: SubjectNameStrategy,

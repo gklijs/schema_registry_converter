@@ -2,7 +2,6 @@ use std::collections::hash_map::{Entry, RandomState};
 use std::collections::HashMap;
 
 use bytes::Bytes;
-use protofish::{Context, MessageValue, Value};
 
 use crate::blocking::schema_registry::{
     get_referenced_schema, get_schema_by_id_and_type, SrSettings,
@@ -10,6 +9,8 @@ use crate::blocking::schema_registry::{
 use crate::error::SRCError;
 use crate::proto_resolver::{resolve_name, to_index_and_data, MessageResolver};
 use crate::schema_registry_common::{get_bytes_result, BytesResult, RegisteredSchema, SchemaType};
+use protofish::decode::{MessageValue, Value};
+use protofish::context::Context;
 
 #[derive(Debug)]
 pub struct ProtoDecoder {
@@ -52,7 +53,7 @@ impl ProtoDecoder {
     /// The actual deserialization trying to get the id from the bytes to retrieve the schema, and
     /// using a reader transforms the bytes to a value.
     fn deserialize(&mut self, id: u32, bytes: &[u8]) -> Result<MessageValue, SRCError> {
-        match self.get_context(id) {
+        match self.context(id) {
             Ok(s) => {
                 let (index, data) = to_index_and_data(bytes);
                 let full_name = resolve_name(&s.resolver, &index)?;
@@ -64,7 +65,7 @@ impl ProtoDecoder {
     }
     /// Gets the Context object, either from the cache, or from the schema registry and then putting
     /// it into the cache.
-    fn get_context(&mut self, id: u32) -> &Result<DecodeContext, SRCError> {
+    fn context(&mut self, id: u32) -> &Result<DecodeContext, SRCError> {
         match self.cache.entry(id) {
             Entry::Occupied(e) => &*e.into_mut(),
             Entry::Vacant(e) => {
@@ -117,10 +118,10 @@ fn to_resolve_context(
 #[cfg(test)]
 mod tests {
     use mockito::{mock, server_address};
-    use protofish::Value;
 
     use crate::blocking::proto_decoder::ProtoDecoder;
     use crate::blocking::schema_registry::SrSettings;
+    use protofish::decode::Value;
     use test_utils::{
         get_proto_body, get_proto_body_with_reference, get_proto_complex,
         get_proto_complex_proto_test_message, get_proto_complex_references, get_proto_hb_101,

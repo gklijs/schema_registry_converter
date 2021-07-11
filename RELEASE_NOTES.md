@@ -1,5 +1,15 @@
 ## Release notes
 
+### 2.1.0
+
+Dependencies updated and ci is now run in Github Actions also some improvements where made making it easier to use, and open up some additional use cases.
+
+#### Issues
+- It's now possible to set additional options on the `reqwest` client, and use that to create the SrSettings. Mainly for custom security requirements.
+- It's possible to use the `rustls_tls` feature to let `reqwest` use `rustls-tls`.
+- For each async converter an `easy` variant was added. This makes it easier to use the library, as internally a mutex is used, so the user has to care about mutability less.
+- For the protobuf encoders an `encode_single_message` method was eded to encode when the schema contains only one message. The full name of the proto message is not needed for this.
+
 ### 2.0.2
 
 Updated dependencies
@@ -69,3 +79,5 @@ instead of the `encode` function on the encoder.
 - [@j-halbert](https://github.com/j-halbert)  
 - [@kitsuneninetails](https://github.com/kitsuneninetails)
 - [@naamancurtis](https://github.com/naamancurtis)
+- [@MariellHoversholm-Paf](https://github.com/MariellHoversholm-Paf)
+- [@SergeStrashko](https://github.com/SergeStrashko)
