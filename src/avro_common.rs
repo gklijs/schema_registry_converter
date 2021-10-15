@@ -107,9 +107,9 @@ fn to_bytes(avro_schema: &AvroSchema, record: Value) -> Result<Vec<u8>, SRCError
 
 /// Using the schema with a vector of values the values will be correctly deserialized according to
 /// the avro specification.
-pub(crate) fn values_to_bytes(
+pub(crate) fn values_to_bytes<'b>(
     avro_schema: &AvroSchema,
-    values: Vec<(&'static str, Value)>,
+    values: Vec<(&str, Value)>,
 ) -> Result<Vec<u8>, SRCError> {
     let mut record = match Record::new(&avro_schema.parsed) {
         Some(v) => v,
