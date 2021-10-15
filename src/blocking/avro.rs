@@ -360,7 +360,7 @@ impl AvroEncoder {
     /// ```
     pub fn encode(
         &mut self,
-        values: Vec<(&'static str, Value)>,
+        values: Vec<(&str, Value)>,
         subject_name_strategy: &SubjectNameStrategy,
     ) -> Result<Vec<u8>, SRCError> {
         let key = get_subject(subject_name_strategy)?;
@@ -888,6 +888,45 @@ mod tests {
         let key_strategy = SubjectNameStrategy::TopicNameStrategy(String::from("heartbeat"), true);
         let bytes = encoder.encode(
             vec![("name", Value::String("Some name".to_owned()))],
+            &key_strategy,
+        );
+
+        assert_eq!(
+            bytes,
+            Ok(vec![
+                0, 0, 0, 0, 4, 18, 83, 111, 109, 101, 32, 110, 97, 109, 101,
+            ])
+        );
+
+        let value_strategy =
+            SubjectNameStrategy::TopicNameStrategy(String::from("heartbeat"), false);
+        let bytes = encoder.encode(vec![("beat", Value::Long(3))], &value_strategy);
+
+        assert_eq!(bytes, Ok(vec![0, 0, 0, 0, 3, 6]))
+    }
+
+    #[test]
+    fn test_encode_key_and_value_with_non_static_lifetime() {
+        let _m = mock("GET", "/subjects/heartbeat-value/versions/latest")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(r#"{"subject":"heartbeat-value","version":1,"id":3,"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
+            .create();
+
+        let _n = mock("GET", "/subjects/heartbeat-key/versions/latest")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(r#"{"subject":"heartbeat-value","version":1,"id":4,"schema":"{\"type\":\"record\",\"name\":\"Name\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"name\",\"type\":\"string\",\"avro.java.string\":\"String\"}]}"}"#)
+            .create();
+
+        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let mut encoder = AvroEncoder::new(sr_settings);
+
+        let key_strategy = SubjectNameStrategy::TopicNameStrategy(String::from("heartbeat"), true);
+
+        let field_name = String::from("name");
+        let bytes = encoder.encode(
+            vec![(&field_name, Value::String("Some name".to_owned()))],
             &key_strategy,
         );
 
