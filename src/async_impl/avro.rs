@@ -25,6 +25,7 @@
 use std::collections::hash_map::{Entry, RandomState};
 use std::collections::HashMap;
 use std::io::Cursor;
+use std::sync::Arc;
 
 use avro_rs::types::Value;
 use avro_rs::{from_avro_datum, Schema};
@@ -32,6 +33,9 @@ use futures::future::{BoxFuture, Shared};
 use futures::FutureExt;
 use serde::ser::Serialize;
 use serde_json::value;
+
+#[cfg(feature = "fast")]
+use dashmap::DashMap;
 
 use crate::async_impl::schema_registry::{
     get_referenced_schema, get_schema_by_id_and_type, get_schema_by_subject, SrSettings,
@@ -44,6 +48,62 @@ use crate::schema_registry_common::{
     get_bytes_result, get_subject, BytesResult, RegisteredReference, RegisteredSchema, SchemaType,
     SubjectNameStrategy,
 };
+
+/// A faster implementation of a AvroDecoder
+#[cfg(feature = "fast")]
+#[derive(Debug)]
+pub struct FastAvroDecoder {
+    sr_settings: SrSettings,
+    cache: DashMap<u32, Arc<AvroSchema>>,
+}
+
+#[cfg(feature = "fast")]
+impl FastAvroDecoder {
+    pub fn new(sr_settings: SrSettings) -> FastAvroDecoder {
+        FastAvroDecoder {
+            sr_settings,
+            cache: DashMap::<u32, Arc<AvroSchema>>::new(),
+        }
+    }
+    pub async fn decode(&mut self, bytes: Option<&[u8]>) -> Result<DecodeResult, SRCError> {
+        match get_bytes_result(bytes) {
+            BytesResult::Null => Ok(DecodeResult {
+                name: None,
+                value: Value::Null,
+            }),
+            BytesResult::Valid(id, bytes) => self.deserialize(id, &bytes).await,
+            BytesResult::Invalid(bytes) => Err(SRCError::non_retryable_without_cause(&*format!(
+                "Invalid bytes {:?}",
+                bytes
+            ))),
+        }
+    }
+    async fn deserialize(&mut self, id: u32, bytes: &[u8]) -> Result<DecodeResult, SRCError> {
+        let schema = self.schema(id).await?;
+        let mut reader = Cursor::new(bytes);
+        match from_avro_datum(&schema.parsed, &mut reader, None) {
+            Ok(v) => Ok(DecodeResult {
+                name: get_name(&schema.parsed),
+                value: v,
+            }),
+            Err(e) => Err(SRCError::non_retryable_with_cause(
+                e,
+                "Could not transform bytes using schema",
+            )),
+        }
+    }
+    async fn schema(&mut self, id: u32) -> Result<Arc<AvroSchema>, SRCError> {
+        if let Some(schema) = self.cache.get(&id) {
+            Ok(schema.clone())
+        }
+        else {
+            let registered_schema = get_schema_by_id_and_type(id, &self.sr_settings, SchemaType::Avro).await?;
+            let schema = Arc::new(to_avro_schema(&self.sr_settings, registered_schema).await?);
+            self.cache.insert(id, schema.clone());
+            Ok(schema.clone())
+        }
+    }
+}
 
 /// A decoder used to transform bytes to a Value object
 ///

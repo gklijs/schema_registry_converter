@@ -22,8 +22,13 @@ json = ["url", "valico"]
 proto_decoder = ["bytes", "integer-encoding", "logos", "protofish"]
 proto_raw = ["integer-encoding", "logos"]
 easy = ["tokio"]
+fast = ["dashmap"]
 kafka_test = []
 default = ["futures","native_tls"]
+
+[dependencies.dashmap]
+version = "^4.0"
+optional = true
 
 [dependencies.byteorder]
 version = "^1.4"
