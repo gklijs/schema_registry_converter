@@ -1,10 +1,8 @@
 //! This module contains the code specific for the schema registry.
-
-use std::collections::hash_map::RandomState;
-use std::collections::HashMap;
 use std::str;
 use std::time::Duration;
 
+use dashmap::DashMap;
 use futures::future::{BoxFuture, FutureExt};
 use futures::stream::{self, StreamExt};
 use reqwest::header;
@@ -34,7 +32,7 @@ pub struct SrSettings {
 pub struct SrSettingsBuilder {
     urls: Vec<String>,
     authorization: SrAuthorization,
-    headers: HashMap<String, String, RandomState>,
+    headers: DashMap<String, String>,
     proxy: Option<String>,
     timeout: Duration,
 }
@@ -61,7 +59,7 @@ impl SrSettings {
         SrSettingsBuilder {
             urls: vec![url],
             authorization: SrAuthorization::None,
-            headers: HashMap::new(),
+            headers: DashMap::new(),
             proxy: None,
             timeout: Duration::from_secs(30),
         }
@@ -159,17 +157,17 @@ impl SrSettingsBuilder {
     fn build_client(&mut self, mut builder: ClientBuilder) -> Result<Client, SRCError> {
         if !self.headers.is_empty() {
             let mut header_map = header::HeaderMap::new();
-            for (k, v) in self.headers.iter() {
-                let header_name = match HeaderName::from_bytes(k.as_bytes()) {
+            for ref_multi in self.headers.iter() {
+                let header_name = match HeaderName::from_bytes(ref_multi.key().as_bytes()) {
                     Ok(h) => h,
                     Err(e) => {
                         return Err(SRCError::non_retryable_with_cause(
                             e,
-                            &*format!("could not create headername from {}", k),
+                            &*format!("could not create HeaderName from {}", ref_multi.key()),
                         ));
                     }
                 };
-                header_map.insert(header_name, v.parse().unwrap());
+                header_map.insert(header_name, ref_multi.value().parse().unwrap());
             }
             builder = builder.default_headers(header_map);
         }

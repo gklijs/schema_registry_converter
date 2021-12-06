@@ -154,7 +154,7 @@ impl ProtoRawDecoder {
 #[derive(Debug)]
 pub struct RawDecodeResult<'a> {
     pub schema: &'a RegisteredSchema,
-    pub full_name: &'a String,
+    pub full_name: String,
     pub bytes: Vec<u8>,
 }
 

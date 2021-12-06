@@ -9,8 +9,8 @@ use crate::blocking::schema_registry::{
 use crate::error::SRCError;
 use crate::proto_resolver::{resolve_name, to_index_and_data, MessageResolver};
 use crate::schema_registry_common::{get_bytes_result, BytesResult, RegisteredSchema, SchemaType};
-use protofish::decode::{MessageValue, Value};
 use protofish::context::Context;
+use protofish::decode::{MessageValue, Value};
 
 #[derive(Debug)]
 pub struct ProtoDecoder {
@@ -57,7 +57,7 @@ impl ProtoDecoder {
             Ok(s) => {
                 let (index, data) = to_index_and_data(bytes);
                 let full_name = resolve_name(&s.resolver, &index)?;
-                let message_info = s.context.get_message(full_name).unwrap();
+                let message_info = s.context.get_message(&full_name).unwrap();
                 Ok(message_info.decode(&data, &s.context))
             }
             Err(e) => Err(Clone::clone(e)),

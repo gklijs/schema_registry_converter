@@ -3,23 +3,21 @@ use crate::async_impl::schema_registry::SrSettings;
 use crate::error::SRCError;
 use protofish::decode::Value;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
 /// A decoder used to transform bytes to a [Value], its much like [ProtoDecoder] but includes a mutex, so the user does not need to care about mutability.
 /// The mean use of this way of decoding is if you don't know the format at compile time.
 /// If you do know the format it's better to use the ProtoRawDecoder, and use a different library to deserialize just the proto bytes.
 pub struct EasyProtoDecoder {
-    decoder: Arc<Mutex<ProtoDecoder<'static>>>,
+    decoder: Arc<ProtoDecoder<'static>>,
 }
 
 impl EasyProtoDecoder {
     pub fn new(sr_settings: SrSettings) -> EasyProtoDecoder {
-        let decoder = Arc::new(Mutex::new(ProtoDecoder::new(sr_settings)));
+        let decoder = Arc::new(ProtoDecoder::new(sr_settings));
         EasyProtoDecoder { decoder }
     }
     pub async fn decode(&self, bytes: Option<&[u8]>) -> Result<Value, SRCError> {
-        let mut lock = self.decoder.lock().await;
-        lock.decode(bytes).await
+        self.decoder.decode(bytes).await
     }
 }
 

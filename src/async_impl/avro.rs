@@ -22,12 +22,13 @@
 //!
 //! [avro-rs]: https://crates.io/crates/avro-rs
 
-use std::collections::hash_map::{Entry, RandomState};
-use std::collections::HashMap;
 use std::io::Cursor;
+use std::sync::Arc;
 
 use avro_rs::types::Value;
 use avro_rs::{from_avro_datum, Schema};
+use dashmap::mapref::entry::Entry;
+use dashmap::DashMap;
 use futures::future::{BoxFuture, Shared};
 use futures::FutureExt;
 use serde::ser::Serialize;
@@ -71,7 +72,7 @@ use crate::schema_registry_common::{
 ///     .create();
 ///
 /// let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-/// let mut decoder = AvroDecoder::new(sr_settings);
+/// let decoder = AvroDecoder::new(sr_settings);
 /// let heartbeat = decoder.decode(Some(&[0,0,0,0,1,6])).await.unwrap().value;
 ///
 /// assert_eq!(heartbeat, Value::Record(vec![("beat".to_string(), Value::Long(3))]));
@@ -81,7 +82,8 @@ use crate::schema_registry_common::{
 #[derive(Debug)]
 pub struct AvroDecoder<'a> {
     sr_settings: SrSettings,
-    cache: HashMap<u32, Shared<BoxFuture<'a, Result<AvroSchema, SRCError>>>, RandomState>,
+    direct_cache: DashMap<u32, Arc<AvroSchema>>,
+    cache: DashMap<u32, Shared<BoxFuture<'a, Result<Arc<AvroSchema>, SRCError>>>>,
 }
 
 impl<'a> AvroDecoder<'a> {
@@ -93,7 +95,8 @@ impl<'a> AvroDecoder<'a> {
     pub fn new(sr_settings: SrSettings) -> AvroDecoder<'a> {
         AvroDecoder {
             sr_settings,
-            cache: HashMap::new(),
+            direct_cache: DashMap::new(),
+            cache: DashMap::new(),
         }
     }
     /// Remove al the errors from the cache, you might need to/want to run this when a recoverable
@@ -109,7 +112,7 @@ impl<'a> AvroDecoder<'a> {
     ///
     /// # async fn doc() -> Result<(), reqwest::Error> {
     /// let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-    /// let mut decoder = AvroDecoder::new(sr_settings);
+    /// let decoder = AvroDecoder::new(sr_settings);
     /// let bytes = [0,0,0,0,2,6];
     ///
     /// let _m = mock("GET", "/schemas/ids/2?deleted=true")
@@ -138,7 +141,7 @@ impl<'a> AvroDecoder<'a> {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn remove_errors_from_cache(&mut self) {
+    pub fn remove_errors_from_cache(&self) {
         self.cache.retain(|_, v| match v.peek() {
             Some(r) => r.is_ok(),
             None => true,
@@ -146,7 +149,7 @@ impl<'a> AvroDecoder<'a> {
     }
     /// Decodes bytes into a value.
     /// The choice to use Option<&[u8]> as type us made so it plays nice with the BorrowedMessage
-    /// struct from rdkafka, for example if we have m: &'a BorrowedMessage and decoder: &'a mut
+    /// struct from rdkafka, for example if we have m: &'a BorrowedMessage and decoder: &'a
     /// Decoder we can use decoder.decode(m.payload()) to decode the payload or
     /// decoder.decode(m.key()) to get the decoded key.
     ///
@@ -156,7 +159,7 @@ impl<'a> AvroDecoder<'a> {
     /// use schema_registry_converter::async_impl::avro::AvroDecoder;
     /// async fn get_value (
     ///     msg: &'_ BorrowedMessage <'_>,
-    ///     decoder: &'_ mut AvroDecoder <'_>,
+    ///     decoder: &'_ AvroDecoder <'_>,
     /// ) -> Value{
     ///     match decoder.decode(msg.payload()).await{
     ///         Ok(r) => r.value,
@@ -164,7 +167,7 @@ impl<'a> AvroDecoder<'a> {
     ///     }
     /// }
     /// ```
-    pub async fn decode(&mut self, bytes: Option<&[u8]>) -> Result<DecodeResult, SRCError> {
+    pub async fn decode(&self, bytes: Option<&[u8]>) -> Result<DecodeResult, SRCError> {
         match get_bytes_result(bytes) {
             BytesResult::Null => Ok(DecodeResult {
                 name: None,
@@ -179,8 +182,8 @@ impl<'a> AvroDecoder<'a> {
     }
     /// The actual deserialization trying to get the id from the bytes to retrieve the schema, and
     /// using a reader transforms the bytes to a value.
-    async fn deserialize(&mut self, id: u32, bytes: &[u8]) -> Result<DecodeResult, SRCError> {
-        let schema = self.schema(id).clone().await?;
+    async fn deserialize(&self, id: u32, bytes: &[u8]) -> Result<DecodeResult, SRCError> {
+        let schema = self.get_schema(id).await?;
         let mut reader = Cursor::new(bytes);
         match from_avro_datum(&schema.parsed, &mut reader, None) {
             Ok(v) => Ok(DecodeResult {
@@ -194,9 +197,26 @@ impl<'a> AvroDecoder<'a> {
         }
     }
 
-    fn schema(&mut self, id: u32) -> &Shared<BoxFuture<'a, Result<AvroSchema, SRCError>>> {
+    async fn get_schema(&self, id: u32) -> Result<Arc<AvroSchema>, SRCError> {
+        match self.direct_cache.get(&id) {
+            None => {
+                let result = self.get_schema_by_shared_future(id).await;
+                if result.is_ok() {
+                    self.direct_cache.insert(id, result.clone().unwrap());
+                    self.cache.remove(&id);
+                };
+                result
+            }
+            Some(result) => Ok(result.value().clone()),
+        }
+    }
+
+    fn get_schema_by_shared_future(
+        &self,
+        id: u32,
+    ) -> Shared<BoxFuture<'a, Result<Arc<AvroSchema>, SRCError>>> {
         match self.cache.entry(id) {
-            Entry::Occupied(e) => &*e.into_mut(),
+            Entry::Occupied(e) => e.get().clone(),
             Entry::Vacant(e) => {
                 let sr_settings = self.sr_settings.clone();
                 let v = async move {
@@ -209,7 +229,7 @@ impl<'a> AvroDecoder<'a> {
                 }
                 .boxed()
                 .shared();
-                &*e.insert(v)
+                e.insert(v).value().clone()
             }
         }
     }
@@ -248,7 +268,7 @@ impl<'a> AvroDecoder<'a> {
 ///     .create();
 ///
 /// let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-/// let mut encoder = AvroEncoder::new(sr_settings);
+/// let encoder = AvroEncoder::new(sr_settings);
 ///
 /// let key_strategy = SubjectNameStrategy::TopicNameStrategy(String::from("heartbeat"), true);
 /// let bytes = encoder.encode(vec![("name", Value::String("Some name".to_owned()))], key_strategy).await;
@@ -265,7 +285,8 @@ impl<'a> AvroDecoder<'a> {
 #[derive(Debug)]
 pub struct AvroEncoder<'a> {
     sr_settings: SrSettings,
-    cache: HashMap<String, Shared<BoxFuture<'a, Result<AvroSchema, SRCError>>>, RandomState>,
+    direct_cache: DashMap<String, Arc<AvroSchema>>,
+    cache: DashMap<String, Shared<BoxFuture<'a, Result<Arc<AvroSchema>, SRCError>>>>,
 }
 
 impl<'a> AvroEncoder<'a> {
@@ -292,7 +313,7 @@ impl<'a> AvroEncoder<'a> {
     /// #    .create();
     ///
     /// let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-    /// let mut encoder = AvroEncoder::new(sr_settings);
+    /// let encoder = AvroEncoder::new(sr_settings);
     ///
     /// let strategy = SubjectNameStrategy::TopicRecordNameStrategyWithSchema(String::from("hb"), Box::from(SuppliedSchema {
     ///                 name: Some(String::from("nl.openweb.data.Heartbeat")),
@@ -308,7 +329,8 @@ impl<'a> AvroEncoder<'a> {
     pub fn new(sr_settings: SrSettings) -> AvroEncoder<'a> {
         AvroEncoder {
             sr_settings,
-            cache: HashMap::new(),
+            direct_cache: DashMap::new(),
+            cache: DashMap::new(),
         }
     }
     /// Remove al the errors from the cache, you might need to/want to run this when a recoverable
@@ -325,7 +347,7 @@ impl<'a> AvroEncoder<'a> {
     ///
     /// # async fn doc() -> Result<(), reqwest::Error> {
     /// let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-    /// let mut encoder = AvroEncoder::new(sr_settings);
+    /// let encoder = AvroEncoder::new(sr_settings);
     /// let strategy = SubjectNameStrategy::RecordNameStrategy(String::from("nl.openweb.data.Heartbeat"));
     ///
     /// let _m = mock("GET", "/subjects/nl.openweb.data.Heartbeat/versions/latest")
@@ -353,7 +375,7 @@ impl<'a> AvroEncoder<'a> {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn remove_errors_from_cache(&mut self) {
+    pub fn remove_errors_from_cache(&self) {
         self.cache.retain(|_, v| match v.peek() {
             Some(r) => r.is_ok(),
             None => true,
@@ -379,7 +401,7 @@ impl<'a> AvroEncoder<'a> {
     ///     .create();
     ///
     /// let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-    /// let mut encoder = AvroEncoder::new(sr_settings);
+    /// let encoder = AvroEncoder::new(sr_settings);
     /// let strategy = SubjectNameStrategy::TopicRecordNameStrategy(String::from("heartbeat"), String::from("nl.openweb.data.Heartbeat"));
     /// let bytes = encoder.encode(vec![("beat", Value::Long(3))], strategy).await;
     ///
@@ -388,13 +410,13 @@ impl<'a> AvroEncoder<'a> {
     /// # }
     /// ```
     pub async fn encode(
-        &mut self,
+        &self,
         values: Vec<(&str, Value)>,
         subject_name_strategy: SubjectNameStrategy,
     ) -> Result<Vec<u8>, SRCError> {
         let key = get_subject(&subject_name_strategy)?;
         let schema = self
-            .get_schema_and_id(key, subject_name_strategy)
+            .get_schema_and_id_by_shared_future(key, subject_name_strategy)
             .clone()
             .await?;
         values_to_bytes(&schema, values)
@@ -429,7 +451,7 @@ impl<'a> AvroEncoder<'a> {
     ///    }
     ///
     /// let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-    /// let mut encoder = AvroEncoder::new(sr_settings);
+    /// let encoder = AvroEncoder::new(sr_settings);
     /// let existing_schema_strategy = SubjectNameStrategy::TopicRecordNameStrategy(String::from("heartbeat"), String::from("nl.openweb.data.Heartbeat"));
     /// let bytes = encoder.encode_struct(Heartbeat{beat: 3}, &existing_schema_strategy).await;
     ///
@@ -449,25 +471,45 @@ impl<'a> AvroEncoder<'a> {
     /// # }
     /// ```
     pub async fn encode_struct(
-        &mut self,
+        &self,
         item: impl Serialize,
         subject_name_strategy: &SubjectNameStrategy,
     ) -> Result<Vec<u8>, SRCError> {
         let key = get_subject(subject_name_strategy)?;
         let schema = self
             .get_schema_and_id(key, subject_name_strategy.clone())
-            .clone()
             .await?;
         item_to_bytes(&schema, item)
     }
 
-    fn get_schema_and_id(
-        &mut self,
+    async fn get_schema_and_id(
+        &self,
         key: String,
         subject_name_strategy: SubjectNameStrategy,
-    ) -> &Shared<BoxFuture<'a, Result<AvroSchema, SRCError>>> {
+    ) -> Result<Arc<AvroSchema>, SRCError> {
+        match self.direct_cache.get(&key) {
+            None => {
+                let result = self
+                    .get_schema_and_id_by_shared_future(key.clone(), subject_name_strategy)
+                    .await;
+                if result.is_ok() {
+                    self.direct_cache
+                        .insert(key.clone(), result.clone().unwrap());
+                    self.cache.remove(&key);
+                };
+                result
+            }
+            Some(result) => Ok(result.value().clone()),
+        }
+    }
+
+    fn get_schema_and_id_by_shared_future(
+        &self,
+        key: String,
+        subject_name_strategy: SubjectNameStrategy,
+    ) -> Shared<BoxFuture<'a, Result<Arc<AvroSchema>, SRCError>>> {
         match self.cache.entry(key) {
-            Entry::Occupied(e) => &*e.into_mut(),
+            Entry::Occupied(e) => e.get().clone(),
             Entry::Vacant(e) => {
                 let sr_settings = self.sr_settings.clone();
                 let v = async move {
@@ -480,7 +522,7 @@ impl<'a> AvroEncoder<'a> {
                 }
                 .boxed()
                 .shared();
-                &*e.insert(v)
+                e.insert(v).value().clone()
             }
         }
     }
@@ -489,7 +531,7 @@ impl<'a> AvroEncoder<'a> {
 async fn to_avro_schema(
     sr_settings: &SrSettings,
     registered_schema: RegisteredSchema,
-) -> Result<AvroSchema, SRCError> {
+) -> Result<Arc<AvroSchema>, SRCError> {
     match registered_schema.schema_type {
         SchemaType::Avro => (),
         t => {
@@ -514,11 +556,11 @@ async fn to_avro_schema(
         }
     };
     match Schema::parse(&main_schema) {
-        Ok(parsed) => Ok(AvroSchema {
+        Ok(parsed) => Ok(Arc::new(AvroSchema {
             id: registered_schema.id,
             raw: registered_schema.schema,
             parsed,
-        }),
+        })),
         Err(e) => Err(SRCError::non_retryable_with_cause(
             e,
             &*format!(
@@ -583,7 +625,7 @@ mod tests {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
         let decoder = AvroDecoder::new(sr_settings);
         assert_eq!(
-            "AvroDecoder { sr_settings: SrSettings { urls: [\"http://127.0.0.1:1234\"], client: Client { accepts: Accepts, proxies: [Proxy(System({}), None)], referer: true, default_headers: {\"accept\": \"*/*\"} }, authorization: None }, cache: {} }"
+            "AvroDecoder { sr_settings: SrSettings { urls: [\"http://127.0.0.1:1234\"], client: Client { accepts: Accepts, proxies: [Proxy(System({}), None)], referer: true, default_headers: {\"accept\": \"*/*\"} }, authorization: None }, direct_cache: {}, cache: {} }"
                 .to_owned(),
             format!("{:?}", decoder)
         )
@@ -598,7 +640,7 @@ mod tests {
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut decoder = AvroDecoder::new(sr_settings);
+        let decoder = AvroDecoder::new(sr_settings);
         let heartbeat = decoder
             .decode(Some(&[0, 0, 0, 0, 1, 6]))
             .await
@@ -626,7 +668,7 @@ mod tests {
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut decoder = AvroDecoder::new(sr_settings);
+        let decoder = AvroDecoder::new(sr_settings);
         let heartbeat = decoder.decode(Some(&[0, 0, 0, 0, 1, 6])).await;
         let item = match heartbeat {
             Ok(r) => {
@@ -643,7 +685,7 @@ mod tests {
     #[tokio::test]
     async fn test_decoder_no_bytes() {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut decoder = AvroDecoder::new(sr_settings);
+        let decoder = AvroDecoder::new(sr_settings);
         let heartbeat = decoder.decode(None).await.unwrap().value;
 
         assert_eq!(heartbeat, Value::Null)
@@ -652,7 +694,7 @@ mod tests {
     #[tokio::test]
     async fn test_decoder_with_name_no_bytes() {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut decoder = AvroDecoder::new(sr_settings);
+        let decoder = AvroDecoder::new(sr_settings);
         let heartbeat = decoder.decode(None).await.unwrap();
 
         assert_eq!(
@@ -667,7 +709,7 @@ mod tests {
     #[tokio::test]
     async fn test_decoder_magic_byte_not_present() {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut decoder = AvroDecoder::new(sr_settings);
+        let decoder = AvroDecoder::new(sr_settings);
         let result = decoder.decode(Some(&[1, 0, 0, 0, 1, 6])).await.unwrap_err();
 
         assert_eq!(
@@ -679,7 +721,7 @@ mod tests {
     #[tokio::test]
     async fn test_decoder_with_name_magic_byte_not_present() {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut decoder = AvroDecoder::new(sr_settings);
+        let decoder = AvroDecoder::new(sr_settings);
         let result = decoder.decode(Some(&[1, 0, 0, 0, 1, 6])).await.unwrap_err();
 
         assert_eq!(
@@ -691,7 +733,7 @@ mod tests {
     #[tokio::test]
     async fn test_decoder_not_enough_bytes() {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut decoder = AvroDecoder::new(sr_settings);
+        let decoder = AvroDecoder::new(sr_settings);
         let result = decoder.decode(Some(&[0, 0, 0, 0])).await.unwrap_err();
 
         assert_eq!(
@@ -709,7 +751,7 @@ mod tests {
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut decoder = AvroDecoder::new(sr_settings);
+        let decoder = AvroDecoder::new(sr_settings);
         let error = decoder.decode(Some(&[0, 0, 0, 0, 1])).await.unwrap_err();
 
         assert_eq!(error.error, "Could not transform bytes using schema")
@@ -724,7 +766,7 @@ mod tests {
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut decoder = AvroDecoder::new(sr_settings);
+        let decoder = AvroDecoder::new(sr_settings);
         let error = decoder.decode(Some(&[0, 0, 0, 0, 1])).await.unwrap_err();
 
         assert_eq!(error.error, "Could not transform bytes using schema")
@@ -739,7 +781,7 @@ mod tests {
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut decoder = AvroDecoder::new(sr_settings);
+        let decoder = AvroDecoder::new(sr_settings);
         let heartbeat = decoder.decode(Some(&[0, 0, 0, 0, 1, 6])).await.unwrap_err();
 
         assert_eq!(
@@ -764,7 +806,7 @@ mod tests {
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut decoder = AvroDecoder::new(sr_settings);
+        let decoder = AvroDecoder::new(sr_settings);
         let heartbeat = decoder.decode(Some(&[0, 0, 0, 0, 1, 6])).await.unwrap_err();
 
         assert_eq!(
@@ -783,7 +825,7 @@ mod tests {
     #[tokio::test]
     async fn test_decoder_schema_registry_unavailable() {
         let sr_settings = SrSettings::new(String::from("http://bogus"));
-        let mut decoder = AvroDecoder::new(sr_settings);
+        let decoder = AvroDecoder::new(sr_settings);
         let err = decoder
             .decode(Some(&[0, 0, 0, 10, 1, 6]))
             .await
@@ -800,7 +842,7 @@ mod tests {
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut decoder = AvroDecoder::new(sr_settings);
+        let decoder = AvroDecoder::new(sr_settings);
         let err = decoder.decode(Some(&[0, 0, 0, 0, 1, 6])).await.unwrap_err();
 
         assert_eq!(
@@ -818,7 +860,7 @@ mod tests {
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut decoder = AvroDecoder::new(sr_settings);
+        let decoder = AvroDecoder::new(sr_settings);
         let err = decoder.decode(Some(&[0, 0, 0, 0, 1, 6])).await.unwrap_err();
 
         assert_eq!(
@@ -836,7 +878,7 @@ mod tests {
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut decoder = AvroDecoder::new(sr_settings);
+        let decoder = AvroDecoder::new(sr_settings);
         let cac = decoder
             .decode(Some(&[
                 0, 0, 0, 0, 6, 204, 240, 237, 74, 227, 188, 75, 46, 183, 163, 122, 214, 178, 72,
@@ -867,7 +909,7 @@ mod tests {
     #[tokio::test]
     async fn test_decoder_cache() {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut decoder = AvroDecoder::new(sr_settings);
+        let decoder = AvroDecoder::new(sr_settings);
         let bytes = [0, 0, 0, 0, 2, 6];
 
         let _m = mock("GET", "/schemas/ids/2?deleted=true")
@@ -906,7 +948,7 @@ mod tests {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
         let encoder = AvroEncoder::new(sr_settings);
         assert_eq!(
-            "AvroEncoder { sr_settings: SrSettings { urls: [\"http://127.0.0.1:1234\"], client: Client { accepts: Accepts, proxies: [Proxy(System({}), None)], referer: true, default_headers: {\"accept\": \"*/*\"} }, authorization: None }, cache: {} }"
+            "AvroEncoder { sr_settings: SrSettings { urls: [\"http://127.0.0.1:1234\"], client: Client { accepts: Accepts, proxies: [Proxy(System({}), None)], referer: true, default_headers: {\"accept\": \"*/*\"} }, authorization: None }, direct_cache: {}, cache: {} }"
                 .to_owned(),
             format!("{:?}", encoder)
         )
@@ -927,7 +969,7 @@ mod tests {
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut encoder = AvroEncoder::new(sr_settings);
+        let encoder = AvroEncoder::new(sr_settings);
 
         let value_strategy =
             SubjectNameStrategy::TopicNameStrategy(String::from("heartbeat"), false);
@@ -966,7 +1008,7 @@ mod tests {
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut encoder = AvroEncoder::new(sr_settings);
+        let encoder = AvroEncoder::new(sr_settings);
 
         let value_strategy =
             SubjectNameStrategy::TopicNameStrategy(String::from("heartbeat"), false);
@@ -1001,7 +1043,7 @@ mod tests {
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut encoder = AvroEncoder::new(sr_settings);
+        let encoder = AvroEncoder::new(sr_settings);
         let strategy = SubjectNameStrategy::TopicRecordNameStrategy(
             String::from("heartbeat"),
             String::from("nl.openweb.data.Heartbeat"),
@@ -1023,7 +1065,7 @@ mod tests {
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut encoder = AvroEncoder::new(sr_settings);
+        let encoder = AvroEncoder::new(sr_settings);
         let strategy = SubjectNameStrategy::TopicRecordNameStrategy(
             String::from("heartbeat"),
             String::from("nl.openweb.data.Heartbeat"),
@@ -1042,7 +1084,7 @@ mod tests {
     #[tokio::test]
     async fn test_encoder_schema_registry_unavailable() {
         let sr_settings = SrSettings::new(String::from("http://bogus"));
-        let mut encoder = AvroEncoder::new(sr_settings);
+        let encoder = AvroEncoder::new(sr_settings);
         let strategy = SubjectNameStrategy::TopicRecordNameStrategy(
             String::from("heartbeat"),
             String::from("nl.openweb.data.Balance"),
@@ -1058,7 +1100,7 @@ mod tests {
     #[tokio::test]
     async fn test_encoder_unknown_protocol() {
         let sr_settings = SrSettings::new(String::from("hxxx://bogus"));
-        let mut encoder = AvroEncoder::new(sr_settings);
+        let encoder = AvroEncoder::new(sr_settings);
         let strategy = SubjectNameStrategy::TopicRecordNameStrategy(
             String::from("heartbeat"),
             String::from("nl.openweb.data.Balance"),
@@ -1082,7 +1124,7 @@ mod tests {
     #[tokio::test]
     async fn test_encoder_schema_registry_unavailable_with_record() {
         let sr_settings = SrSettings::new(String::from("http://bogus"));
-        let mut encoder = AvroEncoder::new(sr_settings);
+        let encoder = AvroEncoder::new(sr_settings);
         let strategy = SubjectNameStrategy::RecordNameStrategyWithSchema(Box::from(
             SuppliedSchema {
                 name: Some(String::from("nl.openweb.data.Balance")),
@@ -1104,7 +1146,7 @@ mod tests {
     #[tokio::test]
     async fn test_encode_cache() {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut encoder = AvroEncoder::new(sr_settings);
+        let encoder = AvroEncoder::new(sr_settings);
         let strategy =
             SubjectNameStrategy::RecordNameStrategy(String::from("nl.openweb.data.Heartbeat"));
 
@@ -1162,7 +1204,7 @@ mod tests {
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut encoder = AvroEncoder::new(sr_settings);
+        let encoder = AvroEncoder::new(sr_settings);
 
         let key_strategy = SubjectNameStrategy::TopicNameStrategyWithSchema(
             String::from("heartbeat"),
@@ -1215,7 +1257,7 @@ mod tests {
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut encoder = AvroEncoder::new(sr_settings);
+        let encoder = AvroEncoder::new(sr_settings);
 
         let strategy = SubjectNameStrategy::RecordNameStrategyWithSchema(Box::from(
             SuppliedSchema {
@@ -1243,7 +1285,7 @@ mod tests {
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut encoder = AvroEncoder::new(sr_settings);
+        let encoder = AvroEncoder::new(sr_settings);
 
         let strategy = SubjectNameStrategy::RecordNameStrategyWithSchema(Box::from(
             SuppliedSchema {
@@ -1275,7 +1317,7 @@ mod tests {
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut encoder = AvroEncoder::new(sr_settings);
+        let encoder = AvroEncoder::new(sr_settings);
 
         let strategy = SubjectNameStrategy::TopicRecordNameStrategyWithSchema(
             String::from("hb"),
@@ -1298,7 +1340,7 @@ mod tests {
     #[tokio::test]
     async fn test_encode_topic_record_name_strategy_schema_registry_not_available() {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut encoder = AvroEncoder::new(sr_settings);
+        let encoder = AvroEncoder::new(sr_settings);
 
         let strategy = SubjectNameStrategy::TopicRecordNameStrategyWithSchema(
             String::from("hb"),
@@ -1369,7 +1411,7 @@ mod tests {
     #[tokio::test]
     async fn test_primitive_schema() {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut encoder = AvroEncoder::new(sr_settings);
+        let encoder = AvroEncoder::new(sr_settings);
 
         let _n = mock("POST", "/subjects/heartbeat-key/versions")
             .with_status(200)
@@ -1397,7 +1439,7 @@ mod tests {
     #[tokio::test]
     async fn test_primitive_schema_incompatible_strategy() {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut encoder = AvroEncoder::new(sr_settings);
+        let encoder = AvroEncoder::new(sr_settings);
 
         let primitive_schema_strategy =
             SubjectNameStrategy::RecordNameStrategyWithSchema(get_supplied_schema(&Schema::String));
@@ -1416,7 +1458,7 @@ mod tests {
     #[tokio::test]
     async fn replace_referred_schema() {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut decoder = AvroDecoder::new(sr_settings);
+        let decoder = AvroDecoder::new(sr_settings);
         let bytes = [
             0, 0, 0, 0, 5, 97, 19, 76, 118, 247, 191, 70, 148, 162, 9, 233, 76, 211, 29, 141, 180,
             0, 2, 2, 12, 83, 116, 114, 105, 110, 103, 2, 12, 83, 84, 82, 73, 78, 71, 12, 115, 116,

@@ -28,6 +28,9 @@ default = ["futures","native_tls"]
 [dependencies.byteorder]
 version = "^1.4"
 
+[dependencies.dashmap]
+version = "^4.0"
+
 [dependencies.failure]
 version = "^0.1"
 

@@ -4,32 +4,30 @@ use crate::error::SRCError;
 use crate::schema_registry_common::SubjectNameStrategy;
 use serde_json::Value;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
 /// A decoder used to transform bytes to a [DecodeResult], its much like [JsonDecoder] but includes a mutex, so the user does not need to care about mutability.
 pub struct EasyJsonDecoder {
-    decoder: Arc<Mutex<JsonDecoder<'static>>>,
+    decoder: Arc<JsonDecoder<'static>>,
 }
 
 impl EasyJsonDecoder {
     pub fn new(sr_settings: SrSettings) -> EasyJsonDecoder {
-        let decoder = Arc::new(Mutex::new(JsonDecoder::new(sr_settings)));
+        let decoder = Arc::new(JsonDecoder::new(sr_settings));
         EasyJsonDecoder { decoder }
     }
     pub async fn decode(&self, bytes: Option<&[u8]>) -> Result<Option<DecodeResult>, SRCError> {
-        let mut lock = self.decoder.lock().await;
-        lock.decode(bytes).await
+        self.decoder.decode(bytes).await
     }
 }
 
 /// An encoder used to transform a [Value] to bytes, its much like [JsonEncoder] but includes a mutex, so the user does not need to care about mutability.
 pub struct EasyJsonEncoder {
-    encoder: Arc<Mutex<JsonEncoder<'static>>>,
+    encoder: Arc<JsonEncoder<'static>>,
 }
 
 impl EasyJsonEncoder {
     pub fn new(sr_settings: SrSettings) -> EasyJsonEncoder {
-        let encoder = Arc::new(Mutex::new(JsonEncoder::new(sr_settings)));
+        let encoder = Arc::new(JsonEncoder::new(sr_settings));
         EasyJsonEncoder { encoder }
     }
     pub async fn encode(
@@ -37,8 +35,7 @@ impl EasyJsonEncoder {
         value: &Value,
         subject_name_strategy: SubjectNameStrategy,
     ) -> Result<Vec<u8>, SRCError> {
-        let mut lock = self.encoder.lock().await;
-        lock.encode(value, subject_name_strategy).await
+        self.encoder.encode(value, subject_name_strategy).await
     }
 }
 

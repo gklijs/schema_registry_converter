@@ -1,8 +1,7 @@
-use std::collections::HashSet;
-
 use avro_rs::schema::{Name, Schema};
 use avro_rs::types::{Record, Value};
 use avro_rs::{to_avro_datum, to_value};
+use dashmap::DashMap;
 use serde::ser::Serialize;
 use serde_json::{value, Map};
 
@@ -27,12 +26,12 @@ pub struct DecodeResult {
 fn might_replace(
     val: value::Value,
     child: &value::Value,
-    replace_values: &HashSet<String>,
+    replace_values: &DashMap<String, String>,
 ) -> value::Value {
     match val {
         value::Value::Object(v) => replace_in_map(v, child, replace_values),
         value::Value::Array(v) => replace_in_array(&*v, child, replace_values),
-        value::Value::String(s) if replace_values.contains(&*s) => child.clone(),
+        value::Value::String(s) if replace_values.contains_key(&*s) => child.clone(),
         p => p,
     }
 }
@@ -40,7 +39,7 @@ fn might_replace(
 fn replace_in_array(
     parent_array: &[value::Value],
     child: &value::Value,
-    replace_values: &HashSet<String>,
+    replace_values: &DashMap<String, String>,
 ) -> value::Value {
     value::Value::Array(
         parent_array
@@ -53,7 +52,7 @@ fn replace_in_array(
 fn replace_in_map(
     parent_map: Map<String, value::Value>,
     child: &value::Value,
-    replace_values: &HashSet<String>,
+    replace_values: &DashMap<String, String>,
 ) -> value::Value {
     value::Value::Object(
         parent_map
@@ -73,18 +72,19 @@ pub(crate) fn replace_reference(parent: value::Value, child: value::Value) -> va
         value::Value::Object(v) => (v["name"].as_str(), v["namespace"].as_str()),
         _ => return parent,
     };
-    let mut replace_values: HashSet<String> = HashSet::new();
+    let replace_values: DashMap<String, String> = DashMap::new();
     match name {
         Some(v) => match namespace {
             Some(u) => {
-                replace_values.insert(format!(".{}.{}", u, v));
+                let key = format!(".{}.{}", u, v);
+                replace_values.insert(key.clone(), key);
                 if parent["namespace"].as_str() == namespace {
-                    replace_values.insert(String::from(v))
-                } else {
-                    true
+                    replace_values.insert(String::from(v), String::from(v));
                 }
             }
-            None => replace_values.insert(String::from(v)),
+            None => {
+                replace_values.insert(String::from(v), String::from(v));
+            }
         },
         None => return parent,
     };
@@ -107,7 +107,7 @@ fn to_bytes(avro_schema: &AvroSchema, record: Value) -> Result<Vec<u8>, SRCError
 
 /// Using the schema with a vector of values the values will be correctly deserialized according to
 /// the avro specification.
-pub(crate) fn values_to_bytes<'b>(
+pub(crate) fn values_to_bytes(
     avro_schema: &AvroSchema,
     values: Vec<(&str, Value)>,
 ) -> Result<Vec<u8>, SRCError> {
@@ -171,9 +171,10 @@ mod tests {
     use avro_rs::types::Value;
     use avro_rs::Schema;
 
+    use test_utils::{Atype, ConfirmAccountCreation, Heartbeat};
+
     use crate::avro_common::{values_to_bytes, AvroSchema};
     use crate::error::SRCError;
-    use test_utils::{Atype, ConfirmAccountCreation, Heartbeat};
 
     #[test]
     fn to_bytes_no_record() {
@@ -203,6 +204,7 @@ mod tests {
         let err = values_to_bytes(&schema, vec![("beat", Value::Long(3))]).unwrap_err();
         assert_eq!(err.error, "Could not get Avro bytes")
     }
+
     #[test]
     fn item_to_bytes_no_tranfer_wrong() {
         let schema = AvroSchema {
