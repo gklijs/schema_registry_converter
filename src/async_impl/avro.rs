@@ -83,8 +83,10 @@ use crate::schema_registry_common::{
 pub struct AvroDecoder<'a> {
     sr_settings: SrSettings,
     direct_cache: DashMap<u32, Arc<AvroSchema>>,
-    cache: DashMap<u32, Shared<BoxFuture<'a, Result<Arc<AvroSchema>, SRCError>>>>,
+    cache: DashMap<u32, SharedFutureSchema<'a>>,
 }
+
+type SharedFutureSchema<'a> = Shared<BoxFuture<'a, Result<Arc<AvroSchema>, SRCError>>>;
 
 impl<'a> AvroDecoder<'a> {
     /// Creates a new decoder which will use the supplied url to fetch the schema's since the schema
@@ -201,7 +203,7 @@ impl<'a> AvroDecoder<'a> {
         match self.direct_cache.get(&id) {
             None => {
                 let result = self.get_schema_by_shared_future(id).await;
-                if result.is_ok() {
+                if result.is_ok() && !self.direct_cache.contains_key(&id) {
                     self.direct_cache.insert(id, result.clone().unwrap());
                     self.cache.remove(&id);
                 };
@@ -214,7 +216,7 @@ impl<'a> AvroDecoder<'a> {
     fn get_schema_by_shared_future(
         &self,
         id: u32,
-    ) -> Shared<BoxFuture<'a, Result<Arc<AvroSchema>, SRCError>>> {
+    ) -> SharedFutureSchema<'a> {
         match self.cache.entry(id) {
             Entry::Occupied(e) => e.get().clone(),
             Entry::Vacant(e) => {
@@ -286,7 +288,7 @@ impl<'a> AvroDecoder<'a> {
 pub struct AvroEncoder<'a> {
     sr_settings: SrSettings,
     direct_cache: DashMap<String, Arc<AvroSchema>>,
-    cache: DashMap<String, Shared<BoxFuture<'a, Result<Arc<AvroSchema>, SRCError>>>>,
+    cache: DashMap<String, SharedFutureSchema<'a>>,
 }
 
 impl<'a> AvroEncoder<'a> {
@@ -492,7 +494,7 @@ impl<'a> AvroEncoder<'a> {
                 let result = self
                     .get_schema_and_id_by_shared_future(key.clone(), subject_name_strategy)
                     .await;
-                if result.is_ok() {
+                if result.is_ok() && !self.direct_cache.contains_key(&key) {
                     self.direct_cache
                         .insert(key.clone(), result.clone().unwrap());
                     self.cache.remove(&key);
@@ -507,7 +509,7 @@ impl<'a> AvroEncoder<'a> {
         &self,
         key: String,
         subject_name_strategy: SubjectNameStrategy,
-    ) -> Shared<BoxFuture<'a, Result<Arc<AvroSchema>, SRCError>>> {
+    ) -> SharedFutureSchema<'a> {
         match self.cache.entry(key) {
             Entry::Occupied(e) => e.get().clone(),
             Entry::Vacant(e) => {

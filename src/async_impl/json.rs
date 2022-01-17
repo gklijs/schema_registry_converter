@@ -1,4 +1,5 @@
 use std::str::FromStr;
+use std::sync::Arc;
 
 use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
@@ -26,14 +27,18 @@ use crate::schema_registry_common::{
 #[derive(Debug)]
 pub struct JsonEncoder<'a> {
     sr_settings: SrSettings,
-    cache: DashMap<String, Shared<BoxFuture<'a, Result<JsonSchema, SRCError>>>>,
+    direct_cache: DashMap<String, Arc<JsonSchema>>,
+    cache: DashMap<String, SharedFutureSchema<'a>>,
 }
+
+type SharedFutureSchema<'a> = Shared<BoxFuture<'a, Result<Arc<JsonSchema>, SRCError>>>;
 
 impl<'a> JsonEncoder<'a> {
     /// Creates a new json encoder
     pub fn new(sr_settings: SrSettings) -> JsonEncoder<'a> {
         JsonEncoder {
             sr_settings,
+            direct_cache: DashMap::new(),
             cache: DashMap::new(),
         }
     }
@@ -52,24 +57,48 @@ impl<'a> JsonEncoder<'a> {
         subject_name_strategy: SubjectNameStrategy,
     ) -> Result<Vec<u8>, SRCError> {
         let key = get_subject(&subject_name_strategy)?;
-        let schema = self.get_schema(key, subject_name_strategy).await?;
+        let schema = &*self.get_schema(key, subject_name_strategy).await?;
         let id = schema.id;
-        validate(schema, value)?;
+        validate(schema.clone(), value)?;
         to_bytes(id, value)
     }
 
-    fn get_schema(
+    async fn get_schema(
         &self,
         key: String,
         subject_name_strategy: SubjectNameStrategy,
-    ) -> Shared<BoxFuture<'a, Result<JsonSchema, SRCError>>> {
+    ) -> Result<Arc<JsonSchema>, SRCError> {
+        match self.direct_cache.get(&key) {
+            None => {
+                let result = self
+                    .get_schema_by_shared_future(key.clone(), subject_name_strategy)
+                    .await;
+                if result.is_ok() && !self.direct_cache.contains_key(&key) {
+                    self.direct_cache
+                        .insert(key.clone(), result.clone().unwrap());
+                    self.cache.remove(&key);
+                };
+                result
+            }
+            Some(result) => Ok(result.value().clone()),
+        }
+    }
+
+    fn get_schema_by_shared_future(
+        &self,
+        key: String,
+        subject_name_strategy: SubjectNameStrategy,
+    ) -> SharedFutureSchema<'a> {
         match self.cache.entry(key) {
             Entry::Occupied(e) => e.get().clone(),
             Entry::Vacant(e) => {
                 let sr_settings = self.sr_settings.clone();
                 let v = async move {
                     match get_schema_by_subject(&sr_settings, &subject_name_strategy).await {
-                        Ok(schema) => to_json_schema(&sr_settings, None, schema).await,
+                        Ok(schema) => match to_json_schema(&sr_settings, None, schema).await {
+                            Ok(s) => Ok(Arc::new(s)),
+                            Err(e) => Err(e),
+                        },
                         Err(e) => Err(e.into_cache()),
                     }
                 }
@@ -114,7 +143,8 @@ pub struct JsonSchema {
 #[derive(Debug)]
 pub struct JsonDecoder<'a> {
     sr_settings: SrSettings,
-    cache: DashMap<u32, Shared<BoxFuture<'a, Result<JsonSchema, SRCError>>>>,
+    direct_cache: DashMap<u32, Arc<JsonSchema>>,
+    cache: DashMap<u32, SharedFutureSchema<'a>>,
 }
 
 impl<'a> JsonDecoder<'a> {
@@ -126,6 +156,7 @@ impl<'a> JsonDecoder<'a> {
     pub fn new(sr_settings: SrSettings) -> JsonDecoder<'a> {
         JsonDecoder {
             sr_settings,
+            direct_cache: DashMap::new(),
             cache: DashMap::new(),
         }
     }
@@ -152,25 +183,49 @@ impl<'a> JsonDecoder<'a> {
     /// The actual deserialization trying to get the id from the bytes to retrieve the schema, and
     /// using a reader transforms the bytes to a value.
     async fn deserialize(&self, id: u32, bytes: &[u8]) -> Result<DecodeResult, SRCError> {
-        let schema = self.schema(id).await?;
+        let schema = &*self.get_schema(id).await?;
         match serde_json::from_slice(bytes) {
-            Ok(value) => Ok(DecodeResult { schema, value }),
+            Ok(value) => Ok(DecodeResult {
+                schema: schema.clone(),
+                value,
+            }),
             Err(e) => Err(SRCError::non_retryable_with_cause(
                 e,
                 "could not create value from bytes",
             )),
         }
     }
+
+    async fn get_schema(&self, id: u32) -> Result<Arc<JsonSchema>, SRCError> {
+        match self.direct_cache.get(&id) {
+            None => {
+                let result = self.get_schema_by_shared_future(id).await;
+                if result.is_ok() && !self.direct_cache.contains_key(&id) {
+                    self.direct_cache.insert(id, result.clone().unwrap());
+                    self.cache.remove(&id);
+                };
+                result
+            }
+            Some(result) => Ok(result.value().clone()),
+        }
+    }
+
     /// Gets the Context object, either from the cache, or from the schema registry and then putting
     /// it into the cache.
-    fn schema(&self, id: u32) -> Shared<BoxFuture<'a, Result<JsonSchema, SRCError>>> {
+    fn get_schema_by_shared_future(
+        &self,
+        id: u32,
+    ) -> SharedFutureSchema<'a> {
         match self.cache.entry(id) {
             Entry::Occupied(e) => e.get().clone(),
             Entry::Vacant(e) => {
                 let sr_settings = self.sr_settings.clone();
                 let v = async move {
                     match get_schema_by_id_and_type(id, &sr_settings, SchemaType::Json).await {
-                        Ok(schema) => to_json_schema(&sr_settings, None, schema).await,
+                        Ok(schema) => match to_json_schema(&sr_settings, None, schema).await {
+                            Ok(v) => Ok(Arc::new(v)),
+                            Err(e) => Err(e),
+                        },
                         Err(e) => Err(e.into_cache()),
                     }
                 }
