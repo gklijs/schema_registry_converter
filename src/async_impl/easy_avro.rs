@@ -7,7 +7,7 @@ use avro_rs::types::Value;
 use serde::Serialize;
 use std::sync::Arc;
 
-/// A decoder used to transform bytes to a [DecodeResult], its much like [AvroDecoder] but includes a mutex, so the user does not need to care about mutability.
+/// A decoder used to transform bytes to a [DecodeResult], its much like [AvroDecoder] but wrapped with an arc to make it easier.
 pub struct EasyAvroDecoder {
     decoder: Arc<AvroDecoder<'static>>,
 }

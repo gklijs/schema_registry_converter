@@ -20,7 +20,7 @@ impl EasyProtoRawDecoder {
     }
 }
 
-/// An encoder used to transform the proto bytes to bytes compatible with confluent schema registry, its much like [ProtoRawEncoder] but includes a mutex, so the user does not need to care about mutability.
+/// An encoder used to transform the proto bytes to bytes compatible with confluent schema registry, its much like [ProtoRawEncoder] but wrapped with an arc to make it easier.
 /// This wil just add the magic byte, schema reference, and message reference. The bytes should already be valid proto bytes for the schema used.
 /// When a schema with multiple messages is used the full_name needs to be supplied to properly encode the message reference.
 pub struct EasyProtoRawEncoder {

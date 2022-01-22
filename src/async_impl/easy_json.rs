@@ -5,7 +5,7 @@ use crate::schema_registry_common::SubjectNameStrategy;
 use serde_json::Value;
 use std::sync::Arc;
 
-/// A decoder used to transform bytes to a [DecodeResult], its much like [JsonDecoder] but includes a mutex, so the user does not need to care about mutability.
+/// A decoder used to transform bytes to a [DecodeResult], its much like [JsonDecoder] but wrapped with an arc to make it easier.
 pub struct EasyJsonDecoder {
     decoder: Arc<JsonDecoder<'static>>,
 }

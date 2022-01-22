@@ -1,7 +1,7 @@
-use std::collections::hash_map::{Entry, RandomState};
-use std::collections::HashMap;
-
 use bytes::Bytes;
+use dashmap::mapref::entry::Entry;
+use dashmap::DashMap;
+use std::sync::Arc;
 
 use crate::blocking::schema_registry::{
     get_referenced_schema, get_schema_by_id_and_type, SrSettings,
@@ -15,7 +15,7 @@ use protofish::decode::{MessageValue, Value};
 #[derive(Debug)]
 pub struct ProtoDecoder {
     sr_settings: SrSettings,
-    cache: HashMap<u32, Result<DecodeContext, SRCError>, RandomState>,
+    cache: DashMap<u32, Result<Arc<DecodeContext>, SRCError>>,
 }
 
 impl ProtoDecoder {
@@ -27,21 +27,21 @@ impl ProtoDecoder {
     pub fn new(sr_settings: SrSettings) -> ProtoDecoder {
         ProtoDecoder {
             sr_settings,
-            cache: HashMap::new(),
+            cache: DashMap::new(),
         }
     }
     /// Remove al the errors from the cache, you might need to/want to run this when a recoverable
     /// error is met. Errors are also cashed to prevent trying to get schema's that either don't
     /// exist or can't be parsed.
-    pub fn remove_errors_from_cache(&mut self) {
+    pub fn remove_errors_from_cache(&self) {
         self.cache.retain(|_, v| v.is_ok());
     }
     /// Decodes bytes into a value.
     /// The choice to use Option<&[u8]> as type us made so it plays nice with the BorrowedMessage
-    /// struct from rdkafka, for example if we have m: &'a BorrowedMessage and decoder: &'a mut
+    /// struct from rdkafka, for example if we have m: &'a BorrowedMessage and decoder: &'a
     /// Decoder we can use decoder.decode(m.payload()) to decode the payload or
     /// decoder.decode(m.key()) to get the decoded key.
-    pub fn decode(&mut self, bytes: Option<&[u8]>) -> Result<Value, SRCError> {
+    pub fn decode(&self, bytes: Option<&[u8]>) -> Result<Value, SRCError> {
         match get_bytes_result(bytes) {
             BytesResult::Null => Ok(Value::Bytes(Bytes::new())),
             BytesResult::Valid(id, bytes) => {
@@ -52,7 +52,7 @@ impl ProtoDecoder {
     }
     /// The actual deserialization trying to get the id from the bytes to retrieve the schema, and
     /// using a reader transforms the bytes to a value.
-    fn deserialize(&mut self, id: u32, bytes: &[u8]) -> Result<MessageValue, SRCError> {
+    fn deserialize(&self, id: u32, bytes: &[u8]) -> Result<MessageValue, SRCError> {
         match self.context(id) {
             Ok(s) => {
                 let (index, data) = to_index_and_data(bytes);
@@ -60,21 +60,21 @@ impl ProtoDecoder {
                 let message_info = s.context.get_message(&full_name).unwrap();
                 Ok(message_info.decode(&data, &s.context))
             }
-            Err(e) => Err(Clone::clone(e)),
+            Err(e) => Err(e),
         }
     }
     /// Gets the Context object, either from the cache, or from the schema registry and then putting
     /// it into the cache.
-    fn context(&mut self, id: u32) -> &Result<DecodeContext, SRCError> {
+    fn context(&self, id: u32) -> Result<Arc<DecodeContext>, SRCError> {
         match self.cache.entry(id) {
-            Entry::Occupied(e) => &*e.into_mut(),
+            Entry::Occupied(e) => e.get().clone(),
             Entry::Vacant(e) => {
                 let v = match get_schema_by_id_and_type(id, &self.sr_settings, SchemaType::Protobuf)
                 {
                     Ok(v) => to_resolve_context(&self.sr_settings, v),
                     Err(e) => Err(e.into_cache()),
                 };
-                &*e.insert(v)
+                e.insert(v).value().clone()
             }
         }
     }
@@ -102,12 +102,12 @@ struct DecodeContext {
 fn to_resolve_context(
     sr_settings: &SrSettings,
     registered_schema: RegisteredSchema,
-) -> Result<DecodeContext, SRCError> {
+) -> Result<Arc<DecodeContext>, SRCError> {
     let resolver = MessageResolver::new(&registered_schema.schema);
     let mut files = Vec::new();
     add_files(sr_settings, registered_schema, &mut files)?;
     match Context::parse(&files) {
-        Ok(context) => Ok(DecodeContext { resolver, context }),
+        Ok(context) => Ok(Arc::new(DecodeContext { resolver, context })),
         Err(e) => Err(SRCError::non_retryable_with_cause(
             e,
             "Error creating proto context",
@@ -137,7 +137,7 @@ mod tests {
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut decoder = ProtoDecoder::new(sr_settings);
+        let decoder = ProtoDecoder::new(sr_settings);
         let heartbeat = decoder.decode(Some(get_proto_hb_101()));
 
         let message = match heartbeat {
@@ -152,7 +152,7 @@ mod tests {
     #[test]
     fn test_decoder_cache() {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut decoder = ProtoDecoder::new(sr_settings);
+        let decoder = ProtoDecoder::new(sr_settings);
         let error = decoder.decode(Some(get_proto_hb_101())).unwrap_err();
 
         assert_eq!(true, error.cached);
@@ -196,7 +196,7 @@ mod tests {
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut decoder = ProtoDecoder::new(sr_settings);
+        let decoder = ProtoDecoder::new(sr_settings);
         let proto_test = decoder.decode(Some(get_proto_complex_proto_test_message()));
 
         let message = match proto_test {

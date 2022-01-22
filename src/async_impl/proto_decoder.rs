@@ -47,7 +47,7 @@ impl<'a> ProtoDecoder<'a> {
     }
     /// Decodes bytes into a value.
     /// The choice to use Option<&[u8]> as type us made so it plays nice with the BorrowedMessage
-    /// struct from rdkafka, for example if we have m: &'a BorrowedMessage and decoder: &'a mut
+    /// struct from rdkafka, for example if we have m: &'a BorrowedMessage and decoder: &'a
     /// Decoder we can use decoder.decode(m.payload()) to decode the payload or
     /// decoder.decode(m.key()) to get the decoded key.
     pub async fn decode(&self, bytes: Option<&[u8]>) -> Result<Value, SRCError> {
