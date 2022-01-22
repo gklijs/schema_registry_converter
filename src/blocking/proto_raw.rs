@@ -1,5 +1,6 @@
 use std::collections::hash_map::{Entry, RandomState};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::blocking::schema_registry::{
     get_schema_by_id_and_type, get_schema_by_subject, SrSettings,
@@ -127,7 +128,7 @@ impl ProtoRawDecoder {
                 let full_name = resolve_name(&s.resolver, &index)?;
                 Ok(RawDecodeResult {
                     schema: &s.schema,
-                    full_name,
+                    full_name: full_name,
                     bytes: data,
                 })
             }
@@ -154,7 +155,7 @@ impl ProtoRawDecoder {
 #[derive(Debug)]
 pub struct RawDecodeResult<'a> {
     pub schema: &'a RegisteredSchema,
-    pub full_name: String,
+    pub full_name: Arc<String>,
     pub bytes: Vec<u8>,
 }
 
@@ -359,7 +360,7 @@ mod tests {
         };
 
         assert_eq!(raw_result.bytes, get_proto_hb_101_only_data());
-        assert_eq!(raw_result.full_name, "nl.openweb.data.Heartbeat")
+        assert_eq!(*raw_result.full_name, "nl.openweb.data.Heartbeat")
     }
 
     #[test]
@@ -384,7 +385,7 @@ mod tests {
         let raw_result = decoder.decode(Some(get_proto_hb_101())).unwrap().unwrap();
 
         assert_eq!(raw_result.bytes, get_proto_hb_101_only_data());
-        assert_eq!(raw_result.full_name, "nl.openweb.data.Heartbeat")
+        assert_eq!(*raw_result.full_name, "nl.openweb.data.Heartbeat")
     }
 
     #[test]

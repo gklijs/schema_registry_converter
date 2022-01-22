@@ -213,10 +213,7 @@ impl<'a> AvroDecoder<'a> {
         }
     }
 
-    fn get_schema_by_shared_future(
-        &self,
-        id: u32,
-    ) -> SharedFutureSchema<'a> {
+    fn get_schema_by_shared_future(&self, id: u32) -> SharedFutureSchema<'a> {
         match self.cache.entry(id) {
             Entry::Occupied(e) => e.get().clone(),
             Entry::Vacant(e) => {

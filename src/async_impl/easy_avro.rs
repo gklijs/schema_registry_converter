@@ -22,7 +22,7 @@ impl EasyAvroDecoder {
     }
 }
 
-/// An encoder used to transform a [Value] to bytes, its much like [AvroEncoder] but includes a mutex, so the user does not need to care about mutability.
+/// An encoder used to transform a [Value] to bytes, its much like [AvroEncoder] but wrapped with an arc to make it easier.
 pub struct EasyAvroEncoder {
     encoder: Arc<AvroEncoder<'static>>,
 }

@@ -4,7 +4,7 @@ use crate::error::SRCError;
 use crate::schema_registry_common::SubjectNameStrategy;
 use std::sync::Arc;
 
-/// A decoder used to transform bytes to a [RawDecodeResult], its much like [ProtoRawDecoder] but includes a mutex, so the user does not need to care about mutability.
+/// A decoder used to transform bytes to a [RawDecodeResult], its much like [ProtoRawDecoder] but wrapped with an arc to make it easier.
 /// You can use the bytes from the result to create a proto object.
 pub struct EasyProtoRawDecoder {
     decoder: Arc<ProtoRawDecoder<'static>>,
@@ -80,7 +80,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(raw_result.bytes, get_proto_hb_101_only_data());
-        assert_eq!(raw_result.full_name, "nl.openweb.data.Heartbeat")
+        assert_eq!(*raw_result.full_name, "nl.openweb.data.Heartbeat")
     }
 
     #[tokio::test]

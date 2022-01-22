@@ -20,7 +20,7 @@ impl EasyJsonDecoder {
     }
 }
 
-/// An encoder used to transform a [Value] to bytes, its much like [JsonEncoder] but includes a mutex, so the user does not need to care about mutability.
+/// An encoder used to transform a [Value] to bytes, its much like [JsonEncoder] but wrapped with an arc to make it easier.
 pub struct EasyJsonEncoder {
     encoder: Arc<JsonEncoder<'static>>,
 }

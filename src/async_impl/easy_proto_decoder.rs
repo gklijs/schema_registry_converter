@@ -4,7 +4,7 @@ use crate::error::SRCError;
 use protofish::decode::Value;
 use std::sync::Arc;
 
-/// A decoder used to transform bytes to a [Value], its much like [ProtoDecoder] but includes a mutex, so the user does not need to care about mutability.
+/// A decoder used to transform bytes to a [Value], its much like [ProtoDecoder] but wrapped with an arc to make it easier.
 /// The mean use of this way of decoding is if you don't know the format at compile time.
 /// If you do know the format it's better to use the ProtoRawDecoder, and use a different library to deserialize just the proto bytes.
 pub struct EasyProtoDecoder {

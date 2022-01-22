@@ -212,10 +212,7 @@ impl<'a> JsonDecoder<'a> {
 
     /// Gets the Context object, either from the cache, or from the schema registry and then putting
     /// it into the cache.
-    fn get_schema_by_shared_future(
-        &self,
-        id: u32,
-    ) -> SharedFutureSchema<'a> {
+    fn get_schema_by_shared_future(&self, id: u32) -> SharedFutureSchema<'a> {
         match self.cache.entry(id) {
             Entry::Occupied(e) => e.get().clone(),
             Entry::Vacant(e) => {
