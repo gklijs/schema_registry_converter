@@ -23,7 +23,7 @@ pub fn consume_avro(
     test: Box<dyn Fn(DeserializedAvroRecord)>,
 ) {
     let sr_settings = SrSettings::new(registry);
-    let mut decoder = AvroDecoder::new(sr_settings);
+    let decoder = AvroDecoder::new(sr_settings);
     let consumer = get_consumer(brokers, group_id, topics, auto_commit);
 
     for message in consumer.iter() {
@@ -32,7 +32,7 @@ pub fn consume_avro(
                 assert!(false, "Got error consuming message: {}", e);
             }
             Ok(m) => {
-                let des_r = get_deserialized_avro_record(&m, &mut decoder);
+                let des_r = get_deserialized_avro_record(&m, &decoder);
                 test(des_r);
                 return;
             }
@@ -42,7 +42,7 @@ pub fn consume_avro(
 
 fn get_deserialized_avro_record<'a>(
     m: &'a BorrowedMessage,
-    decoder: &'a mut AvroDecoder,
+    decoder: &'a AvroDecoder,
 ) -> DeserializedAvroRecord<'a> {
     let key = match decoder.decode(m.key()) {
         Ok(v) => v.value,

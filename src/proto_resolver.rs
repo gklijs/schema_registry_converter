@@ -1,48 +1,48 @@
-use std::collections::hash_map::RandomState;
-use std::collections::HashMap;
 use std::io::BufReader;
+use std::sync::Arc;
 
 use crate::error::SRCError;
+use dashmap::DashMap;
 use integer_encoding::VarIntReader;
 use logos::Logos;
 
 #[derive(Debug, Clone)]
 pub(crate) struct MessageResolver {
-    map: HashMap<Vec<i32>, String, RandomState>,
+    map: DashMap<Vec<i32>, Arc<String>>,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct IndexResolver {
-    map: HashMap<String, Vec<i32>, RandomState>,
+    map: DashMap<String, Arc<Vec<i32>>>,
 }
 
 impl MessageResolver {
     pub(crate) fn new(s: &str) -> MessageResolver {
         let helper = ResolverHelper::new(s);
-        let mut map = HashMap::new();
+        let map = DashMap::new();
         for i in &helper.indexes {
-            map.insert(i.clone(), find_name(&*i, &helper));
+            map.insert(i.clone(), Arc::new(find_name(&*i, &helper)));
         }
         MessageResolver { map }
     }
 
-    pub(crate) fn find_name(&self, index: &[i32]) -> Option<&String> {
-        self.map.get(index)
+    pub(crate) fn find_name(&self, index: &[i32]) -> Option<Arc<String>> {
+        self.map.get(index).map(|e| e.value().clone())
     }
 }
 
 impl IndexResolver {
     pub(crate) fn new(s: &str) -> IndexResolver {
         let helper = ResolverHelper::new(s);
-        let mut map = HashMap::new();
+        let map = DashMap::new();
         for i in &helper.indexes {
-            map.insert(find_name(&*i, &helper), i.clone());
+            map.insert(find_name(&*i, &helper), Arc::new(i.clone()));
         }
         IndexResolver { map }
     }
 
-    pub(crate) fn find_index(&self, name: &str) -> Option<&Vec<i32>> {
-        self.map.get(name)
+    pub(crate) fn find_index(&self, name: &str) -> Option<Arc<Vec<i32>>> {
+        self.map.get(name).map(|e| e.value().clone())
     }
 
     pub(crate) fn is_single_message(&self) -> bool {
@@ -174,10 +174,10 @@ pub(crate) fn to_index_and_data(bytes: &[u8]) -> (Vec<i32>, Vec<u8>) {
     }
 }
 
-pub(crate) fn resolve_name<'a>(
-    resolver: &'a MessageResolver,
+pub(crate) fn resolve_name(
+    resolver: &MessageResolver,
     index: &[i32],
-) -> Result<&'a String, SRCError> {
+) -> Result<Arc<String>, SRCError> {
     match resolver.find_name(&index) {
         Some(n) => Ok(n),
         None => Err(SRCError::non_retryable_without_cause(&*format!(
@@ -190,6 +190,7 @@ pub(crate) fn resolve_name<'a>(
 #[cfg(test)]
 mod tests {
     use crate::proto_resolver::{IndexResolver, MessageResolver};
+    use std::sync::Arc;
 
     fn get_proto_simple() -> &'static str {
         r#"syntax = "proto3";package nl.openweb.data; message Heartbeat{uint64 beat = 1;}"#
@@ -205,7 +206,7 @@ mod tests {
 
         assert_eq!(
             resolver.find_name(&[0]),
-            Some(&String::from("nl.openweb.data.Heartbeat"))
+            Some(Arc::new(String::from("nl.openweb.data.Heartbeat")))
         );
         assert_eq!(resolver.find_name(&[1]), None)
     }
@@ -216,7 +217,7 @@ mod tests {
 
         assert_eq!(
             resolver.find_index("nl.openweb.data.Heartbeat"),
-            Some(&vec![0])
+            Some(Arc::new(vec![0]))
         );
         assert_eq!(resolver.find_index("nl.openweb.data.Foo"), None)
     }
@@ -227,17 +228,21 @@ mod tests {
 
         assert_eq!(
             resolver.find_name(&[0]),
-            Some(&String::from("org.schema_registry_test_app.proto.A"))
+            Some(Arc::new(String::from(
+                "org.schema_registry_test_app.proto.A"
+            )))
         );
         assert_eq!(
             resolver.find_name(&[2, 0]),
-            Some(&String::from("org.schema_registry_test_app.proto.C.D"))
+            Some(Arc::new(String::from(
+                "org.schema_registry_test_app.proto.C.D"
+            )))
         );
         assert_eq!(
             resolver.find_name(&[3]),
-            Some(&String::from(
+            Some(Arc::new(String::from(
                 "org.schema_registry_test_app.proto.ProtoTest"
-            ))
+            )))
         );
     }
 
@@ -247,15 +252,15 @@ mod tests {
 
         assert_eq!(
             resolver.find_index("org.schema_registry_test_app.proto.A"),
-            Some(&vec![0])
+            Some(Arc::new(vec![0]))
         );
         assert_eq!(
             resolver.find_index("org.schema_registry_test_app.proto.C.D"),
-            Some(&vec![2, 0])
+            Some(Arc::new(vec![2, 0]))
         );
         assert_eq!(
             resolver.find_index("org.schema_registry_test_app.proto.ProtoTest"),
-            Some(&vec![3])
+            Some(Arc::new(vec![3]))
         );
     }
 }

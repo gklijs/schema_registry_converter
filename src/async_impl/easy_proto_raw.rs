@@ -3,35 +3,33 @@ use crate::async_impl::schema_registry::SrSettings;
 use crate::error::SRCError;
 use crate::schema_registry_common::SubjectNameStrategy;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
-/// A decoder used to transform bytes to a [RawDecodeResult], its much like [ProtoRawDecoder] but includes a mutex, so the user does not need to care about mutability.
+/// A decoder used to transform bytes to a [RawDecodeResult], its much like [ProtoRawDecoder] but wrapped with an arc to make it easier.
 /// You can use the bytes from the result to create a proto object.
 pub struct EasyProtoRawDecoder {
-    decoder: Arc<Mutex<ProtoRawDecoder<'static>>>,
+    decoder: Arc<ProtoRawDecoder<'static>>,
 }
 
 impl EasyProtoRawDecoder {
     pub fn new(sr_settings: SrSettings) -> EasyProtoRawDecoder {
-        let decoder = Arc::new(Mutex::new(ProtoRawDecoder::new(sr_settings)));
+        let decoder = Arc::new(ProtoRawDecoder::new(sr_settings));
         EasyProtoRawDecoder { decoder }
     }
     pub async fn decode(&self, bytes: Option<&[u8]>) -> Result<Option<RawDecodeResult>, SRCError> {
-        let mut lock = self.decoder.lock().await;
-        lock.decode(bytes).await
+        self.decoder.decode(bytes).await
     }
 }
 
-/// An encoder used to transform the proto bytes to bytes compatible with confluent schema registry, its much like [ProtoRawEncoder] but includes a mutex, so the user does not need to care about mutability.
+/// An encoder used to transform the proto bytes to bytes compatible with confluent schema registry, its much like [ProtoRawEncoder] but wrapped with an arc to make it easier.
 /// This wil just add the magic byte, schema reference, and message reference. The bytes should already be valid proto bytes for the schema used.
 /// When a schema with multiple messages is used the full_name needs to be supplied to properly encode the message reference.
 pub struct EasyProtoRawEncoder {
-    encoder: Arc<Mutex<ProtoRawEncoder<'static>>>,
+    encoder: Arc<ProtoRawEncoder<'static>>,
 }
 
 impl EasyProtoRawEncoder {
     pub fn new(sr_settings: SrSettings) -> EasyProtoRawEncoder {
-        let encoder = Arc::new(Mutex::new(ProtoRawEncoder::new(sr_settings)));
+        let encoder = Arc::new(ProtoRawEncoder::new(sr_settings));
         EasyProtoRawEncoder { encoder }
     }
     pub async fn encode(
@@ -40,16 +38,17 @@ impl EasyProtoRawEncoder {
         full_name: &str,
         subject_name_strategy: SubjectNameStrategy,
     ) -> Result<Vec<u8>, SRCError> {
-        let mut lock = self.encoder.lock().await;
-        lock.encode(bytes, full_name, subject_name_strategy).await
+        self.encoder
+            .encode(bytes, full_name, subject_name_strategy)
+            .await
     }
     pub async fn encode_single_message(
         &self,
         bytes: &[u8],
         subject_name_strategy: SubjectNameStrategy,
     ) -> Result<Vec<u8>, SRCError> {
-        let mut lock = self.encoder.lock().await;
-        lock.encode_single_message(bytes, subject_name_strategy)
+        self.encoder
+            .encode_single_message(bytes, subject_name_strategy)
             .await
     }
 }
@@ -81,7 +80,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(raw_result.bytes, get_proto_hb_101_only_data());
-        assert_eq!(raw_result.full_name, "nl.openweb.data.Heartbeat")
+        assert_eq!(*raw_result.full_name, "nl.openweb.data.Heartbeat")
     }
 
     #[tokio::test]

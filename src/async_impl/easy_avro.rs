@@ -6,32 +6,30 @@ use crate::schema_registry_common::SubjectNameStrategy;
 use avro_rs::types::Value;
 use serde::Serialize;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
-/// A decoder used to transform bytes to a [DecodeResult], its much like [AvroDecoder] but includes a mutex, so the user does not need to care about mutability.
+/// A decoder used to transform bytes to a [DecodeResult], its much like [AvroDecoder] but wrapped with an arc to make it easier.
 pub struct EasyAvroDecoder {
-    decoder: Arc<Mutex<AvroDecoder<'static>>>,
+    decoder: Arc<AvroDecoder<'static>>,
 }
 
 impl EasyAvroDecoder {
     pub fn new(sr_settings: SrSettings) -> EasyAvroDecoder {
-        let decoder = Arc::new(Mutex::new(AvroDecoder::new(sr_settings)));
+        let decoder = Arc::new(AvroDecoder::new(sr_settings));
         EasyAvroDecoder { decoder }
     }
     pub async fn decode(&self, bytes: Option<&[u8]>) -> Result<DecodeResult, SRCError> {
-        let mut lock = self.decoder.lock().await;
-        lock.decode(bytes).await
+        self.decoder.decode(bytes).await
     }
 }
 
-/// An encoder used to transform a [Value] to bytes, its much like [AvroEncoder] but includes a mutex, so the user does not need to care about mutability.
+/// An encoder used to transform a [Value] to bytes, its much like [AvroEncoder] but wrapped with an arc to make it easier.
 pub struct EasyAvroEncoder {
-    encoder: Arc<Mutex<AvroEncoder<'static>>>,
+    encoder: Arc<AvroEncoder<'static>>,
 }
 
 impl EasyAvroEncoder {
     pub fn new(sr_settings: SrSettings) -> EasyAvroEncoder {
-        let encoder = Arc::new(Mutex::new(AvroEncoder::new(sr_settings)));
+        let encoder = Arc::new(AvroEncoder::new(sr_settings));
         EasyAvroEncoder { encoder }
     }
     pub async fn encode(
@@ -39,16 +37,16 @@ impl EasyAvroEncoder {
         values: Vec<(&'static str, Value)>,
         subject_name_strategy: SubjectNameStrategy,
     ) -> Result<Vec<u8>, SRCError> {
-        let mut lock = self.encoder.lock().await;
-        lock.encode(values, subject_name_strategy).await
+        self.encoder.encode(values, subject_name_strategy).await
     }
     pub async fn encode_struct(
         &self,
         item: impl Serialize,
         subject_name_strategy: &SubjectNameStrategy,
     ) -> Result<Vec<u8>, SRCError> {
-        let mut lock = self.encoder.lock().await;
-        lock.encode_struct(item, subject_name_strategy).await
+        self.encoder
+            .encode_struct(item, subject_name_strategy)
+            .await
     }
 }
 

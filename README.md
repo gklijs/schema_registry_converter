@@ -38,7 +38,7 @@ To use it to convert using avro async use:
 schema_registry_converter = { version = "2.1.0", features = ["avro"] }
 ```
 
-The resulting converter needs mutability through, for simplicity there are `easy` variants that internally have a mutex.
+For simplicity there are `easy` variants that internally have an arc.
 Making it easier to use at the price of some overhead. To use the `easy` variants add the `easy` feature and use the
 structs that start with `Easy` in the name to do the conversions.
 
@@ -92,16 +92,16 @@ use schema_registry_converter::blocking::{Decoder, Encoder};
 use schema_registry_converter::blocking::schema_registry::SubjectNameStrategy;
 
 fn main() {
-    let mut decoder = Decoder::new(SrSettings::new(String::from("http://localhost:8081")));
-    let mut encoder = Encoder::new(SrSettings::new(String::from("http://localhost:8081")));
-    let hb = get_heartbeat(msg, decoder);
-    let record = get_future_record_from_struct("hb", Some("id"), hb, encoder);
+    let decoder = Decoder::new(SrSettings::new(String::from("http://localhost:8081")));
+    let encoder = Encoder::new(SrSettings::new(String::from("http://localhost:8081")));
+    let hb = get_heartbeat(msg, &decoder);
+    let record = get_future_record_from_struct("hb", Some("id"), hb, &encoder);
     producer.send(record);
 }
 
 fn get_value<'a>(
     msg: &'a BorrowedMessage,
-    decoder: &'a mut Decoder,
+    decoder: &'a Decoder,
 ) -> Value {
     match decoder.decode(msg.payload()) {
         Ok(v) => v,
@@ -111,7 +111,7 @@ fn get_value<'a>(
 
 fn get_heartbeat<'a>(
     msg: &'a BorrowedMessage,
-    decoder: &'a mut Decoder,
+    decoder: &'a Decoder,
 ) -> Heartbeat {
     match decoder.decode_with_name(msg.payload()) {
         Ok((name, value)) => {
@@ -138,7 +138,7 @@ fn get_future_record<'a>(
     topic: &'a str,
     key: Option<&'a str>,
     values: Vec<(&'static str, Value)>,
-    encoder: &'a mut Encoder,
+    encoder: &'a Encoder,
 ) -> FutureRecord<'a> {
     let subject_name_strategy = SubjectNameStrategy::TopicNameStrategy(topic, false);
     let payload = match encoder.encode(values, &subject_name_strategy) {
@@ -159,7 +159,7 @@ fn get_future_record_from_struct<'a>(
     topic: &'a str,
     key: Option<&'a str>,
     heartbeat: Heartbeat,
-    encoder: &'a mut Encoder,
+    encoder: &'a Encoder,
 ) -> FutureRecord<'a> {
     let subject_name_strategy = SubjectNameStrategy::TopicNameStrategy(topic, false);
     let payload = match encoder.encode_struct(heartbeat, &subject_name_strategy) {

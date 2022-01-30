@@ -12,7 +12,7 @@ pub(crate) fn to_bytes(
         Some(v) if v.len() == 1 && v[0] == 0i32 => vec![0u8],
         Some(v) => {
             let mut result = (v.len() as i32).encode_var_vec();
-            for i in v {
+            for i in &*v {
                 result.append(&mut i.encode_var_vec())
             }
             result

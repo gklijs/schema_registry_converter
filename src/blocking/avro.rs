@@ -22,12 +22,13 @@
 //!
 //! [avro-rs]: https://crates.io/crates/avro-rs
 
-use std::collections::hash_map::{Entry, RandomState};
-use std::collections::HashMap;
 use std::io::Cursor;
+use std::sync::Arc;
 
 use avro_rs::types::Value;
 use avro_rs::{from_avro_datum, Schema};
+use dashmap::mapref::entry::Entry;
+use dashmap::DashMap;
 use serde::ser::Serialize;
 use serde_json::Value as JsonValue;
 
@@ -68,7 +69,7 @@ use crate::schema_registry_common::{
 ///     .create();
 ///
 /// let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-/// let mut decoder = AvroDecoder::new(sr_settings);
+/// let decoder = AvroDecoder::new(sr_settings);
 /// let heartbeat = decoder.decode(Some(&[0,0,0,0,1,6])).unwrap().value;
 ///
 /// assert_eq!(heartbeat, Value::Record(vec![("beat".to_string(), Value::Long(3))]))
@@ -76,7 +77,7 @@ use crate::schema_registry_common::{
 #[derive(Debug)]
 pub struct AvroDecoder {
     sr_settings: SrSettings,
-    cache: HashMap<u32, Result<AvroSchema, SRCError>, RandomState>,
+    cache: DashMap<u32, Result<Arc<AvroSchema>, SRCError>>,
 }
 
 impl AvroDecoder {
@@ -88,7 +89,7 @@ impl AvroDecoder {
     pub fn new(sr_settings: SrSettings) -> AvroDecoder {
         AvroDecoder {
             sr_settings,
-            cache: HashMap::new(),
+            cache: DashMap::new(),
         }
     }
     /// Remove al the errors from the cache, you might need to/want to run this when a recoverable
@@ -103,7 +104,7 @@ impl AvroDecoder {
     /// use schema_registry_converter::error::SRCError;
     ///
     /// let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-    /// let mut decoder = AvroDecoder::new(sr_settings);
+    /// let decoder = AvroDecoder::new(sr_settings);
     /// let bytes = [0,0,0,0,2,6];
     ///
     /// let _m = mock("GET", "/schemas/ids/2?deleted=true")
@@ -130,12 +131,12 @@ impl AvroDecoder {
     /// let heartbeat = decoder.decode(Some(&bytes)).unwrap().value;
     /// assert_eq!(heartbeat, Value::Record(vec![("beat".to_string(), Value::Long(3))]))
     /// ```
-    pub fn remove_errors_from_cache(&mut self) {
+    pub fn remove_errors_from_cache(&self) {
         self.cache.retain(|_, v| v.is_ok());
     }
     /// Decodes bytes into a value.
     /// The choice to use Option<&[u8]> as type us made so it plays nice with the BorrowedMessage
-    /// struct from rdkafka, for example if we have m: &'a BorrowedMessage and decoder: &'a mut
+    /// struct from rdkafka, for example if we have m: &'a BorrowedMessage and decoder: &'a
     /// Decoder we can use decoder.decode(m.payload()) to decode the payload or
     /// decoder.decode(m.key()) to get the decoded key.
     ///
@@ -145,7 +146,7 @@ impl AvroDecoder {
     /// use schema_registry_converter::blocking::avro::AvroDecoder;
     /// fn get_value<'a>(
     ///     msg: &'a BorrowedMessage,
-    ///     decoder: &'a mut AvroDecoder,
+    ///     decoder: &'a AvroDecoder,
     /// ) -> Value{
     ///     match decoder.decode(msg.payload()){
     ///         Ok(r) => r.value,
@@ -153,7 +154,7 @@ impl AvroDecoder {
     ///     }
     /// }
     /// ```
-    pub fn decode(&mut self, bytes: Option<&[u8]>) -> Result<DecodeResult, SRCError> {
+    pub fn decode(&self, bytes: Option<&[u8]>) -> Result<DecodeResult, SRCError> {
         match get_bytes_result(bytes) {
             BytesResult::Null => Ok(DecodeResult {
                 name: None,
@@ -168,7 +169,7 @@ impl AvroDecoder {
     }
     /// The actual deserialization trying to get the id from the bytes to retrieve the schema, and
     /// using a reader transforms the bytes to a value.
-    fn deserialize(&mut self, id: u32, bytes: &[u8]) -> Result<DecodeResult, SRCError> {
+    fn deserialize(&self, id: u32, bytes: &[u8]) -> Result<DecodeResult, SRCError> {
         let schema = self.schema(id);
         let mut reader = Cursor::new(bytes);
         match schema {
@@ -182,20 +183,20 @@ impl AvroDecoder {
                     "Could not transform bytes using schema",
                 )),
             },
-            Err(e) => Err(Clone::clone(e)),
+            Err(e) => Err(e),
         }
     }
 
-    fn schema(&mut self, id: u32) -> &Result<AvroSchema, SRCError> {
+    fn schema(&self, id: u32) -> Result<Arc<AvroSchema>, SRCError> {
         let sr_settings = &self.sr_settings;
         match self.cache.entry(id) {
-            Entry::Occupied(e) => &*e.into_mut(),
+            Entry::Occupied(e) => e.get().clone(),
             Entry::Vacant(e) => {
                 let v = match get_schema_by_id_and_type(id, sr_settings, SchemaType::Avro) {
                     Ok(registered_schema) => to_avro_schema(sr_settings, registered_schema),
                     Err(e) => Err(e.into_cache()),
                 };
-                &*e.insert(v)
+                e.insert(v).value().clone()
             }
         }
     }
@@ -233,7 +234,7 @@ impl AvroDecoder {
 ///     .create();
 ///
 /// let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-/// let mut encoder = AvroEncoder::new(sr_settings);
+/// let encoder = AvroEncoder::new(sr_settings);
 ///
 /// let key_strategy = SubjectNameStrategy::TopicNameStrategy(String::from("heartbeat"), true);
 /// let bytes = encoder.encode(vec![("name", Value::String("Some name".to_owned()))], &key_strategy);
@@ -248,7 +249,7 @@ impl AvroDecoder {
 #[derive(Debug)]
 pub struct AvroEncoder {
     sr_settings: SrSettings,
-    cache: HashMap<String, Result<AvroSchema, SRCError>, RandomState>,
+    cache: DashMap<String, Result<Arc<AvroSchema>, SRCError>>,
 }
 
 impl AvroEncoder {
@@ -274,7 +275,7 @@ impl AvroEncoder {
     /// #    .create();
     ///
     /// let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-    /// let mut encoder = AvroEncoder::new(sr_settings);
+    /// let encoder = AvroEncoder::new(sr_settings);
     ///
     /// let strategy = SubjectNameStrategy::TopicRecordNameStrategyWithSchema(String::from("hb"), Box::from(SuppliedSchema {
     ///                 name: Some(String::from("nl.openweb.data.Heartbeat")),
@@ -288,7 +289,7 @@ impl AvroEncoder {
     pub fn new(sr_settings: SrSettings) -> AvroEncoder {
         AvroEncoder {
             sr_settings,
-            cache: HashMap::new(),
+            cache: DashMap::new(),
         }
     }
     /// Remove al the errors from the cache, you might need to/want to run this when a recoverable
@@ -304,7 +305,7 @@ impl AvroEncoder {
     /// use schema_registry_converter::blocking::schema_registry::SrSettings;
     ///
     /// let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-    /// let mut encoder = AvroEncoder::new(sr_settings);
+    /// let encoder = AvroEncoder::new(sr_settings);
     /// let strategy = SubjectNameStrategy::RecordNameStrategy(String::from("nl.openweb.data.Heartbeat"));
     ///
     /// let _m = mock("GET", "/subjects/nl.openweb.data.Heartbeat/versions/latest")
@@ -330,7 +331,7 @@ impl AvroEncoder {
     /// let bytes = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
     /// assert_eq!(bytes, Ok(vec![0,0,0,0,4,6]))
     /// ```
-    pub fn remove_errors_from_cache(&mut self) {
+    pub fn remove_errors_from_cache(&self) {
         self.cache.retain(|_, v| v.is_ok());
     }
     /// Encodes a vector of values to bytes. The correct values of the 'keys' depend on the schema
@@ -352,21 +353,21 @@ impl AvroEncoder {
     ///     .create();
     ///
     /// let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-    /// let mut encoder = AvroEncoder::new(sr_settings);
+    /// let encoder = AvroEncoder::new(sr_settings);
     /// let strategy = SubjectNameStrategy::TopicRecordNameStrategy(String::from("heartbeat"), String::from("nl.openweb.data.Heartbeat"));
     /// let bytes = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
     ///
     /// assert_eq!(bytes, Ok(vec![0,0,0,0,3,6]))
     /// ```
     pub fn encode(
-        &mut self,
+        &self,
         values: Vec<(&str, Value)>,
         subject_name_strategy: &SubjectNameStrategy,
     ) -> Result<Vec<u8>, SRCError> {
         let key = get_subject(subject_name_strategy)?;
         match self.get_schema_and_id(key, subject_name_strategy) {
             Ok(avro_schema) => values_to_bytes(&avro_schema, values),
-            Err(e) => Err(Clone::clone(e)),
+            Err(e) => Err(e),
         }
     }
 
@@ -398,7 +399,7 @@ impl AvroEncoder {
     ///    }
     ///
     /// let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-    /// let mut encoder = AvroEncoder::new(sr_settings);
+    /// let encoder = AvroEncoder::new(sr_settings);
     /// let existing_schema_strategy = SubjectNameStrategy::TopicRecordNameStrategy(String::from("heartbeat"), String::from("nl.openweb.data.Heartbeat"));
     /// let bytes = encoder.encode_struct(Heartbeat{beat: 3}, &existing_schema_strategy);
     ///
@@ -416,31 +417,31 @@ impl AvroEncoder {
     /// assert_eq!(bytes, Ok(vec![0, 0, 0, 0, 4, 18, 107, 101, 121, 45, 118, 97, 108, 117, 101]));
     /// ```
     pub fn encode_struct(
-        &mut self,
+        &self,
         item: impl Serialize,
         subject_name_strategy: &SubjectNameStrategy,
     ) -> Result<Vec<u8>, SRCError> {
         let key = get_subject(subject_name_strategy)?;
         match self.get_schema_and_id(key, subject_name_strategy) {
             Ok(avro_schema) => item_to_bytes(&avro_schema, item),
-            Err(e) => Err(Clone::clone(e)),
+            Err(e) => Err(e),
         }
     }
 
     fn get_schema_and_id(
-        &mut self,
+        &self,
         key: String,
         subject_name_strategy: &SubjectNameStrategy,
-    ) -> &Result<AvroSchema, SRCError> {
+    ) -> Result<Arc<AvroSchema>, SRCError> {
         let sr_settings = &self.sr_settings;
         match self.cache.entry(key) {
-            Entry::Occupied(e) => &*e.into_mut(),
+            Entry::Occupied(e) => e.get().clone(),
             Entry::Vacant(e) => {
                 let v = match get_schema_by_subject(sr_settings, &subject_name_strategy) {
                     Ok(registered_schema) => to_avro_schema(sr_settings, registered_schema),
                     Err(e) => Err(e.into_cache()),
                 };
-                &*e.insert(v)
+                e.insert(v).value().clone()
             }
         }
     }
@@ -483,7 +484,7 @@ fn add_references(
 fn to_avro_schema(
     sr_settings: &SrSettings,
     registered_schema: RegisteredSchema,
-) -> Result<AvroSchema, SRCError> {
+) -> Result<Arc<AvroSchema>, SRCError> {
     match registered_schema.schema_type {
         SchemaType::Avro => (),
         t => {
@@ -506,11 +507,11 @@ fn to_avro_schema(
         }
     };
     match Schema::parse(&main_schema) {
-        Ok(parsed) => Ok(AvroSchema {
+        Ok(parsed) => Ok(Arc::new(AvroSchema {
             id: registered_schema.id,
             raw: registered_schema.schema,
             parsed,
-        }),
+        })),
         Err(e) => Err(SRCError::non_retryable_with_cause(
             e,
             &*format!(
@@ -552,7 +553,7 @@ mod tests {
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut decoder = AvroDecoder::new(sr_settings);
+        let decoder = AvroDecoder::new(sr_settings);
         let heartbeat = decoder.decode(Some(&[0, 0, 0, 0, 1, 6])).unwrap().value;
 
         assert_eq!(
@@ -576,7 +577,7 @@ mod tests {
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut decoder = AvroDecoder::new(sr_settings);
+        let decoder = AvroDecoder::new(sr_settings);
         let heartbeat = decoder.decode(Some(&[0, 0, 0, 0, 1, 6]));
         let item = match heartbeat {
             Ok(r) => {
@@ -593,7 +594,7 @@ mod tests {
     #[test]
     fn test_decoder_no_bytes() {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut decoder = AvroDecoder::new(sr_settings);
+        let decoder = AvroDecoder::new(sr_settings);
         let heartbeat = decoder.decode(None).unwrap().value;
 
         assert_eq!(heartbeat, Value::Null)
@@ -602,7 +603,7 @@ mod tests {
     #[test]
     fn test_decoder_with_name_no_bytes() {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut decoder = AvroDecoder::new(sr_settings);
+        let decoder = AvroDecoder::new(sr_settings);
         let heartbeat = decoder.decode(None).unwrap();
 
         assert_eq!(
@@ -617,7 +618,7 @@ mod tests {
     #[test]
     fn test_decoder_magic_byte_not_present() {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut decoder = AvroDecoder::new(sr_settings);
+        let decoder = AvroDecoder::new(sr_settings);
         let result = decoder.decode(Some(&[1, 0, 0, 0, 1, 6]));
 
         assert_eq!(
@@ -631,7 +632,7 @@ mod tests {
     #[test]
     fn test_decoder_with_name_magic_byte_not_present() {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut decoder = AvroDecoder::new(sr_settings);
+        let decoder = AvroDecoder::new(sr_settings);
         let result = decoder.decode(Some(&[1, 0, 0, 0, 1, 6]));
 
         assert_eq!(
@@ -645,7 +646,7 @@ mod tests {
     #[test]
     fn test_decoder_not_enough_bytes() {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut decoder = AvroDecoder::new(sr_settings);
+        let decoder = AvroDecoder::new(sr_settings);
         let result = decoder.decode(Some(&[0, 0, 0, 0]));
 
         assert_eq!(
@@ -665,7 +666,7 @@ mod tests {
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut decoder = AvroDecoder::new(sr_settings);
+        let decoder = AvroDecoder::new(sr_settings);
         let err = decoder.decode(Some(&[0, 0, 0, 0, 1])).unwrap_err();
 
         assert_eq!(err.error, "Could not transform bytes using schema")
@@ -680,7 +681,7 @@ mod tests {
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut decoder = AvroDecoder::new(sr_settings);
+        let decoder = AvroDecoder::new(sr_settings);
         let err = decoder.decode(Some(&[0, 0, 0, 0, 1])).unwrap_err();
 
         assert_eq!(err.error, "Could not transform bytes using schema")
@@ -695,7 +696,7 @@ mod tests {
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut decoder = AvroDecoder::new(sr_settings);
+        let decoder = AvroDecoder::new(sr_settings);
         let heartbeat = decoder.decode(Some(&[0, 0, 0, 0, 1, 6]));
 
         assert_eq!(
@@ -720,7 +721,7 @@ mod tests {
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut decoder = AvroDecoder::new(sr_settings);
+        let decoder = AvroDecoder::new(sr_settings);
         let heartbeat = decoder.decode(Some(&[0, 0, 0, 0, 1, 6]));
 
         assert_eq!(
@@ -739,7 +740,7 @@ mod tests {
     #[test]
     fn test_decoder_schema_registry_unavailable() {
         let sr_settings = SrSettings::new(String::from("http://bogus"));
-        let mut decoder = AvroDecoder::new(sr_settings);
+        let decoder = AvroDecoder::new(sr_settings);
         let result = decoder.decode(Some(&[0, 0, 0, 10, 1, 6]));
 
         match result {
@@ -757,7 +758,7 @@ mod tests {
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut decoder = AvroDecoder::new(sr_settings);
+        let decoder = AvroDecoder::new(sr_settings);
         let heartbeat = decoder.decode(Some(&[0, 0, 0, 0, 1, 6]));
 
         assert_eq!(
@@ -775,7 +776,7 @@ mod tests {
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut decoder = AvroDecoder::new(sr_settings);
+        let decoder = AvroDecoder::new(sr_settings);
         let err = decoder.decode(Some(&[0, 0, 0, 0, 1, 6])).unwrap_err();
 
         assert_eq!(
@@ -793,7 +794,7 @@ mod tests {
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut decoder = AvroDecoder::new(sr_settings);
+        let decoder = AvroDecoder::new(sr_settings);
         let cac = decoder
             .decode(Some(&[
                 0, 0, 0, 0, 6, 204, 240, 237, 74, 227, 188, 75, 46, 183, 163, 122, 214, 178, 72,
@@ -823,7 +824,7 @@ mod tests {
     #[test]
     fn test_decoder_cache() {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut decoder = AvroDecoder::new(sr_settings);
+        let decoder = AvroDecoder::new(sr_settings);
         let bytes = [0, 0, 0, 0, 2, 6];
 
         let _m = mock("GET", "/schemas/ids/2?deleted=true")
@@ -883,7 +884,7 @@ mod tests {
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut encoder = AvroEncoder::new(sr_settings);
+        let encoder = AvroEncoder::new(sr_settings);
 
         let key_strategy = SubjectNameStrategy::TopicNameStrategy(String::from("heartbeat"), true);
         let bytes = encoder.encode(
@@ -920,7 +921,7 @@ mod tests {
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut encoder = AvroEncoder::new(sr_settings);
+        let encoder = AvroEncoder::new(sr_settings);
 
         let key_strategy = SubjectNameStrategy::TopicNameStrategy(String::from("heartbeat"), true);
 
@@ -953,7 +954,7 @@ mod tests {
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut encoder = AvroEncoder::new(sr_settings);
+        let encoder = AvroEncoder::new(sr_settings);
         let strategy = SubjectNameStrategy::TopicRecordNameStrategy(
             String::from("heartbeat"),
             String::from("nl.openweb.data.Heartbeat"),
@@ -972,7 +973,7 @@ mod tests {
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut encoder = AvroEncoder::new(sr_settings);
+        let encoder = AvroEncoder::new(sr_settings);
         let strategy = SubjectNameStrategy::TopicRecordNameStrategy(
             String::from("heartbeat"),
             String::from("nl.openweb.data.Heartbeat"),
@@ -988,7 +989,7 @@ mod tests {
     #[test]
     fn test_encoder_schema_registry_unavailable() {
         let sr_settings = SrSettings::new(String::from("http://bogus"));
-        let mut encoder = AvroEncoder::new(sr_settings);
+        let encoder = AvroEncoder::new(sr_settings);
         let strategy = SubjectNameStrategy::TopicRecordNameStrategy(
             String::from("heartbeat"),
             String::from("nl.openweb.data.Balance"),
@@ -1004,7 +1005,7 @@ mod tests {
     #[test]
     fn test_encoder_unknown_protocol() {
         let sr_settings = SrSettings::new(String::from("hxxx://bogus"));
-        let mut encoder = AvroEncoder::new(sr_settings);
+        let encoder = AvroEncoder::new(sr_settings);
         let strategy = SubjectNameStrategy::TopicRecordNameStrategy(
             String::from("heartbeat"),
             String::from("nl.openweb.data.Balance"),
@@ -1025,7 +1026,7 @@ mod tests {
     #[test]
     fn test_encoder_schema_registry_unavailable_with_record() {
         let sr_settings = SrSettings::new(String::from("http://bogus"));
-        let mut encoder = AvroEncoder::new(sr_settings);
+        let encoder = AvroEncoder::new(sr_settings);
         let strategy = SubjectNameStrategy::RecordNameStrategyWithSchema(Box::from(
             SuppliedSchema {
                 name: Some(String::from("nl.openweb.data.Balance")),
@@ -1047,7 +1048,7 @@ mod tests {
     #[test]
     fn test_encode_cache() {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut encoder = AvroEncoder::new(sr_settings);
+        let encoder = AvroEncoder::new(sr_settings);
         let strategy =
             SubjectNameStrategy::RecordNameStrategy(String::from("nl.openweb.data.Heartbeat"));
 
@@ -1099,7 +1100,7 @@ mod tests {
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut encoder = AvroEncoder::new(sr_settings);
+        let encoder = AvroEncoder::new(sr_settings);
 
         let key_strategy = SubjectNameStrategy::TopicNameStrategyWithSchema(
             String::from("heartbeat"),
@@ -1148,7 +1149,7 @@ mod tests {
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut encoder = AvroEncoder::new(sr_settings);
+        let encoder = AvroEncoder::new(sr_settings);
 
         let strategy = SubjectNameStrategy::RecordNameStrategyWithSchema(Box::from(
             SuppliedSchema {
@@ -1173,7 +1174,7 @@ mod tests {
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut encoder = AvroEncoder::new(sr_settings);
+        let encoder = AvroEncoder::new(sr_settings);
 
         let strategy = SubjectNameStrategy::RecordNameStrategyWithSchema(Box::from(
             SuppliedSchema {
@@ -1204,7 +1205,7 @@ mod tests {
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut encoder = AvroEncoder::new(sr_settings);
+        let encoder = AvroEncoder::new(sr_settings);
 
         let strategy = SubjectNameStrategy::TopicRecordNameStrategyWithSchema(
             String::from("hb"),
@@ -1224,7 +1225,7 @@ mod tests {
     #[test]
     fn test_encode_topic_record_name_strategy_schema_registry_not_available() {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut encoder = AvroEncoder::new(sr_settings);
+        let encoder = AvroEncoder::new(sr_settings);
 
         let strategy = SubjectNameStrategy::TopicRecordNameStrategyWithSchema(
             String::from("hb"),
@@ -1291,7 +1292,7 @@ mod tests {
     #[test]
     fn test_primitive_schema() {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut encoder = AvroEncoder::new(sr_settings);
+        let encoder = AvroEncoder::new(sr_settings);
 
         let _n = mock("POST", "/subjects/heartbeat-key/versions")
             .with_status(200)
@@ -1317,7 +1318,7 @@ mod tests {
     #[test]
     fn test_primitive_schema_incompatible_strategy() {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut encoder = AvroEncoder::new(sr_settings);
+        let encoder = AvroEncoder::new(sr_settings);
 
         let primitive_schema_strategy =
             SubjectNameStrategy::RecordNameStrategyWithSchema(get_supplied_schema(&Schema::String));
@@ -1334,7 +1335,7 @@ mod tests {
     #[test]
     fn replace_referred_schema() {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut decoder = AvroDecoder::new(sr_settings);
+        let decoder = AvroDecoder::new(sr_settings);
         let bytes = [
             0, 0, 0, 0, 5, 97, 19, 76, 118, 247, 191, 70, 148, 162, 9, 233, 76, 211, 29, 141, 180,
             0, 2, 2, 12, 83, 116, 114, 105, 110, 103, 2, 12, 83, 84, 82, 73, 78, 71, 12, 115, 116,

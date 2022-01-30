@@ -1,9 +1,9 @@
-use std::collections::hash_map::{Entry, RandomState};
-use std::collections::HashMap;
-
 use bytes::Bytes;
+use dashmap::mapref::entry::Entry;
+use dashmap::DashMap;
 use futures::future::{BoxFuture, Shared};
 use futures::FutureExt;
+use std::sync::Arc;
 
 use crate::async_impl::schema_registry::{
     get_referenced_schema, get_schema_by_id_and_type, SrSettings,
@@ -14,12 +14,13 @@ use crate::schema_registry_common::{get_bytes_result, BytesResult, RegisteredSch
 use protofish::context::Context;
 use protofish::decode::{MessageValue, Value};
 
-type SharedFutureOfSchemas<'a> = Shared<BoxFuture<'a, Result<Vec<String>, SRCError>>>;
+type SharedFutureSchema<'a> = Shared<BoxFuture<'a, Result<Arc<Vec<String>>, SRCError>>>;
 
 #[derive(Debug)]
 pub struct ProtoDecoder<'a> {
     sr_settings: SrSettings,
-    cache: HashMap<u32, SharedFutureOfSchemas<'a>, RandomState>,
+    direct_cache: DashMap<u32, Arc<Vec<String>>>,
+    cache: DashMap<u32, SharedFutureSchema<'a>>,
 }
 
 impl<'a> ProtoDecoder<'a> {
@@ -31,13 +32,14 @@ impl<'a> ProtoDecoder<'a> {
     pub fn new(sr_settings: SrSettings) -> ProtoDecoder<'a> {
         ProtoDecoder {
             sr_settings,
-            cache: HashMap::new(),
+            direct_cache: DashMap::new(),
+            cache: DashMap::new(),
         }
     }
-    /// Remove al the errors from the cache, you might need to/want to run this when a recoverable
+    /// Remove all the errors from the cache, you might need to/want to run this when a recoverable
     /// error is met. Errors are also cashed to prevent trying to get schema's that either don't
     /// exist or can't be parsed.
-    pub fn remove_errors_from_cache(&mut self) {
+    pub fn remove_errors_from_cache(&self) {
         self.cache.retain(|_, v| match v.peek() {
             Some(r) => r.is_ok(),
             None => true,
@@ -45,10 +47,10 @@ impl<'a> ProtoDecoder<'a> {
     }
     /// Decodes bytes into a value.
     /// The choice to use Option<&[u8]> as type us made so it plays nice with the BorrowedMessage
-    /// struct from rdkafka, for example if we have m: &'a BorrowedMessage and decoder: &'a mut
+    /// struct from rdkafka, for example if we have m: &'a BorrowedMessage and decoder: &'a
     /// Decoder we can use decoder.decode(m.payload()) to decode the payload or
     /// decoder.decode(m.key()) to get the decoded key.
-    pub async fn decode(&mut self, bytes: Option<&[u8]>) -> Result<Value, SRCError> {
+    pub async fn decode(&self, bytes: Option<&[u8]>) -> Result<Value, SRCError> {
         match get_bytes_result(bytes) {
             BytesResult::Null => Ok(Value::Bytes(Bytes::new())),
             BytesResult::Valid(id, bytes) => Ok(Value::Message(Box::from(
@@ -59,19 +61,35 @@ impl<'a> ProtoDecoder<'a> {
     }
     /// The actual deserialization trying to get the id from the bytes to retrieve the schema, and
     /// using a reader transforms the bytes to a value.
-    async fn deserialize(&mut self, id: u32, bytes: &[u8]) -> Result<MessageValue, SRCError> {
-        let vec_of_schemas = self.vec_of_schemas(id).clone().await?;
+    async fn deserialize(&self, id: u32, bytes: &[u8]) -> Result<MessageValue, SRCError> {
+        let vec_of_schemas = self.get_vec_of_schemas(id).await?;
         let context = into_decode_context(&vec_of_schemas)?;
         let (index, data) = to_index_and_data(bytes);
         let full_name = resolve_name(&context.resolver, &index)?;
-        let message_info = context.context.get_message(full_name).unwrap();
+        let message_info = context.context.get_message(&full_name).unwrap();
         Ok(message_info.decode(&data, &context.context))
     }
-    /// Gets the Context object, either from the cache, or from the schema registry and then putting
+    /// Gets the vector of schema's directly of via a shared future. The direct cache main function
+    /// is for performance.
+    async fn get_vec_of_schemas(&self, id: u32) -> Result<Arc<Vec<String>>, SRCError> {
+        match self.direct_cache.get(&id) {
+            None => {
+                let result = self.get_vec_of_schemas_by_shared_future(id).await;
+                if result.is_ok() && !self.direct_cache.contains_key(&id) {
+                    self.direct_cache.insert(id, result.clone().unwrap());
+                    self.cache.remove(&id);
+                };
+                result
+            }
+            Some(result) => Ok(result.value().clone()),
+        }
+    }
+    /// Gets the vector of schema's by a shared future, to prevent multiple of the same calls to
+    /// schema registry, either from the cache, or from the schema registry and then putting
     /// it into the cache.
-    fn vec_of_schemas(&mut self, id: u32) -> &SharedFutureOfSchemas<'a> {
+    fn get_vec_of_schemas_by_shared_future(&self, id: u32) -> SharedFutureSchema<'a> {
         match self.cache.entry(id) {
-            Entry::Occupied(e) => &*e.into_mut(),
+            Entry::Occupied(e) => e.get().clone(),
             Entry::Vacant(e) => {
                 let sr_settings = self.sr_settings.clone();
                 let v = async move {
@@ -82,7 +100,7 @@ impl<'a> ProtoDecoder<'a> {
                 }
                 .boxed()
                 .shared();
-                &*e.insert(v)
+                e.insert(v).value().clone()
             }
         }
     }
@@ -124,10 +142,10 @@ fn into_decode_context(vec_of_schemas: &[String]) -> Result<DecodeContext, SRCEr
 async fn to_vec_of_schemas(
     sr_settings: &SrSettings,
     registered_schema: RegisteredSchema,
-) -> Result<Vec<String>, SRCError> {
+) -> Result<Arc<Vec<String>>, SRCError> {
     let mut vec_of_schemas = Vec::new();
     add_files(sr_settings, registered_schema, &mut vec_of_schemas).await?;
-    Ok(vec_of_schemas)
+    Ok(Arc::new(vec_of_schemas))
 }
 
 #[cfg(test)]
@@ -165,7 +183,7 @@ mod tests {
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut decoder = ProtoDecoder::new(sr_settings);
+        let decoder = ProtoDecoder::new(sr_settings);
         let heartbeat = decoder.decode(Some(get_proto_hb_101())).await.unwrap();
 
         let message = match heartbeat {
@@ -179,7 +197,7 @@ mod tests {
     #[tokio::test]
     async fn test_decoder_cache() {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut decoder = ProtoDecoder::new(sr_settings);
+        let decoder = ProtoDecoder::new(sr_settings);
         let error = decoder.decode(Some(get_proto_hb_101())).await.unwrap_err();
         assert_eq!(true, error.cached);
 
@@ -223,7 +241,7 @@ mod tests {
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut decoder = ProtoDecoder::new(sr_settings);
+        let decoder = ProtoDecoder::new(sr_settings);
         let proto_test = decoder
             .decode(Some(get_proto_complex_proto_test_message()))
             .await

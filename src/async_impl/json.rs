@@ -1,7 +1,8 @@
-use std::collections::hash_map::{Entry, RandomState};
-use std::collections::HashMap;
 use std::str::FromStr;
+use std::sync::Arc;
 
+use dashmap::mapref::entry::Entry;
+use dashmap::DashMap;
 use futures::future::{BoxFuture, FutureExt, Shared};
 use futures::stream::{self, StreamExt};
 use serde_json::Value;
@@ -26,19 +27,23 @@ use crate::schema_registry_common::{
 #[derive(Debug)]
 pub struct JsonEncoder<'a> {
     sr_settings: SrSettings,
-    cache: HashMap<String, Shared<BoxFuture<'a, Result<JsonSchema, SRCError>>>, RandomState>,
+    direct_cache: DashMap<String, Arc<JsonSchema>>,
+    cache: DashMap<String, SharedFutureSchema<'a>>,
 }
+
+type SharedFutureSchema<'a> = Shared<BoxFuture<'a, Result<Arc<JsonSchema>, SRCError>>>;
 
 impl<'a> JsonEncoder<'a> {
     /// Creates a new json encoder
     pub fn new(sr_settings: SrSettings) -> JsonEncoder<'a> {
         JsonEncoder {
             sr_settings,
-            cache: HashMap::new(),
+            direct_cache: DashMap::new(),
+            cache: DashMap::new(),
         }
     }
     /// Removes errors from the cache, can be usefull to retry failed encodings.
-    pub fn remove_errors_from_cache(&mut self) {
+    pub fn remove_errors_from_cache(&self) {
         self.cache.retain(|_, v| match v.peek() {
             Some(r) => r.is_ok(),
             None => true,
@@ -47,35 +52,59 @@ impl<'a> JsonEncoder<'a> {
     /// Encodes the bytes by adding a few bytes to the message with additional information. The full
     /// names is the optional package followed with the message name, and optionally inner messages.
     pub async fn encode(
-        &mut self,
+        &self,
         value: &Value,
         subject_name_strategy: SubjectNameStrategy,
     ) -> Result<Vec<u8>, SRCError> {
         let key = get_subject(&subject_name_strategy)?;
-        let schema = self.get_schema(key, subject_name_strategy).clone().await?;
+        let schema = &*self.get_schema(key, subject_name_strategy).await?;
         let id = schema.id;
-        validate(schema, value)?;
+        validate(schema.clone(), value)?;
         to_bytes(id, value)
     }
 
-    fn get_schema(
-        &mut self,
+    async fn get_schema(
+        &self,
         key: String,
         subject_name_strategy: SubjectNameStrategy,
-    ) -> &Shared<BoxFuture<'a, Result<JsonSchema, SRCError>>> {
+    ) -> Result<Arc<JsonSchema>, SRCError> {
+        match self.direct_cache.get(&key) {
+            None => {
+                let result = self
+                    .get_schema_by_shared_future(key.clone(), subject_name_strategy)
+                    .await;
+                if result.is_ok() && !self.direct_cache.contains_key(&key) {
+                    self.direct_cache
+                        .insert(key.clone(), result.clone().unwrap());
+                    self.cache.remove(&key);
+                };
+                result
+            }
+            Some(result) => Ok(result.value().clone()),
+        }
+    }
+
+    fn get_schema_by_shared_future(
+        &self,
+        key: String,
+        subject_name_strategy: SubjectNameStrategy,
+    ) -> SharedFutureSchema<'a> {
         match self.cache.entry(key) {
-            Entry::Occupied(e) => &*e.into_mut(),
+            Entry::Occupied(e) => e.get().clone(),
             Entry::Vacant(e) => {
                 let sr_settings = self.sr_settings.clone();
                 let v = async move {
                     match get_schema_by_subject(&sr_settings, &subject_name_strategy).await {
-                        Ok(schema) => to_json_schema(&sr_settings, None, schema).await,
+                        Ok(schema) => match to_json_schema(&sr_settings, None, schema).await {
+                            Ok(s) => Ok(Arc::new(s)),
+                            Err(e) => Err(e),
+                        },
                         Err(e) => Err(e.into_cache()),
                     }
                 }
                 .boxed()
                 .shared();
-                &*e.insert(v)
+                e.insert(v).value().clone()
             }
         }
     }
@@ -114,7 +143,8 @@ pub struct JsonSchema {
 #[derive(Debug)]
 pub struct JsonDecoder<'a> {
     sr_settings: SrSettings,
-    cache: HashMap<u32, Shared<BoxFuture<'a, Result<JsonSchema, SRCError>>>, RandomState>,
+    direct_cache: DashMap<u32, Arc<JsonSchema>>,
+    cache: DashMap<u32, SharedFutureSchema<'a>>,
 }
 
 impl<'a> JsonDecoder<'a> {
@@ -126,20 +156,21 @@ impl<'a> JsonDecoder<'a> {
     pub fn new(sr_settings: SrSettings) -> JsonDecoder<'a> {
         JsonDecoder {
             sr_settings,
-            cache: HashMap::new(),
+            direct_cache: DashMap::new(),
+            cache: DashMap::new(),
         }
     }
     /// Remove al the errors from the cache, you might need to/want to run this when a recoverable
     /// error is met. Errors are also cashed to prevent trying to get schema's that either don't
     /// exist or can't be parsed.
-    pub fn remove_errors_from_cache(&mut self) {
+    pub fn remove_errors_from_cache(&self) {
         self.cache.retain(|_, v| match v.peek() {
             Some(r) => r.is_ok(),
             None => true,
         });
     }
     /// Reads the bytes to get the name, and gives back the data bytes.
-    pub async fn decode(&mut self, bytes: Option<&[u8]>) -> Result<Option<DecodeResult>, SRCError> {
+    pub async fn decode(&self, bytes: Option<&[u8]>) -> Result<Option<DecodeResult>, SRCError> {
         match get_bytes_result(bytes) {
             BytesResult::Null => Ok(None),
             BytesResult::Valid(id, bytes) => Ok(Some(self.deserialize(id, &bytes).await?)),
@@ -151,32 +182,53 @@ impl<'a> JsonDecoder<'a> {
     }
     /// The actual deserialization trying to get the id from the bytes to retrieve the schema, and
     /// using a reader transforms the bytes to a value.
-    async fn deserialize(&mut self, id: u32, bytes: &[u8]) -> Result<DecodeResult, SRCError> {
-        let schema = self.schema(id).clone().await?;
+    async fn deserialize(&self, id: u32, bytes: &[u8]) -> Result<DecodeResult, SRCError> {
+        let schema = &*self.get_schema(id).await?;
         match serde_json::from_slice(bytes) {
-            Ok(value) => Ok(DecodeResult { schema, value }),
+            Ok(value) => Ok(DecodeResult {
+                schema: schema.clone(),
+                value,
+            }),
             Err(e) => Err(SRCError::non_retryable_with_cause(
                 e,
                 "could not create value from bytes",
             )),
         }
     }
+
+    async fn get_schema(&self, id: u32) -> Result<Arc<JsonSchema>, SRCError> {
+        match self.direct_cache.get(&id) {
+            None => {
+                let result = self.get_schema_by_shared_future(id).await;
+                if result.is_ok() && !self.direct_cache.contains_key(&id) {
+                    self.direct_cache.insert(id, result.clone().unwrap());
+                    self.cache.remove(&id);
+                };
+                result
+            }
+            Some(result) => Ok(result.value().clone()),
+        }
+    }
+
     /// Gets the Context object, either from the cache, or from the schema registry and then putting
     /// it into the cache.
-    fn schema(&mut self, id: u32) -> &Shared<BoxFuture<'a, Result<JsonSchema, SRCError>>> {
+    fn get_schema_by_shared_future(&self, id: u32) -> SharedFutureSchema<'a> {
         match self.cache.entry(id) {
-            Entry::Occupied(e) => &*e.into_mut(),
+            Entry::Occupied(e) => e.get().clone(),
             Entry::Vacant(e) => {
                 let sr_settings = self.sr_settings.clone();
                 let v = async move {
                     match get_schema_by_id_and_type(id, &sr_settings, SchemaType::Json).await {
-                        Ok(schema) => to_json_schema(&sr_settings, None, schema).await,
+                        Ok(schema) => match to_json_schema(&sr_settings, None, schema).await {
+                            Ok(v) => Ok(Arc::new(v)),
+                            Err(e) => Err(e),
+                        },
                         Err(e) => Err(e.into_cache()),
                     }
                 }
                 .boxed()
                 .shared();
-                &*e.insert(v)
+                e.insert(v).value().clone()
             }
         }
     }
@@ -261,7 +313,7 @@ mod tests {
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut encoder = JsonEncoder::new(sr_settings);
+        let encoder = JsonEncoder::new(sr_settings);
         let strategy = SubjectNameStrategy::TopicNameStrategy(String::from("testresult"), false);
         let result_example: Value =
             serde_json::from_reader(File::open("tests/schema/result-example.json").unwrap())
@@ -281,7 +333,7 @@ mod tests {
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut encoder = JsonEncoder::new(sr_settings);
+        let encoder = JsonEncoder::new(sr_settings);
         let strategy = SubjectNameStrategy::TopicNameStrategy(String::from("testresult"), false);
         let result_example: Value =
             serde_json::from_reader(File::open("tests/schema/result-example.json").unwrap())
@@ -295,7 +347,7 @@ mod tests {
     #[tokio::test]
     async fn test_encode_clean_cache() {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut encoder = JsonEncoder::new(sr_settings);
+        let encoder = JsonEncoder::new(sr_settings);
         let strategy = SubjectNameStrategy::TopicNameStrategy(String::from("testresult"), false);
         let result_example: Value =
             serde_json::from_reader(File::open("tests/schema/result-example.json").unwrap())
@@ -332,7 +384,7 @@ mod tests {
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut decoder = JsonDecoder::new(sr_settings);
+        let decoder = JsonDecoder::new(sr_settings);
         let message = decoder
             .decode(Some(&*get_payload(7, result_value.into_bytes())))
             .await
@@ -373,7 +425,7 @@ mod tests {
         let bytes = result_value.into_bytes();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut decoder = JsonDecoder::new(sr_settings);
+        let decoder = JsonDecoder::new(sr_settings);
         let error = decoder
             .decode(Some(&*get_payload(7, bytes.clone())))
             .await
@@ -412,7 +464,7 @@ mod tests {
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut decoder = JsonDecoder::new(sr_settings);
+        let decoder = JsonDecoder::new(sr_settings);
         let message = decoder
             .decode(Some(json_result_java_bytes()))
             .await
@@ -452,7 +504,7 @@ mod tests {
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut decoder = JsonDecoder::new(sr_settings);
+        let decoder = JsonDecoder::new(sr_settings);
         let result = decoder
             .decode(Some(json_incorrect_bytes()))
             .await
@@ -466,7 +518,7 @@ mod tests {
     #[tokio::test]
     async fn add_referred_schema() {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut decoder = JsonDecoder::new(sr_settings);
+        let decoder = JsonDecoder::new(sr_settings);
         let bytes = [
             0, 0, 0, 0, 5, 123, 34, 105, 100, 34, 58, 91, 52, 53, 44, 45, 55, 57, 44, 57, 51, 44,
             49, 49, 50, 44, 52, 54, 44, 56, 55, 44, 55, 57, 44, 45, 50, 44, 45, 49, 48, 55, 44, 45,
@@ -503,9 +555,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn error_in_refered_schema() {
+    async fn error_in_referred_schema() {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut decoder = JsonDecoder::new(sr_settings);
+        let decoder = JsonDecoder::new(sr_settings);
         let bytes = [
             0, 0, 0, 0, 5, 123, 34, 105, 100, 34, 58, 91, 52, 53, 44, 45, 55, 57, 44, 57, 51, 44,
             49, 49, 50, 44, 52, 54, 44, 56, 55, 44, 55, 57, 44, 45, 50, 44, 45, 49, 48, 55, 44, 45,
@@ -539,7 +591,7 @@ mod tests {
     #[tokio::test]
     async fn encounter_same_reference_again() {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut decoder = JsonDecoder::new(sr_settings);
+        let decoder = JsonDecoder::new(sr_settings);
         let bytes_id_5 = [
             0, 0, 0, 0, 5, 123, 34, 105, 100, 34, 58, 91, 52, 53, 44, 45, 55, 57, 44, 57, 51, 44,
             49, 49, 50, 44, 52, 54, 44, 56, 55, 44, 55, 57, 44, 45, 50, 44, 45, 49, 48, 55, 44, 45,
@@ -640,7 +692,7 @@ mod tests {
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut encoder = JsonEncoder::new(sr_settings);
+        let encoder = JsonEncoder::new(sr_settings);
         let strategy = SubjectNameStrategy::TopicNameStrategy(String::from("testresult"), false);
         let result_example: Value = Value::String(String::from("Foo"));
 
@@ -663,7 +715,7 @@ mod tests {
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut encoder = JsonEncoder::new(sr_settings);
+        let encoder = JsonEncoder::new(sr_settings);
         let strategy = SubjectNameStrategy::TopicNameStrategy(String::from("testresult"), false);
         let result_example: Value =
             serde_json::from_reader(File::open("tests/schema/jsontest-example.json").unwrap())
@@ -682,7 +734,7 @@ mod tests {
     #[tokio::test]
     async fn decode_invalid_bytes() {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
-        let mut decoder = JsonDecoder::new(sr_settings);
+        let decoder = JsonDecoder::new(sr_settings);
         let result = decoder.decode(Some(&[1, 0])).await.unwrap_err();
         assert_eq!(String::from("Invalid bytes: [1, 0]"), result.error)
     }
