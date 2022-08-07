@@ -35,7 +35,7 @@ To use it to convert using avro async use:
 
 ```toml
 [dependencies]
-schema_registry_converter = { version = "2.1.0", features = ["avro"] }
+schema_registry_converter = { version = "3.0.0", features = ["avro"] }
 ```
 
 For simplicity there are `easy` variants that internally have an arc.
@@ -44,7 +44,7 @@ structs that start with `Easy` in the name to do the conversions.
 
 ```toml
 [dependencies]
-schema_registry_converter = { version = "2.1.0", features = ["easy", "avro"] }
+schema_registry_converter = { version = "3.0.0", features = ["easy", "avro"] }
 ```
 
 ...and see the [docs](https://docs.rs/schema_registry_converter) for how to use it.
@@ -53,7 +53,7 @@ All the converters also have a blocking (non async) version, in that case use so
 
 ```toml
 [dependencies]
-schema_registry_converter = { version = "2.1.0", default-features = false, features = ["avro", "blocking"] }
+schema_registry_converter = { version = "3.0.0", default-features = false, features = ["avro", "blocking"] }
 ```
 
 If you need to use both in a project you can use something like, but have to be weary you import the correct paths
@@ -61,7 +61,7 @@ depending on your use.
 
 ```toml
 [dependencies]
-schema_registry_converter = { version = "2.1.0", features = ["avro", "blocking"] }
+schema_registry_converter = { version = "3.0.0", features = ["avro", "blocking"] }
 ```
 
 ## Consumer
@@ -87,7 +87,7 @@ from the 1.x.x version, when starting you probably want to use the async version
 
 ```rust
 use rdkafka::message::{Message, BorrowedMessage};
-use avro_rs::types::Value;
+use apache_avro::types::Value;
 use schema_registry_converter::blocking::{Decoder, Encoder};
 use schema_registry_converter::blocking::schema_registry::SubjectNameStrategy;
 
@@ -210,7 +210,7 @@ creating an issue.
 
 Due to mockito, used for mocking the schema registry responses, being run in a separate thread, tests have to be run
 using ` --test-threads=1` for example like
-`cargo +stable test --color=always --features avro,json,proto_decoder,proto_raw -- --nocapture --test-threads=1`
+`cargo +stable test --color=always --features easy,avro,json,proto_decoder,proto_raw -- --nocapture --test-threads=1`
 
 ## Integration test
 

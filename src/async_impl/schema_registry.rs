@@ -203,7 +203,7 @@ pub async fn get_schema_by_id_and_type(
     sr_settings: &SrSettings,
     schema_type: SchemaType,
 ) -> Result<RegisteredSchema, SRCError> {
-    match get_schema_by_id(id, &sr_settings).await {
+    match get_schema_by_id(id, sr_settings).await {
         Ok(v) if v.schema_type == schema_type => Ok(v),
         Ok(v) => Err(SRCError::non_retryable_without_cause(&*format!(
             "type {:?}, is not correct",

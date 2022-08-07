@@ -3,7 +3,7 @@ use crate::async_impl::schema_registry::SrSettings;
 use crate::avro_common::DecodeResult;
 use crate::error::SRCError;
 use crate::schema_registry_common::SubjectNameStrategy;
-use avro_rs::types::Value;
+use apache_avro::types::Value;
 use serde::Serialize;
 use std::sync::Arc;
 
@@ -56,8 +56,8 @@ mod tests {
     use crate::async_impl::schema_registry::SrSettings;
     use crate::avro_common::get_supplied_schema;
     use crate::schema_registry_common::SubjectNameStrategy;
-    use avro_rs::types::Value;
-    use avro_rs::{from_value, Schema};
+    use apache_avro::types::Value;
+    use apache_avro::{from_value, Schema};
     use mockito::{mock, server_address};
     use test_utils::Heartbeat;
 

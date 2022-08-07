@@ -13,7 +13,7 @@
 //!
 //! For Encoding data it's possible to supply a schema else the latest available schema will be used.
 //! For Decoding it works the same as the Java part, using the id encoded in the bytes, the
-//! correct schema will be fetched and used to decode the message to a avro_rs::types::Value.
+//! correct schema will be fetched and used to decode the message to a apache_avro::types::Value.
 //!
 //! Resulting errors are SRCError, besides the error they also contain a .cached which tells whether
 //! the error is cached or not. Another property added to the error is retriable, in some cases, like
@@ -25,8 +25,8 @@
 use std::io::Cursor;
 use std::sync::Arc;
 
-use avro_rs::types::Value;
-use avro_rs::{from_avro_datum, Schema};
+use apache_avro::types::Value;
+use apache_avro::{from_avro_datum, Schema};
 use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
 use serde::ser::Serialize;
@@ -50,7 +50,7 @@ use crate::schema_registry_common::{
 /// be retrieved over http from the schema registry, and we can already see from the bytes which
 /// schema we should use, this can save a lot of unnecessary calls.
 /// Errors are also stored to the cache, because they may not be recoverable. A function is
-/// available to remove the errors from the cache. To get the value avro_rs is used.
+/// available to remove the errors from the cache. To get the value apache_avro is used.
 ///
 /// For both the key and the payload/key it's possible to use the schema registry, this struct supports
 /// both. But only using the SubjectNameStrategy::TopicNameStrategy it has to be made explicit
@@ -58,7 +58,7 @@ use crate::schema_registry_common::{
 ///
 /// ```
 /// use mockito::{mock, server_address};
-/// use avro_rs::types::Value;
+/// use apache_avro::types::Value;
 /// use schema_registry_converter::blocking::schema_registry::SrSettings;
 /// use schema_registry_converter::blocking::avro::AvroDecoder;
 ///
@@ -98,7 +98,7 @@ impl AvroDecoder {
     ///
     /// ```
     /// use mockito::{mock, server_address};
-    /// use avro_rs::types::Value;
+    /// use apache_avro::types::Value;
     /// use schema_registry_converter::blocking::avro::AvroDecoder;
     /// use schema_registry_converter::blocking::schema_registry::SrSettings;
     /// use schema_registry_converter::error::SRCError;
@@ -142,7 +142,7 @@ impl AvroDecoder {
     ///
     /// ```no_run
     /// use rdkafka::message::{Message, BorrowedMessage};
-    /// use avro_rs::types::Value;
+    /// use apache_avro::types::Value;
     /// use schema_registry_converter::blocking::avro::AvroDecoder;
     /// fn get_value<'a>(
     ///     msg: &'a BorrowedMessage,
@@ -208,7 +208,7 @@ impl AvroDecoder {
 /// be retrieved over http from the schema registry, and we can already see from the bytes which
 /// schema we should use, this can save a lot of unnecessary calls.
 /// Errors are also stored to the cache, because they may not be recoverable. A function is
-/// available to remove the errors from the cache. To get the value avro_rs is used.
+/// available to remove the errors from the cache. To get the value apache_avro is used.
 ///
 /// For both the key and the payload/key it's possible to use the schema registry, this struct supports
 /// both. But only using the SubjectNameStrategy::TopicNameStrategy it has to be made explicit
@@ -216,7 +216,7 @@ impl AvroDecoder {
 ///
 /// ```
 /// use mockito::{mock, server_address};
-/// use avro_rs::types::Value;
+/// use apache_avro::types::Value;
 /// use schema_registry_converter::blocking::avro::AvroEncoder;
 /// use schema_registry_converter::blocking::schema_registry::SrSettings;
 /// use schema_registry_converter::schema_registry_common::SubjectNameStrategy;
@@ -263,7 +263,7 @@ impl AvroEncoder {
     ///
     /// ```
     /// use mockito::{mock, server_address};
-    /// use avro_rs::types::Value;
+    /// use apache_avro::types::Value;
     /// use schema_registry_converter::blocking::avro::AvroEncoder;
     /// use schema_registry_converter::blocking::schema_registry::SrSettings;
     /// use schema_registry_converter::schema_registry_common::{SubjectNameStrategy, SchemaType, SuppliedSchema};
@@ -298,7 +298,7 @@ impl AvroEncoder {
     ///
     /// ```
     /// use mockito::{mock, server_address};
-    /// use avro_rs::types::Value;
+    /// use apache_avro::types::Value;
     /// use schema_registry_converter::blocking::avro::AvroEncoder;
     /// use schema_registry_converter::schema_registry_common::SubjectNameStrategy;
     /// use schema_registry_converter::error::SRCError;
@@ -341,7 +341,7 @@ impl AvroEncoder {
     /// form.
     /// ```
     /// use mockito::{mock, server_address};
-    /// use avro_rs::types::Value;
+    /// use apache_avro::types::Value;
     /// use schema_registry_converter::blocking::avro::AvroEncoder;
     /// use schema_registry_converter::schema_registry_common::SubjectNameStrategy;
     /// use schema_registry_converter::blocking::schema_registry::SrSettings;
@@ -380,8 +380,8 @@ impl AvroEncoder {
     /// ```
     /// use mockito::{mock, server_address};
     /// use serde::Serialize;
-    /// use avro_rs::types::Value;
-    /// use avro_rs::Schema;
+    /// use apache_avro::types::Value;
+    /// use apache_avro::Schema;
     /// use schema_registry_converter::blocking::avro::AvroEncoder;
     /// use schema_registry_converter::schema_registry_common::SubjectNameStrategy;
     /// use schema_registry_converter::blocking::schema_registry::SrSettings;
@@ -524,7 +524,7 @@ fn to_avro_schema(
 
 #[cfg(test)]
 mod tests {
-    use avro_rs::from_value;
+    use apache_avro::from_value;
     use mockito::{mock, server_address};
 
     use crate::avro_common::get_supplied_schema;

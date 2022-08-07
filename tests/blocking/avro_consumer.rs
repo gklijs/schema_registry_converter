@@ -1,5 +1,5 @@
 use crate::blocking::kafka_consumer::get_consumer;
-use avro_rs::types::Value;
+use apache_avro::types::Value;
 use rdkafka::message::BorrowedMessage;
 use rdkafka::Message;
 use schema_registry_converter::blocking::avro::AvroDecoder;
