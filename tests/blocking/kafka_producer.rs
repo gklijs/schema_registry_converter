@@ -1,4 +1,4 @@
-use avro_rs::types::Value;
+use apache_avro::types::Value;
 use rdkafka::config::ClientConfig;
 use rdkafka::producer::{FutureProducer, FutureRecord};
 use schema_registry_converter::blocking::avro::AvroEncoder;

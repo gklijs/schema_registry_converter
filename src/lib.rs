@@ -13,7 +13,7 @@
 //!
 //! For Encoding data it's possible to supply a schema else the latest available schema will be used.
 //! For Decoding it works the same as the Java part, using the id encoded in the bytes, the
-//! correct schema will be fetched and used to decode the message to a avro_rs::types::Value.
+//! correct schema will be fetched and used to decode the message to a apache_avro::types::Value.
 //!
 //! Resulting errors are SRCError, besides the error they also contain a .cached which tells whether
 //! the error is cached or not. Another property added to the error is retriable, in some cases, like

@@ -2,7 +2,7 @@ extern crate schema_registry_converter;
 
 use crate::blocking::avro_consumer::{consume_avro, DeserializedAvroRecord};
 use crate::blocking::kafka_producer::get_producer;
-use avro_rs::types::Value;
+use apache_avro::types::Value;
 use rand::Rng;
 use schema_registry_converter::schema_registry_common::{
     SchemaType, SubjectNameStrategy, SuppliedSchema,
@@ -178,7 +178,7 @@ fn test7_test_avro_from_java_test_app() {
         };
         assert_eq!(&1i64, counter_value, "counter is 1");
         let input_value = match &value_values[3] {
-            (_id, Value::Union(v)) => v,
+            (_id, Value::Union(_, v)) => v,
             _ => panic!("Not an unions value for input while that was expected"),
         };
         assert_eq!(

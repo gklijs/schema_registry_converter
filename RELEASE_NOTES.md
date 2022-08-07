@@ -3,6 +3,8 @@
 ### 3.0.0
 
 Several breaking changes in the API, making it easier to use as in most places we don't need a mutable reference anymore.
+Move to apache-avro for avro, which contains several fixes.
+Made some additional things public for other use cases. Added some methods to the API in case the used schema is required.
 
 ### 2.1.0
 

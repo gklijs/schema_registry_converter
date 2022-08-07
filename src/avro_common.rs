@@ -1,6 +1,6 @@
-use avro_rs::schema::{Name, Schema};
-use avro_rs::types::{Record, Value};
-use avro_rs::{to_avro_datum, to_value};
+use apache_avro::schema::{Name, Schema};
+use apache_avro::types::{Record, Value};
+use apache_avro::{to_avro_datum, to_value};
 use dashmap::DashMap;
 use serde::ser::Serialize;
 use serde_json::{value, Map};
@@ -134,7 +134,9 @@ pub(crate) fn item_to_bytes(
     item: impl Serialize,
 ) -> Result<Vec<u8>, SRCError> {
     match to_value(item)
-        .map_err(|e| SRCError::non_retryable_with_cause(e, "Could not transform to avro_rs value"))
+        .map_err(|e| {
+            SRCError::non_retryable_with_cause(e, "Could not transform to apache_avro value")
+        })
         .map(|r| r.resolve(&avro_schema.parsed))
     {
         Ok(Ok(v)) => to_bytes(avro_schema, v),
@@ -168,8 +170,8 @@ pub fn get_supplied_schema(schema: &Schema) -> Box<SuppliedSchema> {
 
 #[cfg(test)]
 mod tests {
-    use avro_rs::types::Value;
-    use avro_rs::Schema;
+    use apache_avro::types::Value;
+    use apache_avro::Schema;
 
     use test_utils::{Atype, ConfirmAccountCreation, Heartbeat};
 
