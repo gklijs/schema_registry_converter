@@ -63,7 +63,7 @@ impl JsonEncoder {
         let cached_context = match self.cache.entry(key) {
             Entry::Occupied(e) => e.into_mut().as_ref(),
             Entry::Vacant(e) => {
-                let v = match get_schema_by_subject(&self.sr_settings, &subject_name_strategy) {
+                let v = match get_schema_by_subject(&self.sr_settings, subject_name_strategy) {
                     Ok(registered_schema) => match set_scoped_schema(
                         &mut self.scope,
                         &self.sr_settings,

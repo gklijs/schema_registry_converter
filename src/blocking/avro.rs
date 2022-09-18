@@ -437,7 +437,7 @@ impl AvroEncoder {
         match self.cache.entry(key) {
             Entry::Occupied(e) => e.get().clone(),
             Entry::Vacant(e) => {
-                let v = match get_schema_by_subject(sr_settings, &subject_name_strategy) {
+                let v = match get_schema_by_subject(sr_settings, subject_name_strategy) {
                     Ok(registered_schema) => to_avro_schema(sr_settings, registered_schema),
                     Err(e) => Err(e.into_cache()),
                 };
