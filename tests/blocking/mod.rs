@@ -4,3 +4,7 @@ pub mod avro_consumer;
 mod avro_tests;
 pub mod kafka_consumer;
 pub mod kafka_producer;
+#[cfg(feature = "proto_decoder")]
+mod proto_tests;
+#[cfg(feature = "proto_decoder")]
+mod proto_consumer;

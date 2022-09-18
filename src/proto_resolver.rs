@@ -178,7 +178,7 @@ pub(crate) fn resolve_name(
     resolver: &MessageResolver,
     index: &[i32],
 ) -> Result<Arc<String>, SRCError> {
-    match resolver.find_name(&index) {
+    match resolver.find_name(index) {
         Some(n) => Ok(n),
         None => Err(SRCError::non_retryable_without_cause(&*format!(
             "Could not retrieve name for index: {:?}",

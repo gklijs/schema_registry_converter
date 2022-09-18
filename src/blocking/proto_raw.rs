@@ -71,7 +71,7 @@ impl ProtoRawEncoder {
         match self.cache.entry(key) {
             Entry::Occupied(e) => e.get().clone(),
             Entry::Vacant(e) => {
-                let v = match get_schema_by_subject(&self.sr_settings, &subject_name_strategy) {
+                let v = match get_schema_by_subject(&self.sr_settings, subject_name_strategy) {
                     Ok(registered_schema) => Ok(Arc::new(EncodeContext {
                         id: registered_schema.id,
                         resolver: IndexResolver::new(&*registered_schema.schema),

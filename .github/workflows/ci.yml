@@ -24,7 +24,7 @@ jobs:
       - name: check test app done
         run: ./check_test_app_done.sh
         shell: bash
-      - name: prepare inegration test
+      - name: prepare integration test
         run: ./prepare_integration_test.sh
         shell: bash
       - name: test
