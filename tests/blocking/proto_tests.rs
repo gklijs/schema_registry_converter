@@ -23,7 +23,7 @@ fn test1_test_proto_from_java_test_app() {
             _ => panic!("Not a message value while that was expected"),
         };
         match &value_values[0].value {
-            Value::Bytes(v) =>  assert_eq!(16, v.len(), "expected id of 16 size"),
+            Value::Bytes(v) => assert_eq!(16, v.len(), "expected id of 16 size"),
             _ => panic!("Not a bytes value for counter while that was expected"),
         };
         let counter_value = match &value_values[1].value {
@@ -36,7 +36,9 @@ fn test1_test_proto_from_java_test_app() {
             _ => panic!("Not a string value for input while that was expected"),
         };
         assert_eq!(
-            &String::from("String"), input_value, "Optional string is string"
+            &String::from("String"),
+            input_value,
+            "Optional string is string"
         );
         let results = match &value_values[3].value {
             Value::Message(v) => v.fields.clone(),
@@ -48,14 +50,18 @@ fn test1_test_proto_from_java_test_app() {
             _ => panic!("Not a string value for input while that was expected"),
         };
         assert_eq!(
-            &String::from("STRING"), input_value, "Optional string is STRING"
+            &String::from("STRING"),
+            input_value,
+            "Optional string is STRING"
         );
-        let input_value = match &results[1].value{
+        let input_value = match &results[1].value {
             Value::String(v) => v,
             _ => panic!("Not a string value for input while that was expected"),
         };
         assert_eq!(
-            &String::from("string"), input_value, "Optional string is string"
+            &String::from("string"),
+            input_value,
+            "Optional string is string"
         );
     });
     consume_proto(

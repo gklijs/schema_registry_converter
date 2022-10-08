@@ -1,6 +1,6 @@
 use protofish::decode::Value;
-use rdkafka::Message;
 use rdkafka::message::BorrowedMessage;
+use rdkafka::Message;
 
 use schema_registry_converter::blocking::proto_decoder::ProtoDecoder;
 use schema_registry_converter::blocking::schema_registry::SrSettings;
@@ -47,12 +47,12 @@ fn get_deserialized_proto_record<'a>(
     decoder: &'a ProtoDecoder,
 ) -> DeserializedProtoRecord<'a> {
     let key = match String::from_utf8(Vec::from(m.key().unwrap())) {
-                Ok(s) => s,
-                Err(_) => {
-                    println!("It was not a String.. Setting empty string");
-                    String::from("")
-                }
-            };
+        Ok(s) => s,
+        Err(_) => {
+            println!("It was not a String.. Setting empty string");
+            String::from("")
+        }
+    };
     print!("value needed for test {:?}", m.payload());
     let value = match decoder.decode(m.payload()) {
         Ok(v) => v,
