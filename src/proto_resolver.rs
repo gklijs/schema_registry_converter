@@ -9,11 +9,13 @@ use logos::Logos;
 #[derive(Debug, Clone)]
 pub(crate) struct MessageResolver {
     map: DashMap<Vec<i32>, Arc<String>>,
+    imports: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct IndexResolver {
     map: DashMap<String, Arc<Vec<i32>>>,
+    imports: Vec<String>,
 }
 
 impl MessageResolver {
@@ -23,7 +25,10 @@ impl MessageResolver {
         for i in &helper.indexes {
             map.insert(i.clone(), Arc::new(find_name(&*i, &helper)));
         }
-        MessageResolver { map }
+        MessageResolver {
+            map,
+            imports: helper.imports,
+        }
     }
 
     pub(crate) fn find_name(&self, index: &[i32]) -> Option<Arc<String>> {
@@ -38,7 +43,10 @@ impl IndexResolver {
         for i in &helper.indexes {
             map.insert(find_name(&*i, &helper), Arc::new(i.clone()));
         }
-        IndexResolver { map }
+        IndexResolver {
+            map,
+            imports: helper.imports,
+        }
     }
 
     pub(crate) fn find_index(&self, name: &str) -> Option<Arc<Vec<i32>>> {
@@ -54,6 +62,7 @@ struct ResolverHelper {
     package: Option<String>,
     indexes: Vec<Vec<i32>>,
     names: Vec<String>,
+    imports: Vec<String>,
 }
 
 #[derive(Logos, Debug, PartialEq)]
@@ -63,6 +72,9 @@ enum Token {
 
     #[regex(r"message\s+[a-zA-z0-9\\_]+")]
     Message,
+
+    #[regex(r#"import\s"+[a-zA-z0-9\\.\\_]+";"#)]
+    Import,
 
     #[token("{")]
     Open,
@@ -84,6 +96,7 @@ impl ResolverHelper {
         let mut package: Option<String> = None;
         let mut indexes: Vec<Vec<i32>> = Vec::new();
         let mut names: Vec<String> = Vec::new();
+        let mut imports: Vec<String> = Vec::new();
 
         let mut lex = Token::lexer(s);
         let mut next: Option<Token> = lex.next();
@@ -105,6 +118,11 @@ impl ResolverHelper {
                     indexes.push(index.clone());
                     names.push(message);
                 }
+                Token::Import => {
+                    let slice = lex.slice();
+                    let import = String::from(slice[8..slice.len() - 2].trim());
+                    imports.push(import);
+                }
                 Token::Open => {
                     index.push(0);
                 }
@@ -120,6 +138,7 @@ impl ResolverHelper {
             package,
             indexes,
             names,
+            imports,
         }
     }
 }
@@ -208,7 +227,8 @@ mod tests {
             resolver.find_name(&[0]),
             Some(Arc::new(String::from("nl.openweb.data.Heartbeat")))
         );
-        assert_eq!(resolver.find_name(&[1]), None)
+        assert_eq!(resolver.find_name(&[1]), None);
+        assert_eq!(resolver.imports.len(), 0)
     }
 
     #[test]
@@ -219,7 +239,8 @@ mod tests {
             resolver.find_index("nl.openweb.data.Heartbeat"),
             Some(Arc::new(vec![0]))
         );
-        assert_eq!(resolver.find_index("nl.openweb.data.Foo"), None)
+        assert_eq!(resolver.find_index("nl.openweb.data.Foo"), None);
+        assert_eq!(resolver.imports.len(), 0)
     }
 
     #[test]
@@ -244,6 +265,8 @@ mod tests {
                 "org.schema_registry_test_app.proto.ProtoTest"
             )))
         );
+        assert_eq!(resolver.imports.len(), 1);
+        assert_eq!(resolver.imports[0], String::from("result.proto"))
     }
 
     #[test]
@@ -262,5 +285,7 @@ mod tests {
             resolver.find_index("org.schema_registry_test_app.proto.ProtoTest"),
             Some(Arc::new(vec![3]))
         );
+        assert_eq!(resolver.imports.len(), 1);
+        assert_eq!(resolver.imports[0], String::from("result.proto"))
     }
 }

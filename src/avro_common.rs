@@ -10,7 +10,7 @@ use crate::schema_registry_common::{get_payload, SchemaType, SuppliedSchema};
 
 /// Because we need both the resulting schema, as have a way of posting the schema as json, we use
 /// this struct so we keep them both together.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub(crate) struct AvroSchema {
     pub(crate) id: u32,
     pub(crate) raw: String,
