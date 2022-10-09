@@ -15,7 +15,6 @@ pub(crate) struct MessageResolver {
 #[derive(Debug, Clone)]
 pub(crate) struct IndexResolver {
     map: DashMap<String, Arc<Vec<i32>>>,
-    imports: Vec<String>,
 }
 
 impl MessageResolver {
@@ -34,6 +33,9 @@ impl MessageResolver {
     pub(crate) fn find_name(&self, index: &[i32]) -> Option<Arc<String>> {
         self.map.get(index).map(|e| e.value().clone())
     }
+    pub(crate) fn imports(&self) -> &Vec<String> {
+        &self.imports
+    }
 }
 
 impl IndexResolver {
@@ -43,10 +45,7 @@ impl IndexResolver {
         for i in &helper.indexes {
             map.insert(find_name(&*i, &helper), Arc::new(i.clone()));
         }
-        IndexResolver {
-            map,
-            imports: helper.imports,
-        }
+        IndexResolver { map }
     }
 
     pub(crate) fn find_index(&self, name: &str) -> Option<Arc<Vec<i32>>> {
@@ -73,7 +72,7 @@ enum Token {
     #[regex(r"message\s+[a-zA-z0-9\\_]+")]
     Message,
 
-    #[regex(r#"import\s"+[a-zA-z0-9\\.\\_]+";"#)]
+    #[regex(r#"import\s+"[a-zA-z0-9\\.\\_/]+";"#)]
     Import,
 
     #[token("{")]
@@ -219,6 +218,32 @@ mod tests {
         r#"syntax = "proto3"; import "result.proto"; message A {bytes id = 1;} message B {bytes id = 1;} message C {bytes id = 1; D d = 2; message D {int64 counter = 1;}} package org.schema_registry_test_app.proto; message ProtoTest {bytes id = 1; enum Language {Java = 0;Rust = 1;} Language by = 2;int64 counter = 3;string input = 4;repeated A results = 5;}"#
     }
 
+    fn get_three_complex() -> &'static str {
+        r#"syntax = "proto3";
+package org.schema_registry_test_app.proto;
+
+import "google/type/color.proto";
+import "google/type/datetime.proto";
+import "google/type/money.proto";
+
+message GoogleTest {
+  google.type.Color color = 1;
+  google.type.DateTime dateTime = 2;
+  google.type.Money money = 3;
+  Language by = 4;
+  int64 counter = 5;
+
+  enum Language {
+    Java = 0;
+    Rust = 1;
+    Js = 2;
+    Python = 3;
+    Go = 4;
+    C = 5;
+  }
+}"#
+    }
+
     #[test]
     fn test_simple_schema_message_resolver() {
         let resolver = MessageResolver::new(get_proto_simple());
@@ -240,7 +265,6 @@ mod tests {
             Some(Arc::new(vec![0]))
         );
         assert_eq!(resolver.find_index("nl.openweb.data.Foo"), None);
-        assert_eq!(resolver.imports.len(), 0)
     }
 
     #[test]
@@ -270,6 +294,18 @@ mod tests {
     }
 
     #[test]
+    fn test_schema_with_three_imports() {
+        let resolver = MessageResolver::new(get_three_complex());
+        assert_eq!(resolver.imports.len(), 3);
+        assert_eq!(resolver.imports[0], String::from("google/type/color.proto"));
+        assert_eq!(
+            resolver.imports[1],
+            String::from("google/type/datetime.proto")
+        );
+        assert_eq!(resolver.imports[2], String::from("google/type/money.proto"));
+    }
+
+    #[test]
     fn test_complex_schema_index_resolver() {
         let resolver = IndexResolver::new(get_proto_complex());
 
@@ -285,7 +321,5 @@ mod tests {
             resolver.find_index("org.schema_registry_test_app.proto.ProtoTest"),
             Some(Arc::new(vec![3]))
         );
-        assert_eq!(resolver.imports.len(), 1);
-        assert_eq!(resolver.imports[0], String::from("result.proto"))
     }
 }

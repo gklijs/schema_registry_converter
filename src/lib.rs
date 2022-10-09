@@ -30,6 +30,8 @@ pub mod blocking;
 pub mod error;
 #[cfg(feature = "json")]
 mod json_common;
+#[cfg(any(feature = "proto_decoder", feature = "proto_raw"))]
+mod proto_common_types;
 #[cfg(feature = "proto_raw")]
 pub mod proto_raw_common;
 #[cfg(any(feature = "proto_decoder", feature = "proto_raw"))]

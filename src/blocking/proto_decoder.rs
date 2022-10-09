@@ -7,6 +7,7 @@ use crate::blocking::schema_registry::{
     get_referenced_schema, get_schema_by_id_and_type, SrSettings,
 };
 use crate::error::SRCError;
+use crate::proto_common_types::add_common_files;
 use crate::proto_resolver::{resolve_name, to_index_and_data, MessageResolver};
 use crate::schema_registry_common::{get_bytes_result, BytesResult, RegisteredSchema, SchemaType};
 use protofish::context::Context;
@@ -105,6 +106,7 @@ fn to_resolve_context(
 ) -> Result<Arc<DecodeContext>, SRCError> {
     let resolver = MessageResolver::new(&registered_schema.schema);
     let mut files = Vec::new();
+    add_common_files(resolver.imports(), &mut files);
     add_files(sr_settings, registered_schema, &mut files)?;
     match Context::parse(&files) {
         Ok(context) => Ok(Arc::new(DecodeContext { resolver, context })),

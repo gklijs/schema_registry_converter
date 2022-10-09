@@ -9,6 +9,7 @@ use crate::async_impl::schema_registry::{
     get_referenced_schema, get_schema_by_id_and_type, SrSettings,
 };
 use crate::error::SRCError;
+use crate::proto_common_types::add_common_files;
 use crate::proto_resolver::{resolve_name, to_index_and_data, MessageResolver};
 use crate::schema_registry_common::{get_bytes_result, BytesResult, RegisteredSchema, SchemaType};
 use protofish::context::Context;
@@ -63,7 +64,7 @@ impl<'a> ProtoDecoder<'a> {
     /// using a reader transforms the bytes to a value.
     async fn deserialize(&self, id: u32, bytes: &[u8]) -> Result<MessageValue, SRCError> {
         let vec_of_schemas = self.get_vec_of_schemas(id).await?;
-        let context = into_decode_context(&vec_of_schemas)?;
+        let context = into_decode_context(vec_of_schemas.to_vec())?;
         let (index, data) = to_index_and_data(bytes);
         let full_name = resolve_name(&context.resolver, &index)?;
         let message_info = context.context.get_message(&full_name).unwrap();
@@ -128,9 +129,14 @@ struct DecodeContext {
     context: Context,
 }
 
-fn into_decode_context(vec_of_schemas: &[String]) -> Result<DecodeContext, SRCError> {
+fn into_decode_context(vec_of_schemas: Vec<String>) -> Result<DecodeContext, SRCError> {
     let resolver = MessageResolver::new(vec_of_schemas.last().unwrap());
-    match Context::parse(vec_of_schemas) {
+    let mut files: Vec<String> = Vec::new();
+    add_common_files(resolver.imports(), &mut files);
+    for s in vec_of_schemas {
+        files.push(s);
+    }
+    match Context::parse(files) {
         Ok(context) => Ok(DecodeContext { resolver, context }),
         Err(e) => Err(SRCError::non_retryable_with_cause(
             e,
