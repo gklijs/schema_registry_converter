@@ -80,8 +80,7 @@ fn test2_test_google_proto_from_java_test_app() {
     let test = Box::new(move |rec: DeserializedProtoRecord| {
         println!("testing record {:#?}", rec);
         assert_eq!(String::from("testkey"), rec.key, "check string key");
-        //needs more validations once fixed
-        let _value_values = match rec.value {
+        match rec.value {
             Value::Message(v) => v.fields,
             _ => panic!("Not a message, while only only those expected"),
         };
