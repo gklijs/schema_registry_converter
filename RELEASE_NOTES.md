@@ -5,6 +5,7 @@
 Several breaking changes in the API, making it easier to use as in most places we don't need a mutable reference anymore.
 Move to apache-avro for avro, which contains several fixes.
 Made some additional things public for other use cases. Added some methods to the API in case the used schema is required.
+Protobuf common types are 'supported' as long as the import is in the main schema, the schema's will be added to the list giving to protofish, so it can be deserialized.
 
 ### 2.1.0
 
