@@ -323,7 +323,7 @@ mod tests {
                 .unwrap();
 
         let encoded_data = encoder.encode(&result_example, &strategy);
-        assert_eq!(true, encoded_data.is_err());
+        assert!(encoded_data.is_err());
 
         let _m = mock("GET", "/subjects/testresult-value/versions/latest")
             .with_status(200)
@@ -332,12 +332,12 @@ mod tests {
             .create();
 
         let encoded_data = encoder.encode(&result_example, &strategy);
-        assert_eq!(true, encoded_data.is_err());
+        assert!(encoded_data.is_err());
 
         encoder.remove_errors_from_cache();
 
         let encoded_data = encoder.encode(&result_example, &strategy);
-        assert_eq!(false, encoded_data.is_err());
+        assert!(encoded_data.is_ok());
     }
 
     #[test]
@@ -362,8 +362,8 @@ mod tests {
             Ok(v) => panic!("Other value: {:?} than expected Message", v),
         };
         let validation = message.schema.validate(&message.value);
-        assert_eq!(true, validation.is_strictly_valid());
-        assert_eq!(true, validation.errors.is_empty());
+        assert!(validation.is_strictly_valid());
+        assert!(validation.errors.is_empty());
         assert_eq!(
             "string",
             message
@@ -403,7 +403,7 @@ mod tests {
             .decode(Some(&*get_payload(7, bytes.clone())))
             .unwrap_err();
 
-        assert_eq!(true, error.cached);
+        assert!(error.cached);
 
         let _m = mock("GET", "/schemas/ids/7?deleted=true")
             .with_status(200)
@@ -418,7 +418,7 @@ mod tests {
             Ok(v) => panic!("Other value: {:?} than expected Message", v),
         };
 
-        assert_eq!(true, error.cached);
+        assert!(error.cached);
 
         decoder.remove_errors_from_cache();
 
@@ -429,7 +429,7 @@ mod tests {
             Ok(v) => panic!("Other value: {:?} than expected Message", v),
         };
 
-        assert_eq!(true, message.value.is_object())
+        assert!(message.value.is_object())
     }
 
     #[test]
@@ -450,8 +450,8 @@ mod tests {
             Ok(v) => panic!("Other value: {:?} than expected Message", v),
         };
         let validation = message.schema.validate(&message.value);
-        assert_eq!(true, validation.is_strictly_valid());
-        assert_eq!(true, validation.errors.is_empty());
+        assert!(validation.is_strictly_valid());
+        assert!(validation.errors.is_empty());
         assert_eq!(
             "string",
             message
@@ -566,7 +566,7 @@ mod tests {
             .create();
 
         let error = decoder.decode(Some(&bytes)).unwrap_err();
-        assert_eq!(true, error.error.starts_with("could not parse schema {"))
+        assert!(error.error.starts_with("could not parse schema {"))
     }
 
     #[test]
@@ -644,7 +644,7 @@ mod tests {
     fn display_encode() {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
         let encoder = JsonEncoder::new(sr_settings);
-        assert_eq!(true,
+        assert!(
             format!("{:?}", encoder).starts_with("JsonEncoder { sr_settings: SrSettings { urls: [\"http://127.0.0.1:1234\"], client: Client, authorization: None }, cache: {}, scope: Scope {")
         )
     }
@@ -653,7 +653,7 @@ mod tests {
     fn display_decode() {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
         let decoder = JsonDecoder::new(sr_settings);
-        assert_eq!(true,
+        assert!(
                    format!("{:?}", decoder).starts_with("JsonDecoder { sr_settings: SrSettings { urls: [\"http://127.0.0.1:1234\"], client: Client, authorization: None }, cache: {}, scope: Scope {")
         )
     }
@@ -698,12 +698,9 @@ mod tests {
 
         let error = encoder.encode(&result_example, &strategy).unwrap_err();
 
-        assert_eq!(
-            true,
-            error
-                .error
-                .ends_with("was not valid because of missing references")
-        )
+        assert!(error
+            .error
+            .ends_with("was not valid because of missing references"))
     }
 
     #[test]

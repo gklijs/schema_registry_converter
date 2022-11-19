@@ -293,13 +293,10 @@ mod tests {
         let strategy =
             SubjectNameStrategy::RecordNameStrategy(String::from("nl.openweb.data.Heartbeat"));
 
-        assert_eq!(
-            encoder
-                .encode_single_message(get_proto_complex_only_data(), strategy,)
-                .await
-                .is_err(),
-            true
-        )
+        assert!(encoder
+            .encode_single_message(get_proto_complex_only_data(), strategy,)
+            .await
+            .is_err())
     }
 
     #[tokio::test]
@@ -316,7 +313,7 @@ mod tests {
             )
             .await
             .unwrap_err();
-        assert_eq!(true, error.cached);
+        assert!(error.cached);
 
         let _m = mock("GET", "/subjects/nl.openweb.data.Heartbeat/versions/latest")
             .with_status(200)
@@ -332,7 +329,7 @@ mod tests {
             )
             .await
             .unwrap_err();
-        assert_eq!(true, error.cached);
+        assert!(error.cached);
 
         encoder.remove_errors_from_cache();
 
@@ -401,9 +398,7 @@ mod tests {
     fn display_rew_decoder() {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
         let decoder = ProtoRawEncoder::new(sr_settings);
-        assert_eq!(
-            true
-                .to_owned(),
+        assert!(
             format!("{:?}", decoder).starts_with("ProtoRawEncoder { sr_settings: SrSettings { urls: [\"http://127.0.0.1:1234\"], client: Client")
         )
     }
@@ -434,7 +429,7 @@ mod tests {
         let decoder = ProtoRawDecoder::new(sr_settings);
 
         let error = decoder.decode(Some(get_proto_hb_101())).await.unwrap_err();
-        assert_eq!(true, error.cached);
+        assert!(error.cached);
 
         let _m = mock("GET", "/schemas/ids/7?deleted=true")
             .with_status(200)
@@ -443,7 +438,7 @@ mod tests {
             .create();
 
         let error = decoder.decode(Some(get_proto_hb_101())).await.unwrap_err();
-        assert_eq!(true, error.cached);
+        assert!(error.cached);
 
         decoder.remove_errors_from_cache();
 
@@ -490,9 +485,7 @@ mod tests {
     fn display_decoder() {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
         let decoder = ProtoRawDecoder::new(sr_settings);
-        assert_eq!(
-            true
-                .to_owned(),
+        assert!(
             format!("{:?}", decoder).starts_with("ProtoRawDecoder { sr_settings: SrSettings { urls: [\"http://127.0.0.1:1234\"], client: Client")
         )
     }

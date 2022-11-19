@@ -157,7 +157,7 @@ mod tests {
         let decoder = ProtoDecoder::new(sr_settings);
         let error = decoder.decode(Some(get_proto_hb_101())).unwrap_err();
 
-        assert_eq!(true, error.cached);
+        assert!(error.cached);
 
         let _m = mock("GET", "/schemas/ids/7?deleted=true")
             .with_status(200)
@@ -167,7 +167,7 @@ mod tests {
 
         let error = decoder.decode(Some(get_proto_hb_101())).unwrap_err();
 
-        assert_eq!(true, error.cached);
+        assert!(error.cached);
 
         decoder.remove_errors_from_cache();
 

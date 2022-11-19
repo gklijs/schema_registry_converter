@@ -354,7 +354,7 @@ mod tests {
                 .unwrap();
 
         let encoded_data = encoder.encode(&result_example, strategy.clone()).await;
-        assert_eq!(true, encoded_data.is_err());
+        assert!(encoded_data.is_err());
 
         let _m = mock("GET", "/subjects/testresult-value/versions/latest")
             .with_status(200)
@@ -363,12 +363,12 @@ mod tests {
             .create();
 
         let encoded_data = encoder.encode(&result_example, strategy.clone()).await;
-        assert_eq!(true, encoded_data.is_err());
+        assert!(encoded_data.is_err());
 
         encoder.remove_errors_from_cache();
 
         let encoded_data = encoder.encode(&result_example, strategy).await;
-        assert_eq!(true, encoded_data.is_ok());
+        assert!(encoded_data.is_ok());
     }
 
     #[tokio::test]
@@ -430,7 +430,7 @@ mod tests {
             .decode(Some(&*get_payload(7, bytes.clone())))
             .await
             .unwrap_err();
-        assert_eq!(true, error.cached);
+        assert!(error.cached);
 
         let _m = mock("GET", "/schemas/ids/7?deleted=true")
             .with_status(200)
@@ -442,7 +442,7 @@ mod tests {
             .decode(Some(&*get_payload(7, bytes.clone())))
             .await
             .unwrap_err();
-        assert_eq!(true, error.cached);
+        assert!(error.cached);
 
         decoder.remove_errors_from_cache();
 
@@ -451,7 +451,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(true, message.value.is_object());
+        assert!(message.value.is_object());
         validate(message.schema, &message.value).unwrap();
     }
 
@@ -585,7 +585,7 @@ mod tests {
             .create();
 
         let error = decoder.decode(Some(&bytes)).await.unwrap_err();
-        assert_eq!(true, error.error.starts_with("could not parse schema {"))
+        assert!(error.error.starts_with("could not parse schema {"))
     }
 
     #[tokio::test]
@@ -668,9 +668,7 @@ mod tests {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
         let encoder = JsonEncoder::new(sr_settings);
         println!("{:?}", encoder);
-        assert_eq!(true,
-            format!("{:?}", encoder).starts_with("JsonEncoder { sr_settings: SrSettings { urls: [\"http://127.0.0.1:1234\"], client: Client { accepts: Accepts")
-        )
+        assert!(format!("{:?}", encoder).starts_with("JsonEncoder { sr_settings: SrSettings { urls: [\"http://127.0.0.1:1234\"], client: Client { accepts: Accepts"))
     }
 
     #[test]
@@ -678,7 +676,7 @@ mod tests {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
         let decoder = JsonDecoder::new(sr_settings);
         println!("{:?}", decoder);
-        assert_eq!(true,
+        assert!(
                    format!("{:?}", decoder).starts_with("JsonDecoder { sr_settings: SrSettings { urls: [\"http://127.0.0.1:1234\"], client: Client { accepts: Accepts")
         )
     }
@@ -723,12 +721,9 @@ mod tests {
 
         let error = encoder.encode(&result_example, strategy).await.unwrap_err();
 
-        assert_eq!(
-            true,
-            error
-                .error
-                .ends_with("was not valid because of missing references")
-        )
+        assert!(error
+            .error
+            .ends_with("was not valid because of missing references"))
     }
 
     #[tokio::test]

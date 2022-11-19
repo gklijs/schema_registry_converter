@@ -31,7 +31,7 @@ pub fn consume_proto(
     for message in consumer.iter() {
         match message {
             Err(e) => {
-                assert!(false, "Got error consuming message: {}", e);
+                panic!("Got error producing message: {}", e);
             }
             Ok(m) => {
                 let des_r = get_deserialized_proto_record(&m, &decoder);
