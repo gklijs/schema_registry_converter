@@ -29,7 +29,7 @@ pub fn consume_avro(
     for message in consumer.iter() {
         match message {
             Err(e) => {
-                assert!(false, "Got error consuming message: {}", e);
+                panic!("Got error consuming message: {}", e);
             }
             Ok(m) => {
                 let des_r = get_deserialized_avro_record(&m, &decoder);

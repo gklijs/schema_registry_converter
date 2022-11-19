@@ -233,12 +233,9 @@ mod tests {
         let strategy =
             SubjectNameStrategy::RecordNameStrategy(String::from("nl.openweb.data.Heartbeat"));
 
-        assert_eq!(
-            encoder
-                .encode_single_message(get_proto_complex_only_data(), &strategy,)
-                .is_err(),
-            true
-        )
+        assert!(encoder
+            .encode_single_message(get_proto_complex_only_data(), &strategy,)
+            .is_err())
     }
 
     #[test]
@@ -254,7 +251,7 @@ mod tests {
                 &strategy,
             )
             .unwrap_err();
-        assert_eq!(true, error.cached);
+        assert!(error.cached);
 
         let _m = mock("GET", "/subjects/nl.openweb.data.Heartbeat/versions/latest")
             .with_status(200)
@@ -269,7 +266,7 @@ mod tests {
                 &strategy,
             )
             .unwrap_err();
-        assert_eq!(true, error.cached);
+        assert!(error.cached);
         encoder.remove_errors_from_cache();
 
         let encoded_data = encoder
@@ -370,7 +367,7 @@ mod tests {
         let decoder = ProtoRawDecoder::new(sr_settings);
 
         let error = decoder.decode(Some(get_proto_hb_101())).unwrap_err();
-        assert_eq!(true, error.cached);
+        assert!(error.cached);
 
         let _m = mock("GET", "/schemas/ids/7?deleted=true")
             .with_status(200)
@@ -379,7 +376,7 @@ mod tests {
             .create();
 
         let error = decoder.decode(Some(get_proto_hb_101())).unwrap_err();
-        assert_eq!(true, error.cached);
+        assert!(error.cached);
 
         decoder.remove_errors_from_cache();
 

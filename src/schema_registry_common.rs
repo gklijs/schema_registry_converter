@@ -273,7 +273,7 @@ mod test {
         assert_eq!(0, registered_schema.id);
         assert_eq!(SchemaType::Avro, registered_schema.schema_type);
         assert_eq!("some schema", registered_schema.schema);
-        assert_eq!(true, registered_schema.references.is_empty());
+        assert!(registered_schema.references.is_empty());
         assert_eq!(
             r#"RegisteredSchema { id: 0, schema_type: Avro, schema: "some schema", references: [] }"#,
             format!("{:?}", registered_schema)

@@ -205,7 +205,7 @@ mod tests {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
         let decoder = ProtoDecoder::new(sr_settings);
         let error = decoder.decode(Some(get_proto_hb_101())).await.unwrap_err();
-        assert_eq!(true, error.cached);
+        assert!(error.cached);
 
         let _m = mock("GET", "/schemas/ids/7?deleted=true")
             .with_status(200)
@@ -214,7 +214,7 @@ mod tests {
             .create();
 
         let error = decoder.decode(Some(get_proto_hb_101())).await.unwrap_err();
-        assert_eq!(true, error.cached);
+        assert!(error.cached);
 
         decoder.remove_errors_from_cache();
 
@@ -264,9 +264,7 @@ mod tests {
     fn display_decoder() {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
         let decoder = ProtoDecoder::new(sr_settings);
-        assert_eq!(
-            true
-                .to_owned(),
+        assert!(
             format!("{:?}", decoder).starts_with("ProtoDecoder { sr_settings: SrSettings { urls: [\"http://127.0.0.1:1234\"], client: Client {")
         )
     }
