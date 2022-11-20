@@ -70,6 +70,48 @@ impl<'a> ProtoDecoder<'a> {
         let message_info = context.context.get_message(&full_name).unwrap();
         Ok(message_info.decode(&data, &context.context))
     }
+    /// Decodes bytes into a value.
+    /// The choice to use Option<&[u8]> as type us made so it plays nice with the BorrowedMessage
+    /// struct from rdkafka, for example if we have m: &'a BorrowedMessage and decoder: &'a
+    /// Decoder we can use decoder.decode(m.payload()) to decode the payload or
+    /// decoder.decode(m.key()) to get the decoded key.
+    pub async fn decode_with_context(
+        &self,
+        bytes: Option<&[u8]>,
+    ) -> Result<Option<DecodeResultWithContext>, SRCError> {
+        match get_bytes_result(bytes) {
+            BytesResult::Null => Ok(None),
+            BytesResult::Valid(id, bytes) => {
+                match self.deserialize_with_context(id, &bytes).await {
+                    Ok(v) => Ok(Some(v)),
+                    Err(e) => Err(e),
+                }
+            }
+            BytesResult::Invalid(_) => {
+                Err(SRCError::new("no protobuf compatible bytes", None, false))
+            }
+        }
+    }
+    /// The actual deserialization trying to get the id from the bytes to retrieve the schema, and
+    /// using a reader transforms the bytes to a value.
+    async fn deserialize_with_context(
+        &self,
+        id: u32,
+        bytes: &[u8],
+    ) -> Result<DecodeResultWithContext, SRCError> {
+        let vec_of_schemas = self.get_vec_of_schemas(id).await?;
+        let context = into_decode_context(vec_of_schemas.to_vec())?;
+        let (index, data_bytes) = to_index_and_data(bytes);
+        let full_name = resolve_name(&context.resolver, &index)?;
+        let message_info = context.context.get_message(&full_name).unwrap();
+        let value = message_info.decode(&data_bytes, &context.context);
+        Ok(DecodeResultWithContext {
+            value,
+            context,
+            full_name,
+            data_bytes,
+        })
+    }
     /// Gets the vector of schema's directly of via a shared future. The direct cache main function
     /// is for performance.
     async fn get_vec_of_schemas(&self, id: u32) -> Result<Arc<Vec<String>>, SRCError> {
@@ -107,6 +149,14 @@ impl<'a> ProtoDecoder<'a> {
     }
 }
 
+#[derive(Debug)]
+pub struct DecodeResultWithContext {
+    pub value: MessageValue,
+    pub context: DecodeContext,
+    pub full_name: Arc<String>,
+    pub data_bytes: Vec<u8>,
+}
+
 fn add_files<'a>(
     sr_settings: &'a SrSettings,
     registered_schema: RegisteredSchema,
@@ -124,9 +174,9 @@ fn add_files<'a>(
 }
 
 #[derive(Debug)]
-struct DecodeContext {
-    resolver: MessageResolver,
-    context: Context,
+pub struct DecodeContext {
+    pub resolver: MessageResolver,
+    pub context: Context,
 }
 
 fn into_decode_context(vec_of_schemas: Vec<String>) -> Result<DecodeContext, SRCError> {
@@ -196,6 +246,28 @@ mod tests {
             Value::Message(x) => *x,
             v => panic!("Other value: {:?} than expected Message", v),
         };
+
+        assert_eq!(Value::UInt64(101u64), message.fields[0].value)
+    }
+
+    #[tokio::test]
+    async fn test_decode_with_context_default() {
+        let _m = mock("GET", "/schemas/ids/7?deleted=true")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(&get_proto_body(get_proto_hb_schema(), 1))
+            .create();
+
+        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let decoder = ProtoDecoder::new(sr_settings);
+        let heartbeat = decoder
+            .decode_with_context(Some(get_proto_hb_101()))
+            .await
+            .unwrap();
+
+        assert!(heartbeat.is_some());
+
+        let message = heartbeat.unwrap().value;
 
         assert_eq!(Value::UInt64(101u64), message.fields[0].value)
     }

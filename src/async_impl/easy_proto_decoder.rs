@@ -1,4 +1,4 @@
-use crate::async_impl::proto_decoder::ProtoDecoder;
+use crate::async_impl::proto_decoder::{DecodeResultWithContext, ProtoDecoder};
 use crate::async_impl::schema_registry::SrSettings;
 use crate::error::SRCError;
 use protofish::decode::Value;
@@ -18,6 +18,12 @@ impl EasyProtoDecoder {
     }
     pub async fn decode(&self, bytes: Option<&[u8]>) -> Result<Value, SRCError> {
         self.decoder.decode(bytes).await
+    }
+    pub async fn decode_with_context(
+        &self,
+        bytes: Option<&[u8]>,
+    ) -> Result<Option<DecodeResultWithContext>, SRCError> {
+        self.decoder.decode_with_context(bytes).await
     }
 }
 
@@ -45,6 +51,27 @@ mod tests {
             Value::Message(x) => *x,
             v => panic!("Other value: {:?} than expected Message", v),
         };
+
+        assert_eq!(Value::UInt64(101u64), message.fields[0].value)
+    }
+
+    #[tokio::test]
+    async fn test_decode_with_context_default() {
+        let _m = mock("GET", "/schemas/ids/7?deleted=true")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(&get_proto_body(get_proto_hb_schema(), 1))
+            .create();
+
+        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let decoder = EasyProtoDecoder::new(sr_settings);
+        let heartbeat = decoder
+            .decode_with_context(Some(get_proto_hb_101()))
+            .await
+            .unwrap();
+
+        assert!(heartbeat.is_some());
+        let message = heartbeat.unwrap().value;
 
         assert_eq!(Value::UInt64(101u64), message.fields[0].value)
     }

@@ -7,9 +7,9 @@ use integer_encoding::VarIntReader;
 use logos::Logos;
 
 #[derive(Debug, Clone)]
-pub(crate) struct MessageResolver {
-    map: DashMap<Vec<i32>, Arc<String>>,
-    imports: Vec<String>,
+pub struct MessageResolver {
+    pub map: DashMap<Vec<i32>, Arc<String>>,
+    pub imports: Vec<String>,
 }
 
 #[derive(Debug, Clone)]

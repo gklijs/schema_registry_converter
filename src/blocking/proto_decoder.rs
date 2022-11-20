@@ -64,6 +64,49 @@ impl ProtoDecoder {
             Err(e) => Err(e),
         }
     }
+    /// Decodes bytes into a decode result.
+    /// The choice to use Option<&[u8]> as type us made so it plays nice with the BorrowedMessage
+    /// struct from rdkafka, for example if we have m: &'a BorrowedMessage and decoder: &'a
+    /// Decoder we can use decoder.decode(m.payload()) to decode the payload or
+    /// decoder.decode(m.key()) to get the decoded key.
+    pub fn decode_with_context(
+        &self,
+        bytes: Option<&[u8]>,
+    ) -> Result<Option<DecodeResultWithContext>, SRCError> {
+        match get_bytes_result(bytes) {
+            BytesResult::Null => Ok(None),
+            BytesResult::Valid(id, bytes) => match self.deserialize_with_context(id, &bytes) {
+                Ok(v) => Ok(Some(v)),
+                Err(e) => Err(e),
+            },
+            BytesResult::Invalid(_) => {
+                Err(SRCError::new("no protobuf compatible bytes", None, false))
+            }
+        }
+    }
+    /// The actual deserialization trying to get the id from the bytes to retrieve the schema, and
+    /// using a reader transforms the bytes to a value.
+    fn deserialize_with_context(
+        &self,
+        id: u32,
+        bytes: &[u8],
+    ) -> Result<DecodeResultWithContext, SRCError> {
+        match self.context(id) {
+            Ok(s) => {
+                let (index, data_bytes) = to_index_and_data(bytes);
+                let full_name = resolve_name(&s.resolver, &index)?;
+                let message_info = s.context.get_message(&full_name).unwrap();
+                let value = message_info.decode(&data_bytes, &s.context);
+                Ok(DecodeResultWithContext {
+                    value,
+                    context: s.clone(),
+                    full_name,
+                    data_bytes,
+                })
+            }
+            Err(e) => Err(e),
+        }
+    }
     /// Gets the Context object, either from the cache, or from the schema registry and then putting
     /// it into the cache.
     fn context(&self, id: u32) -> Result<Arc<DecodeContext>, SRCError> {
@@ -81,6 +124,14 @@ impl ProtoDecoder {
     }
 }
 
+#[derive(Debug)]
+pub struct DecodeResultWithContext {
+    pub value: MessageValue,
+    pub context: Arc<DecodeContext>,
+    pub full_name: Arc<String>,
+    pub data_bytes: Vec<u8>,
+}
+
 fn add_files(
     sr_settings: &SrSettings,
     registered_schema: RegisteredSchema,
@@ -95,9 +146,10 @@ fn add_files(
 }
 
 #[derive(Debug)]
-struct DecodeContext {
-    resolver: MessageResolver,
-    context: Context,
+pub struct DecodeContext {
+    pub resolver: MessageResolver,
+    pub context: Context,
+    pub registered_schema: RegisteredSchema,
 }
 
 fn to_resolve_context(
@@ -107,9 +159,13 @@ fn to_resolve_context(
     let resolver = MessageResolver::new(&registered_schema.schema);
     let mut files = Vec::new();
     add_common_files(resolver.imports(), &mut files);
-    add_files(sr_settings, registered_schema, &mut files)?;
+    add_files(sr_settings, registered_schema.clone(), &mut files)?;
     match Context::parse(&files) {
-        Ok(context) => Ok(Arc::new(DecodeContext { resolver, context })),
+        Ok(context) => Ok(Arc::new(DecodeContext {
+            resolver,
+            context,
+            registered_schema,
+        })),
         Err(e) => Err(SRCError::non_retryable_with_cause(
             e,
             "Error creating proto context",
@@ -147,6 +203,27 @@ mod tests {
             Err(e) => panic!("Error: {:?}, while none expected", e),
             Ok(v) => panic!("Other value: {:?} than expected Message", v),
         };
+
+        assert_eq!(Value::UInt64(101u64), message.fields[0].value)
+    }
+
+    #[test]
+    fn test_decode_with_contxt_default() {
+        let _m = mock("GET", "/schemas/ids/7?deleted=true")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(&get_proto_body(get_proto_hb_schema(), 1))
+            .create();
+
+        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let decoder = ProtoDecoder::new(sr_settings);
+        let heartbeat = decoder
+            .decode_with_context(Some(get_proto_hb_101()))
+            .unwrap();
+
+        assert!(heartbeat.is_some());
+
+        let message = heartbeat.unwrap().value;
 
         assert_eq!(Value::UInt64(101u64), message.fields[0].value)
     }
