@@ -34,6 +34,7 @@ use serde_json::Value as JsonValue;
 
 use crate::avro_common::{
     get_name, item_to_bytes, replace_reference, values_to_bytes, AvroSchema, DecodeResult,
+    DecodeResultWithSchema,
 };
 use crate::blocking::schema_registry::{
     get_referenced_schema, get_schema_by_id_and_type, get_schema_by_subject, SrSettings,
@@ -177,6 +178,51 @@ impl AvroDecoder {
                 Ok(v) => Ok(DecodeResult {
                     name: get_name(&s.parsed),
                     value: v,
+                }),
+                Err(e) => Err(SRCError::non_retryable_with_cause(
+                    e,
+                    "Could not transform bytes using schema",
+                )),
+            },
+            Err(e) => Err(e),
+        }
+    }
+    /// Decodes bytes into a value.
+    /// The choice to use Option<&[u8]> as type us made so it plays nice with the BorrowedMessage
+    /// struct from rdkafka, for example if we have m: &'a BorrowedMessage and decoder: &'a
+    /// Decoder we can use decoder.decode(m.payload()) to decode the payload or
+    /// decoder.decode(m.key()) to get the decoded key.
+    pub fn decode_with_schema(
+        &self,
+        bytes: Option<&[u8]>,
+    ) -> Result<Option<DecodeResultWithSchema>, SRCError> {
+        match get_bytes_result(bytes) {
+            BytesResult::Null => Ok(None),
+            BytesResult::Valid(id, bytes) => match self.deserialize_with_schema(id, &bytes) {
+                Ok(v) => Ok(Some(v)),
+                Err(e) => Err(e),
+            },
+            BytesResult::Invalid(bytes) => Err(SRCError::non_retryable_without_cause(&*format!(
+                "Invalid bytes {:?}",
+                bytes
+            ))),
+        }
+    }
+    /// The actual deserialization trying to get the id from the bytes to retrieve the schema, and
+    /// using a reader transforms the bytes to a value.
+    fn deserialize_with_schema(
+        &self,
+        id: u32,
+        bytes: &[u8],
+    ) -> Result<DecodeResultWithSchema, SRCError> {
+        let optional_schema = self.schema(id);
+        let mut reader = Cursor::new(bytes);
+        match optional_schema {
+            Ok(schema) => match from_avro_datum(&schema.parsed, &mut reader, None) {
+                Ok(value) => Ok(DecodeResultWithSchema {
+                    name: get_name(&schema.parsed),
+                    value,
+                    schema,
                 }),
                 Err(e) => Err(SRCError::non_retryable_with_cause(
                     e,
@@ -555,6 +601,34 @@ mod tests {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
         let decoder = AvroDecoder::new(sr_settings);
         let heartbeat = decoder.decode(Some(&[0, 0, 0, 0, 1, 6])).unwrap().value;
+
+        assert_eq!(
+            heartbeat,
+            Value::Record(vec![("beat".to_string(), Value::Long(3))])
+        );
+
+        let item = match from_value::<Heartbeat>(&heartbeat) {
+            Ok(h) => h,
+            Err(_) => unreachable!(),
+        };
+        assert_eq!(item.beat, 3i64);
+    }
+
+    #[test]
+    fn test_decode_with_schema_default() {
+        let _m = mock("GET", "/schemas/ids/1?deleted=true")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
+            .create();
+
+        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let decoder = AvroDecoder::new(sr_settings);
+        let heartbeat = decoder
+            .decode_with_schema(Some(&[0, 0, 0, 0, 1, 6]))
+            .unwrap()
+            .unwrap()
+            .value;
 
         assert_eq!(
             heartbeat,

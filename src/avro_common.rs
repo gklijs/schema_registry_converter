@@ -4,23 +4,31 @@ use apache_avro::{to_avro_datum, to_value};
 use dashmap::DashMap;
 use serde::ser::Serialize;
 use serde_json::{value, Map};
+use std::sync::Arc;
 
 use crate::error::SRCError;
 use crate::schema_registry_common::{get_payload, SchemaType, SuppliedSchema};
 
 /// Because we need both the resulting schema, as have a way of posting the schema as json, we use
 /// this struct so we keep them both together.
-#[derive(Debug)]
-pub(crate) struct AvroSchema {
-    pub(crate) id: u32,
-    pub(crate) raw: String,
-    pub(crate) parsed: Schema,
+#[derive(Debug, PartialEq)]
+pub struct AvroSchema {
+    pub id: u32,
+    pub raw: String,
+    pub parsed: Schema,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct DecodeResult {
     pub name: Option<Name>,
     pub value: Value,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct DecodeResultWithSchema {
+    pub name: Option<Name>,
+    pub value: Value,
+    pub schema: Arc<AvroSchema>,
 }
 
 fn might_replace(

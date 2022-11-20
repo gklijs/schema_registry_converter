@@ -1,6 +1,6 @@
 use crate::async_impl::avro::{AvroDecoder, AvroEncoder};
 use crate::async_impl::schema_registry::SrSettings;
-use crate::avro_common::DecodeResult;
+use crate::avro_common::{DecodeResult, DecodeResultWithSchema};
 use crate::error::SRCError;
 use crate::schema_registry_common::SubjectNameStrategy;
 use apache_avro::types::Value;
@@ -19,6 +19,12 @@ impl EasyAvroDecoder {
     }
     pub async fn decode(&self, bytes: Option<&[u8]>) -> Result<DecodeResult, SRCError> {
         self.decoder.decode(bytes).await
+    }
+    pub async fn decode_with_schema(
+        &self,
+        bytes: Option<&[u8]>,
+    ) -> Result<Option<DecodeResultWithSchema>, SRCError> {
+        self.decoder.decode_with_schema(bytes).await
     }
 }
 
@@ -74,6 +80,35 @@ mod tests {
         let heartbeat = decoder
             .decode(Some(&[0, 0, 0, 0, 1, 6]))
             .await
+            .unwrap()
+            .value;
+
+        assert_eq!(
+            heartbeat,
+            Value::Record(vec![("beat".to_string(), Value::Long(3))])
+        );
+
+        let item = match from_value::<Heartbeat>(&heartbeat) {
+            Ok(h) => h,
+            Err(_) => unreachable!(),
+        };
+        assert_eq!(item.beat, 3i64);
+    }
+
+    #[tokio::test]
+    async fn test_decode_with_schema_default() {
+        let _m = mock("GET", "/schemas/ids/1?deleted=true")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
+            .create();
+
+        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let decoder = EasyAvroDecoder::new(sr_settings);
+        let heartbeat = decoder
+            .decode_with_schema(Some(&[0, 0, 0, 0, 1, 6]))
+            .await
+            .unwrap()
             .unwrap()
             .value;
 
