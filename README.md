@@ -35,7 +35,7 @@ To use it to convert using avro async use:
 
 ```toml
 [dependencies]
-schema_registry_converter = { version = "3.0.0", features = ["avro"] }
+schema_registry_converter = { version = "3.1.0", features = ["avro"] }
 ```
 
 For simplicity there are `easy` variants that internally have an arc.
@@ -44,7 +44,7 @@ structs that start with `Easy` in the name to do the conversions.
 
 ```toml
 [dependencies]
-schema_registry_converter = { version = "3.0.0", features = ["easy", "avro"] }
+schema_registry_converter = { version = "3.1.0", features = ["easy", "avro"] }
 ```
 
 ...and see the [docs](https://docs.rs/schema_registry_converter) for how to use it.
@@ -53,7 +53,7 @@ All the converters also have a blocking (non async) version, in that case use so
 
 ```toml
 [dependencies]
-schema_registry_converter = { version = "3.0.0", default-features = false, features = ["avro", "blocking"] }
+schema_registry_converter = { version = "3.1.0", default-features = false, features = ["avro", "blocking"] }
 ```
 
 If you need to use both in a project you can use something like, but have to be weary you import the correct paths
@@ -61,7 +61,7 @@ depending on your use.
 
 ```toml
 [dependencies]
-schema_registry_converter = { version = "3.0.0", features = ["avro", "blocking"] }
+schema_registry_converter = { version = "3.1.0", features = ["avro", "blocking"] }
 ```
 
 ## Consumer

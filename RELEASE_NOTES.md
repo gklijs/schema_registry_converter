@@ -1,5 +1,11 @@
 ## Release notes
 
+### 3.1.0
+
+Fix a problem with missing checks on some proto common types, like timestamp.
+Added functions to get the context when using protobuf.
+Added functions to get the Avro schema when using avro.
+
 ### 3.0.0
 
 Several breaking changes in the API, making it easier to use as in most places we don't need a mutable reference anymore.
