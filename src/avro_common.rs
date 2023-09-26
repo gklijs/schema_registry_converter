@@ -155,7 +155,7 @@ pub(crate) fn item_to_bytes(
 
 pub(crate) fn get_name(schema: &Schema) -> Option<Name> {
     match schema {
-        Schema::Record { name: n, .. } => Some(n.clone()),
+        Schema::Record(schema) => Some(schema.name.clone()),
         _ => None,
     }
 }
