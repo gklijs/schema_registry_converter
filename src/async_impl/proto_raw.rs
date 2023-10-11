@@ -109,7 +109,7 @@ impl<'a> ProtoRawEncoder<'a> {
                     match get_schema_by_subject(&sr_settings, &subject_name_strategy).await {
                         Ok(registered_schema) => Ok(Arc::new(EncodeContext {
                             id: registered_schema.id,
-                            resolver: IndexResolver::new(&*registered_schema.schema),
+                            resolver: IndexResolver::new(&registered_schema.schema),
                         })),
                         Err(e) => Err(e.into_cache()),
                     }
@@ -158,7 +158,7 @@ impl<'a> ProtoRawDecoder<'a> {
         match get_bytes_result(bytes) {
             BytesResult::Null => Ok(None),
             BytesResult::Valid(id, bytes) => Ok(Some(self.deserialize(id, &bytes).await?)),
-            BytesResult::Invalid(i) => Err(SRCError::non_retryable_without_cause(&*format!(
+            BytesResult::Invalid(i) => Err(SRCError::non_retryable_without_cause(&format!(
                 "Invalid bytes {:?}",
                 i
             ))),
@@ -239,7 +239,7 @@ mod tests {
         let _m = mock("GET", "/subjects/nl.openweb.data.Heartbeat/versions/latest")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_proto_body(get_proto_hb_schema(), 7))
+            .with_body(get_proto_body(get_proto_hb_schema(), 7))
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
@@ -264,7 +264,7 @@ mod tests {
         let _m = mock("GET", "/subjects/nl.openweb.data.Heartbeat/versions/latest")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_proto_body(get_proto_hb_schema(), 7))
+            .with_body(get_proto_body(get_proto_hb_schema(), 7))
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
@@ -285,7 +285,7 @@ mod tests {
         let _m = mock("GET", "/subjects/nl.openweb.data.Heartbeat/versions/latest")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_proto_body(get_proto_complex(), 7))
+            .with_body(get_proto_body(get_proto_complex(), 7))
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
@@ -318,7 +318,7 @@ mod tests {
         let _m = mock("GET", "/subjects/nl.openweb.data.Heartbeat/versions/latest")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_proto_body(get_proto_hb_schema(), 7))
+            .with_body(get_proto_body(get_proto_hb_schema(), 7))
             .create();
 
         let error = encoder
@@ -350,7 +350,7 @@ mod tests {
         let _m = mock("POST", "/subjects/result.proto/versions")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_proto_body(get_proto_result(), 5))
+            .with_body(get_proto_body(get_proto_result(), 5))
             .create();
 
         let _m = mock("POST", "/subjects/result.proto?deleted=false")
@@ -362,7 +362,7 @@ mod tests {
         let _m = mock("POST", "/subjects/test.proto/versions")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_proto_body(get_proto_result(), 6))
+            .with_body(get_proto_body(get_proto_result(), 6))
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
@@ -408,7 +408,7 @@ mod tests {
         let _m = mock("GET", "/schemas/ids/7?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_proto_body(get_proto_hb_schema(), 7))
+            .with_body(get_proto_body(get_proto_hb_schema(), 7))
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
@@ -434,7 +434,7 @@ mod tests {
         let _m = mock("GET", "/schemas/ids/7?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_proto_body(get_proto_hb_schema(), 7))
+            .with_body(get_proto_body(get_proto_hb_schema(), 7))
             .create();
 
         let error = decoder.decode(Some(get_proto_hb_101())).await.unwrap_err();
@@ -457,7 +457,7 @@ mod tests {
         let _m = mock("GET", "/schemas/ids/6?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_proto_body_with_reference(
+            .with_body(get_proto_body_with_reference(
                 get_proto_complex(),
                 2,
                 get_proto_complex_references(),
@@ -467,7 +467,7 @@ mod tests {
         let _m = mock("GET", "/subjects/result.proto/versions/1")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_proto_body(get_proto_result(), 1))
+            .with_body(get_proto_body(get_proto_result(), 1))
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));

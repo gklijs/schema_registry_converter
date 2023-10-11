@@ -174,7 +174,7 @@ impl<'a> JsonDecoder<'a> {
         match get_bytes_result(bytes) {
             BytesResult::Null => Ok(None),
             BytesResult::Valid(id, bytes) => Ok(Some(self.deserialize(id, &bytes).await?)),
-            BytesResult::Invalid(i) => Err(SRCError::non_retryable_without_cause(&*format!(
+            BytesResult::Invalid(i) => Err(SRCError::non_retryable_without_cause(&format!(
                 "Invalid bytes: {:?}",
                 i
             ))),
@@ -235,9 +235,9 @@ impl<'a> JsonDecoder<'a> {
 }
 
 fn reference_url(rr: &RegisteredReference) -> Result<Url, SRCError> {
-    match Url::from_str(&*rr.name) {
+    match Url::from_str(&rr.name) {
         Ok(v) => Ok(v),
-        Err(e) => Err(SRCError::non_retryable_with_cause(e, &*format!("reference schema with subject {} and version {} has invalid id {}, it has to be a fully qualified url", rr.subject, rr.version, rr.name)))
+        Err(e) => Err(SRCError::non_retryable_with_cause(e, &format!("reference schema with subject {} and version {} has invalid id {}, it has to be a fully qualified url", rr.subject, rr.version, rr.name)))
     }
 }
 
@@ -265,7 +265,7 @@ fn to_json_schema(
             .into_iter()
             .collect();
         let references = refs?;
-        let schema: Value = to_value(&*registered_schema.schema)?;
+        let schema: Value = to_value(&registered_schema.schema)?;
         let url = match optional_url {
             Some(v) => v,
             None => main_url(&schema, sr_settings, registered_schema.id),
@@ -309,7 +309,7 @@ mod tests {
         let _m = mock("GET", "/subjects/testresult-value/versions/latest")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_json_body(json_result_schema(), 10))
+            .with_body(get_json_body(json_result_schema(), 10))
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
@@ -329,7 +329,7 @@ mod tests {
         let _m = mock("GET", "/subjects/testresult-value/versions/latest")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_json_body(json_result_schema_with_id(), 10))
+            .with_body(get_json_body(json_result_schema_with_id(), 10))
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
@@ -359,7 +359,7 @@ mod tests {
         let _m = mock("GET", "/subjects/testresult-value/versions/latest")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_json_body(json_result_schema(), 10))
+            .with_body(get_json_body(json_result_schema(), 10))
             .create();
 
         let encoded_data = encoder.encode(&result_example, strategy.clone()).await;
@@ -380,7 +380,7 @@ mod tests {
         let _m = mock("GET", "/schemas/ids/7?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_json_body(json_result_schema(), 7))
+            .with_body(get_json_body(json_result_schema(), 7))
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
@@ -435,7 +435,7 @@ mod tests {
         let _m = mock("GET", "/schemas/ids/7?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_json_body(json_result_schema(), 7))
+            .with_body(get_json_body(json_result_schema(), 7))
             .create();
 
         let error = decoder
@@ -460,7 +460,7 @@ mod tests {
         let _m = mock("GET", "/schemas/ids/10?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_json_body(json_result_schema(), 10))
+            .with_body(get_json_body(json_result_schema(), 10))
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
@@ -500,7 +500,7 @@ mod tests {
         let _m = mock("GET", "/schemas/ids/10?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_json_body(json_result_schema(), 10))
+            .with_body(get_json_body(json_result_schema(), 10))
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
@@ -533,7 +533,7 @@ mod tests {
         let _m = mock("GET", "/schemas/ids/5?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_json_body_with_reference(
+            .with_body(get_json_body_with_reference(
                 json_test_ref_schema(),
                 5,
                 json_get_result_references(),
@@ -542,7 +542,7 @@ mod tests {
         let _m = mock("GET", "/subjects/result.json/versions/1")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_json_body(json_result_schema(), 4))
+            .with_body(get_json_body(json_result_schema(), 4))
             .create();
 
         let value = decoder.decode(Some(&bytes)).await.unwrap().unwrap().value;
@@ -572,7 +572,7 @@ mod tests {
         let _m = mock("GET", "/schemas/ids/5?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_json_body_with_reference(
+            .with_body(get_json_body_with_reference(
                 json_test_ref_schema(),
                 5,
                 json_get_result_references(),
@@ -581,7 +581,7 @@ mod tests {
         let _m = mock("GET", "/subjects/result.json/versions/1")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_json_body(&json_result_schema()[0..30], 4))
+            .with_body(get_json_body(&json_result_schema()[0..30], 4))
             .create();
 
         let error = decoder.decode(Some(&bytes)).await.unwrap_err();
@@ -616,7 +616,7 @@ mod tests {
         let _m = mock("GET", "/schemas/ids/5?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_json_body_with_reference(
+            .with_body(get_json_body_with_reference(
                 json_test_ref_schema(),
                 5,
                 json_get_result_references(),
@@ -625,7 +625,7 @@ mod tests {
         let _m = mock("GET", "/schemas/ids/7?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_json_body_with_reference(
+            .with_body(get_json_body_with_reference(
                 json_test_ref_schema(),
                 7,
                 json_get_result_references(),
@@ -634,7 +634,7 @@ mod tests {
         let _m = mock("GET", "/subjects/result.json/versions/1")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_json_body(json_result_schema(), 4))
+            .with_body(get_json_body(json_result_schema(), 4))
             .create();
 
         let value = decoder
@@ -686,7 +686,7 @@ mod tests {
         let _m = mock("GET", "/subjects/testresult-value/versions/latest")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_json_body(json_result_schema(), 10))
+            .with_body(get_json_body(json_result_schema(), 10))
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
@@ -709,7 +709,7 @@ mod tests {
         let _m = mock("GET", "/subjects/testresult-value/versions/latest")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_json_body(json_test_ref_schema(), 10))
+            .with_body(get_json_body(json_test_ref_schema(), 10))
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));

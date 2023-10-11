@@ -22,7 +22,7 @@ impl MessageResolver {
         let helper = ResolverHelper::new(s);
         let map = DashMap::new();
         for i in &helper.indexes {
-            map.insert(i.clone(), Arc::new(find_name(&*i, &helper)));
+            map.insert(i.clone(), Arc::new(find_name(i, &helper)));
         }
         MessageResolver {
             map,
@@ -43,7 +43,7 @@ impl IndexResolver {
         let helper = ResolverHelper::new(s);
         let map = DashMap::new();
         for i in &helper.indexes {
-            map.insert(find_name(&*i, &helper), Arc::new(i.clone()));
+            map.insert(find_name(i, &helper), Arc::new(i.clone()));
         }
         IndexResolver { map }
     }
@@ -100,7 +100,7 @@ impl ResolverHelper {
         let mut lex = Token::lexer(s);
         let mut next: Option<Token> = lex.next();
 
-        while next != None {
+        while next.is_some() {
             match next.unwrap() {
                 Token::Package => {
                     let slice = lex.slice();
@@ -110,7 +110,7 @@ impl ResolverHelper {
                     let slice = lex.slice();
                     let message = String::from(slice[8..slice.len()].trim());
                     for i in &indexes {
-                        if same_vec(i, &*index) {
+                        if same_vec(i, &index) {
                             *index.last_mut().unwrap() += 1;
                         }
                     }
@@ -198,7 +198,7 @@ pub(crate) fn resolve_name(
 ) -> Result<Arc<String>, SRCError> {
     match resolver.find_name(index) {
         Some(n) => Ok(n),
-        None => Err(SRCError::non_retryable_without_cause(&*format!(
+        None => Err(SRCError::non_retryable_without_cause(&format!(
             "Could not retrieve name for index: {:?}",
             index
         ))),

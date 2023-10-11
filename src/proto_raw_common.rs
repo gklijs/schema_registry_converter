@@ -18,7 +18,7 @@ pub(crate) fn to_bytes(
             result
         }
         None => {
-            return Err(SRCError::non_retryable_without_cause(&*format!(
+            return Err(SRCError::non_retryable_without_cause(&format!(
                 "could not find name {} with resolver",
                 full_name
             )))
@@ -49,7 +49,7 @@ pub(crate) fn to_decode_context(registered_schema: RegisteredSchema) -> DecodeCo
     let schema = String::from(&registered_schema.schema);
     DecodeContext {
         schema: registered_schema,
-        resolver: MessageResolver::new(&*schema),
+        resolver: MessageResolver::new(&schema),
     }
 }
 

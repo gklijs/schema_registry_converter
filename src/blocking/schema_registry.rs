@@ -65,7 +65,7 @@ impl SrSettings {
     }
 
     pub(crate) fn url(&self) -> &str {
-        &*self.urls[0]
+        &self.urls[0]
     }
 }
 
@@ -162,7 +162,7 @@ impl SrSettingsBuilder {
                     Err(e) => {
                         return Err(SRCError::non_retryable_with_cause(
                             e,
-                            &*format!("could not create headername from {}", entry.key()),
+                            &format!("could not create headername from {}", entry.key()),
                         ));
                     }
                 };
@@ -201,7 +201,7 @@ pub fn get_schema_by_id_and_type(
 ) -> Result<RegisteredSchema, SRCError> {
     match get_schema_by_id(id, sr_settings) {
         Ok(v) if v.schema_type == schema_type => Ok(v),
-        Ok(v) => Err(SRCError::non_retryable_without_cause(&*format!(
+        Ok(v) => Err(SRCError::non_retryable_without_cause(&format!(
             "type {:?}, is not correct",
             v.schema_type
         ))),
@@ -218,7 +218,7 @@ pub fn get_schema_by_subject(
     let subject = get_subject(subject_name_strategy)?;
     match get_schema(subject_name_strategy) {
         None => {
-            let raw_schema = perform_sr_call(sr_settings, SrCall::GetLatest(&*subject))?;
+            let raw_schema = perform_sr_call(sr_settings, SrCall::GetLatest(&subject))?;
             raw_to_registered_schema(raw_schema, None)
         }
         Some(v) => post_schema(sr_settings, subject, v),
@@ -232,7 +232,7 @@ pub fn get_referenced_schema(
     let raw_schema = perform_sr_call(
         sr_settings,
         SrCall::GetBySubjectAndVersion(
-            &*registered_reference.subject,
+            &registered_reference.subject,
             registered_reference.version,
         ),
     )?;
@@ -299,7 +299,7 @@ pub fn post_schema(
     let references: Vec<RegisteredReference> = match schema
         .references
         .into_iter()
-        .map(|r| post_reference(sr_settings, &*schema_type, r))
+        .map(|r| post_reference(sr_settings, &schema_type, r))
         .collect()
     {
         Ok(v) => v,
@@ -310,8 +310,8 @@ pub fn post_schema(
             ));
         }
     };
-    let body = get_body(&*schema_type, &*schema.schema, &*references);
-    let id = call_and_get_id(sr_settings, SrCall::PostNew(&*subject, &*body))?;
+    let body = get_body(&schema_type, &schema.schema, &references);
+    let id = call_and_get_id(sr_settings, SrCall::PostNew(&subject, &body))?;
     Ok(RegisteredSchema {
         id,
         schema_type: schema.schema_type,
@@ -339,7 +339,7 @@ fn call_and_get_id(sr_setting: &SrSettings, sr_call: SrCall) -> Result<u32, SRCE
     let raw_schema = perform_sr_call(sr_setting, sr_call)?;
     match raw_schema.id {
         Some(v) => Ok(v),
-        None => Err(SRCError::non_retryable_without_cause(&*format!(
+        None => Err(SRCError::non_retryable_without_cause(&format!(
             "Could not get id from response for {:?}",
             sr_call
         ))),
@@ -350,7 +350,7 @@ fn call_and_get_version(sr_setting: &SrSettings, sr_call: SrCall) -> Result<u32,
     let raw_schema = perform_sr_call(sr_setting, sr_call)?;
     match raw_schema.version {
         Some(v) => Ok(v),
-        None => Err(SRCError::non_retryable_without_cause(&*format!(
+        None => Err(SRCError::non_retryable_without_cause(&format!(
             "Could not get version from response for {:?}",
             sr_call
         ))),
@@ -365,7 +365,7 @@ fn post_reference(
     let references: Vec<RegisteredReference> = match reference
         .references
         .into_iter()
-        .map(|r| post_reference(sr_settings, &*schema_type, r))
+        .map(|r| post_reference(sr_settings, schema_type, r))
         .collect()
     {
         Ok(v) => v,
@@ -376,11 +376,11 @@ fn post_reference(
             ));
         }
     };
-    let body = get_body(schema_type, &*reference.schema, &*references);
-    perform_sr_call(sr_settings, SrCall::PostNew(&*reference.subject, &*body))?;
+    let body = get_body(schema_type, &reference.schema, &references);
+    perform_sr_call(sr_settings, SrCall::PostNew(&reference.subject, &body))?;
     let version = call_and_get_version(
         sr_settings,
-        SrCall::PostForVersion(&*reference.subject, &*body),
+        SrCall::PostForVersion(&reference.subject, &body),
     )?;
     Ok(RegisteredReference {
         name: reference.name,
@@ -471,7 +471,7 @@ mod tests {
             .create();
 
         let sr_settings = SrSettings::new_builder(String::from("bogus://test"))
-            .add_url((&*format!("http://{}", server_address())).parse().unwrap())
+            .add_url((format!("http://{}", server_address())).parse().unwrap())
             .set_token_authorization("some_json_web_token_for_example")
             .add_header("foo", "bar")
             .set_timeout(Duration::from_secs(5))

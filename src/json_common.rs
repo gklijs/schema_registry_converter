@@ -12,12 +12,12 @@ pub(crate) fn handle_validation(
     if validation.is_strictly_valid() {
         Ok(())
     } else if validation.errors.is_empty() {
-        Err(SRCError::non_retryable_without_cause(&*format!(
+        Err(SRCError::non_retryable_without_cause(&format!(
             "Value {} was not valid because of missing references",
             value
         )))
     } else {
-        Err(SRCError::non_retryable_without_cause(&*format!(
+        Err(SRCError::non_retryable_without_cause(&format!(
             "Value {} was not valid according to the schema because {:?}",
             value, validation.errors
         )))
@@ -52,8 +52,8 @@ pub(crate) fn fetch_id(def: &Value) -> Option<Url> {
 }
 
 pub(crate) fn fetch_fallback(url: &str, id: u32) -> Url {
-    let id = &*format!("{}/id/{}.json", url, id);
-    Url::parse(id).unwrap()
+    let id = format!("{}/id/{}.json", url, id);
+    Url::parse(&id).unwrap()
 }
 
 pub(crate) fn to_value(str: &str) -> Result<Value, SRCError> {
@@ -62,7 +62,7 @@ pub(crate) fn to_value(str: &str) -> Result<Value, SRCError> {
         Err(e) => {
             return Err(SRCError::non_retryable_with_cause(
                 e,
-                &*format!("could not parse schema {} to a value", str),
+                &format!("could not parse schema {} to a value", str),
             ))
         }
     };
