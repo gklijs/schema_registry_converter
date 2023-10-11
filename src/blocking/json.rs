@@ -13,7 +13,7 @@ use crate::blocking::schema_registry::{
 use crate::error::SRCError;
 use crate::json_common::{fetch_fallback, fetch_id, handle_validation, to_bytes, to_value};
 use crate::schema_registry_common::{
-    get_bytes_result, get_subject, BytesResult, RegisteredReference, RegisteredSchema, SchemaType,
+    get_bytes_result, BytesResult, RegisteredReference, RegisteredSchema, SchemaType,
     SubjectNameStrategy,
 };
 
@@ -48,7 +48,7 @@ impl JsonEncoder {
         value: &Value,
         subject_name_strategy: &SubjectNameStrategy,
     ) -> Result<Vec<u8>, SRCError> {
-        let key = get_subject(subject_name_strategy)?;
+        let key = subject_name_strategy.get_subject()?;
         let (validation, id) = self.validate(key, subject_name_strategy, value)?;
         handle_validation(validation, value)?;
         to_bytes(id, value)

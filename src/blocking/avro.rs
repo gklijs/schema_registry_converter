@@ -41,7 +41,7 @@ use crate::blocking::schema_registry::{
 };
 use crate::error::SRCError;
 use crate::schema_registry_common::{
-    get_bytes_result, get_subject, BytesResult, RegisteredReference, RegisteredSchema, SchemaType,
+    get_bytes_result, BytesResult, RegisteredReference, RegisteredSchema, SchemaType,
     SubjectNameStrategy,
 };
 
@@ -410,7 +410,7 @@ impl AvroEncoder {
         values: Vec<(&str, Value)>,
         subject_name_strategy: &SubjectNameStrategy,
     ) -> Result<Vec<u8>, SRCError> {
-        let key = get_subject(subject_name_strategy)?;
+        let key = subject_name_strategy.get_subject()?;
         match self.get_schema_and_id(key, subject_name_strategy) {
             Ok(avro_schema) => values_to_bytes(&avro_schema, values),
             Err(e) => Err(e),
@@ -467,7 +467,7 @@ impl AvroEncoder {
         item: impl Serialize,
         subject_name_strategy: &SubjectNameStrategy,
     ) -> Result<Vec<u8>, SRCError> {
-        let key = get_subject(subject_name_strategy)?;
+        let key = subject_name_strategy.get_subject()?;
         match self.get_schema_and_id(key, subject_name_strategy) {
             Ok(avro_schema) => item_to_bytes(&avro_schema, item),
             Err(e) => Err(e),
@@ -1101,16 +1101,14 @@ mod tests {
     fn test_encoder_schema_registry_unavailable_with_record() {
         let sr_settings = SrSettings::new(String::from("http://bogus"));
         let encoder = AvroEncoder::new(sr_settings);
-        let strategy = SubjectNameStrategy::RecordNameStrategyWithSchema(Box::from(
-            SuppliedSchema {
-                name: Some(String::from("nl.openweb.data.Balance")),
-                schema_type: SchemaType::Avro,
-                schema: String::from(
-                    r#"{"type":"record","name":"Balance","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#,
-                ),
-                references: vec![],
-            },
-        ));
+        let strategy = SubjectNameStrategy::RecordNameStrategyWithSchema(SuppliedSchema {
+            name: Some(String::from("nl.openweb.data.Balance")),
+            schema_type: SchemaType::Avro,
+            schema: String::from(
+                r#"{"type":"record","name":"Balance","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#,
+            ),
+            references: vec![],
+        });
         let result = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
 
         match result {
@@ -1179,14 +1177,14 @@ mod tests {
         let key_strategy = SubjectNameStrategy::TopicNameStrategyWithSchema(
             String::from("heartbeat"),
             true,
-            Box::from(SuppliedSchema {
+            SuppliedSchema {
                 name: Some(String::from("nl.openweb.data.Name")),
                 schema_type: SchemaType::Avro,
                 schema: String::from(
                     r#"{"type":"record","name":"Name","namespace":"nl.openweb.data","fields":[{"name":"name","type":"string","avro.java.string":"String"}]}"#,
                 ),
                 references: vec![],
-            }),
+            },
         );
         let bytes = encoder.encode(
             vec![("name", Value::String("Some name".to_owned()))],
@@ -1201,14 +1199,14 @@ mod tests {
         let value_strategy = SubjectNameStrategy::TopicNameStrategyWithSchema(
             String::from("heartbeat"),
             false,
-            Box::from(SuppliedSchema {
+            SuppliedSchema {
                 name: Some(String::from("nl.openweb.data.Heartbeat")),
                 schema_type: SchemaType::Avro,
                 schema: String::from(
                     r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#,
                 ),
                 references: vec![],
-            }),
+            },
         );
         let bytes = encoder.encode(vec![("beat", Value::Long(3))], &value_strategy);
         assert_eq!(bytes, Ok(vec![0, 0, 0, 0, 4, 6]))
@@ -1225,16 +1223,14 @@ mod tests {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
         let encoder = AvroEncoder::new(sr_settings);
 
-        let strategy = SubjectNameStrategy::RecordNameStrategyWithSchema(Box::from(
-            SuppliedSchema {
-                name: Some(String::from("nl.openweb.data.Heartbeat")),
-                schema_type: SchemaType::Avro,
-                schema: String::from(
-                    r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#,
-                ),
-                references: vec![],
-            },
-        ));
+        let strategy = SubjectNameStrategy::RecordNameStrategyWithSchema(SuppliedSchema {
+            name: Some(String::from("nl.openweb.data.Heartbeat")),
+            schema_type: SchemaType::Avro,
+            schema: String::from(
+                r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#,
+            ),
+            references: vec![],
+        });
         let bytes = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
         assert_eq!(bytes, Ok(vec![0, 0, 0, 0, 11, 6]))
     }
@@ -1250,16 +1246,14 @@ mod tests {
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
         let encoder = AvroEncoder::new(sr_settings);
 
-        let strategy = SubjectNameStrategy::RecordNameStrategyWithSchema(Box::from(
-            SuppliedSchema {
-                name: Some(String::from("nl.openweb.data.Heartbeat")),
-                schema_type: SchemaType::Avro,
-                schema: String::from(
-                    r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#,
-                ),
-                references: vec![],
-            },
-        ));
+        let strategy = SubjectNameStrategy::RecordNameStrategyWithSchema(SuppliedSchema {
+            name: Some(String::from("nl.openweb.data.Heartbeat")),
+            schema_type: SchemaType::Avro,
+            schema: String::from(
+                r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#,
+            ),
+            references: vec![],
+        });
         let result = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
         assert_eq!(
             result,
@@ -1283,14 +1277,14 @@ mod tests {
 
         let strategy = SubjectNameStrategy::TopicRecordNameStrategyWithSchema(
             String::from("hb"),
-            Box::from(SuppliedSchema {
+            SuppliedSchema {
                 name: Some(String::from("nl.openweb.data.Heartbeat")),
                 schema_type: SchemaType::Avro,
                 schema: String::from(
                     r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#,
                 ),
                 references: vec![],
-            }),
+            },
         );
         let bytes = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
         assert_eq!(bytes, Ok(vec![0, 0, 0, 0, 23, 6]))
@@ -1303,14 +1297,14 @@ mod tests {
 
         let strategy = SubjectNameStrategy::TopicRecordNameStrategyWithSchema(
             String::from("hb"),
-            Box::from(SuppliedSchema {
+            SuppliedSchema {
                 name: Some(String::from("nl.openweb.data.Heartbeat")),
                 schema_type: SchemaType::Avro,
                 schema: String::from(
                     r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#,
                 ),
                 references: vec![],
-            }),
+            },
         );
         let error = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
         assert_eq!(

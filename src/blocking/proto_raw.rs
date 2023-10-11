@@ -11,7 +11,7 @@ use crate::proto_raw_common::{
 };
 use crate::proto_resolver::{resolve_name, to_index_and_data, IndexResolver};
 use crate::schema_registry_common::{
-    get_bytes_result, get_subject, BytesResult, RegisteredSchema, SchemaType, SubjectNameStrategy,
+    get_bytes_result, BytesResult, RegisteredSchema, SchemaType, SubjectNameStrategy,
 };
 
 /// Encoder that works by prepending the correct bytes in order to make it valid schema registry
@@ -44,7 +44,7 @@ impl ProtoRawEncoder {
         full_name: &str,
         subject_name_strategy: &SubjectNameStrategy,
     ) -> Result<Vec<u8>, SRCError> {
-        let key = get_subject(subject_name_strategy)?;
+        let key = subject_name_strategy.get_subject()?;
         match self.encoding_context(key, subject_name_strategy) {
             Ok(encode_context) => to_bytes(&encode_context, bytes, full_name),
             Err(e) => Err(e),
@@ -56,7 +56,7 @@ impl ProtoRawEncoder {
         bytes: &[u8],
         subject_name_strategy: &SubjectNameStrategy,
     ) -> Result<Vec<u8>, SRCError> {
-        let key = get_subject(subject_name_strategy)?;
+        let key = subject_name_strategy.get_subject()?;
         match self.encoding_context(key, subject_name_strategy) {
             Ok(encode_context) => to_bytes_single_message(&encode_context, bytes),
             Err(e) => Err(e),
@@ -314,8 +314,7 @@ mod tests {
             schema: String::from(get_proto_complex()),
             references: vec![result_reference],
         };
-        let strategy =
-            SubjectNameStrategy::RecordNameStrategyWithSchema(Box::from(supplied_schema));
+        let strategy = SubjectNameStrategy::RecordNameStrategyWithSchema(supplied_schema);
 
         let encoded_data = encoder
             .encode(

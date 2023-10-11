@@ -103,27 +103,28 @@ pub enum SubjectNameStrategy {
     RecordNameStrategy(String),
     TopicNameStrategy(String, bool),
     TopicRecordNameStrategy(String, String),
-    RecordNameStrategyWithSchema(Box<SuppliedSchema>),
-    TopicNameStrategyWithSchema(String, bool, Box<SuppliedSchema>),
-    TopicRecordNameStrategyWithSchema(String, Box<SuppliedSchema>),
+    RecordNameStrategyWithSchema(SuppliedSchema),
+    TopicNameStrategyWithSchema(String, bool, SuppliedSchema),
+    TopicRecordNameStrategyWithSchema(String, SuppliedSchema),
 }
 
-/// Helper function to get the schema from the strategy.
-pub(crate) fn get_schema(subject_name_strategy: &SubjectNameStrategy) -> Option<SuppliedSchema> {
-    match subject_name_strategy {
-        SubjectNameStrategy::RecordNameStrategy(_) => None,
-        SubjectNameStrategy::TopicNameStrategy(_, _) => None,
-        SubjectNameStrategy::TopicRecordNameStrategy(_, _) => None,
-        SubjectNameStrategy::RecordNameStrategyWithSchema(s) => Some(*s.clone()),
-        SubjectNameStrategy::TopicNameStrategyWithSchema(_, _, s) => Some(*s.clone()),
-        SubjectNameStrategy::TopicRecordNameStrategyWithSchema(_, s) => Some(*s.clone()),
+impl SubjectNameStrategy {
+    /// Helper function to get the schema from the strategy.
+    pub(crate) fn get_schema(&self) -> Option<&SuppliedSchema> {
+        match self {
+            SubjectNameStrategy::RecordNameStrategy(_) => None,
+            SubjectNameStrategy::TopicNameStrategy(_, _) => None,
+            SubjectNameStrategy::TopicRecordNameStrategy(_, _) => None,
+            SubjectNameStrategy::RecordNameStrategyWithSchema(s) => Some(s),
+            SubjectNameStrategy::TopicNameStrategyWithSchema(_, _, s) => Some(s),
+            SubjectNameStrategy::TopicRecordNameStrategyWithSchema(_, s) => Some(s),
+        }
     }
-}
 
-/// Gets the subject part which is also used as key to cache the results. It's constructed so that
-/// it's compatible with the Java client.
-pub fn get_subject(subject_name_strategy: &SubjectNameStrategy) -> Result<String, SRCError> {
-    match subject_name_strategy {
+    /// Gets the subject part which is also used as key to cache the results. It's constructed so that
+    /// it's compatible with the Java client.
+    pub fn get_subject(&self) -> Result<String, SRCError> {
+        match self {
         SubjectNameStrategy::RecordNameStrategy(rn) => Ok(rn.clone()),
         SubjectNameStrategy::TopicNameStrategy(t, is_key) => {
             if *is_key {
@@ -152,6 +153,7 @@ pub fn get_subject(subject_name_strategy: &SubjectNameStrategy) -> Result<String
             )),
             Some(n) => Ok(format!("{}-{}", t, n)),
         },
+    }
     }
 }
 
@@ -208,7 +210,7 @@ pub fn get_bytes_result(bytes: Option<&[u8]>) -> BytesResult {
 mod test {
     use crate::error::SRCError;
     use crate::schema_registry_common::{
-        get_bytes_result, get_subject, BytesResult, RegisteredSchema, SchemaType, SrAuthorization,
+        get_bytes_result, BytesResult, RegisteredSchema, SchemaType, SrAuthorization,
         SubjectNameStrategy, SuppliedSchema,
     };
 
@@ -296,15 +298,15 @@ mod test {
     fn error_when_name_mandatory() {
         let strategy = SubjectNameStrategy::TopicRecordNameStrategyWithSchema(
             String::from("someTopic"),
-            Box::from(SuppliedSchema {
+            SuppliedSchema {
                 name: None,
                 schema_type: SchemaType::Other(String::from("foo")),
                 schema: "".to_string(),
                 references: vec![],
-            }),
+            },
         );
 
-        let result = get_subject(&strategy);
+        let result = strategy.get_subject();
 
         assert_eq!(
             result,

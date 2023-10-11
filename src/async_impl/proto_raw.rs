@@ -7,7 +7,7 @@ use crate::proto_raw_common::{
 };
 use crate::proto_resolver::{resolve_name, to_index_and_data, IndexResolver};
 use crate::schema_registry_common::{
-    get_bytes_result, get_subject, BytesResult, RegisteredSchema, SchemaType, SubjectNameStrategy,
+    get_bytes_result, BytesResult, RegisteredSchema, SchemaType, SubjectNameStrategy,
 };
 use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
@@ -54,7 +54,7 @@ impl<'a> ProtoRawEncoder<'a> {
         full_name: &str,
         subject_name_strategy: SubjectNameStrategy,
     ) -> Result<Vec<u8>, SRCError> {
-        let key = get_subject(&subject_name_strategy)?;
+        let key = subject_name_strategy.get_subject()?;
         let encode_context = self
             .get_encoding_context(key, subject_name_strategy)
             .await?;
@@ -68,7 +68,7 @@ impl<'a> ProtoRawEncoder<'a> {
         bytes: &[u8],
         subject_name_strategy: SubjectNameStrategy,
     ) -> Result<Vec<u8>, SRCError> {
-        let key = get_subject(&subject_name_strategy)?;
+        let key = subject_name_strategy.get_subject()?;
         let encode_context = self
             .get_encoding_context(key, subject_name_strategy)
             .await?;
@@ -379,8 +379,7 @@ mod tests {
             schema: String::from(get_proto_complex()),
             references: vec![result_reference],
         };
-        let strategy =
-            SubjectNameStrategy::RecordNameStrategyWithSchema(Box::from(supplied_schema));
+        let strategy = SubjectNameStrategy::RecordNameStrategyWithSchema(supplied_schema);
 
         let encoded_data = encoder
             .encode(

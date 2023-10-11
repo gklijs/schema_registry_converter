@@ -16,7 +16,7 @@ use crate::async_impl::schema_registry::{
 use crate::error::SRCError;
 use crate::json_common::{fetch_fallback, fetch_id, handle_validation, to_bytes, to_value};
 use crate::schema_registry_common::{
-    get_bytes_result, get_subject, BytesResult, RegisteredReference, RegisteredSchema, SchemaType,
+    get_bytes_result, BytesResult, RegisteredReference, RegisteredSchema, SchemaType,
     SubjectNameStrategy,
 };
 
@@ -56,7 +56,7 @@ impl<'a> JsonEncoder<'a> {
         value: &Value,
         subject_name_strategy: SubjectNameStrategy,
     ) -> Result<Vec<u8>, SRCError> {
-        let key = get_subject(&subject_name_strategy)?;
+        let key = subject_name_strategy.get_subject()?;
         let schema = &*self.get_schema(key, subject_name_strategy).await?;
         let id = schema.id;
         validate(schema.clone(), value)?;
