@@ -38,7 +38,7 @@ fn might_replace(
 ) -> value::Value {
     match val {
         value::Value::Object(v) => replace_in_map(v, child, replace_values),
-        value::Value::Array(v) => replace_in_array(&*v, child, replace_values),
+        value::Value::Array(v) => replace_in_array(&v, child, replace_values),
         value::Value::String(s) if replace_values.contains_key(&*s) => child.clone(),
         p => p,
     }
@@ -98,7 +98,7 @@ pub(crate) fn replace_reference(parent: value::Value, child: value::Value) -> va
     };
     match parent {
         value::Value::Object(v) => replace_in_map(v, &child, &replace_values),
-        value::Value::Array(v) => replace_in_array(&*v, &child, &replace_values),
+        value::Value::Array(v) => replace_in_array(&v, &child, &replace_values),
         p => p,
     }
 }

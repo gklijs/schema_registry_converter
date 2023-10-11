@@ -191,7 +191,7 @@ mod tests {
         let _m = mock("GET", "/schemas/ids/7?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_proto_body(get_proto_hb_schema(), 1))
+            .with_body(get_proto_body(get_proto_hb_schema(), 1))
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
@@ -212,7 +212,7 @@ mod tests {
         let _m = mock("GET", "/schemas/ids/7?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_proto_body(get_proto_hb_schema(), 1))
+            .with_body(get_proto_body(get_proto_hb_schema(), 1))
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
@@ -239,7 +239,7 @@ mod tests {
         let _m = mock("GET", "/schemas/ids/7?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_proto_body(get_proto_hb_schema(), 1))
+            .with_body(get_proto_body(get_proto_hb_schema(), 1))
             .create();
 
         let error = decoder.decode(Some(get_proto_hb_101())).unwrap_err();
@@ -261,7 +261,7 @@ mod tests {
         let _m = mock("GET", "/schemas/ids/6?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_proto_body_with_reference(
+            .with_body(get_proto_body_with_reference(
                 get_proto_complex(),
                 2,
                 get_proto_complex_references(),
@@ -271,7 +271,7 @@ mod tests {
         let _m = mock("GET", "/subjects/result.proto/versions/1")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_proto_body(get_proto_result(), 1))
+            .with_body(get_proto_body(get_proto_result(), 1))
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));

@@ -23,7 +23,7 @@ proto_decoder = ["bytes", "integer-encoding", "logos", "protofish"]
 proto_raw = ["integer-encoding", "logos"]
 easy = ["tokio"]
 kafka_test = []
-default = ["futures","native_tls"]
+default = ["futures", "native_tls"]
 
 [dependencies.byteorder]
 version = "^1.4"
@@ -84,7 +84,7 @@ optional = true
 mockito = "^0.31.0"
 rdkafka = { version = "^0.29.0", features = ["cmake-build"] }
 rand = "^0.8.5"
-test_utils = {path = "test_utils"}
+test_utils = { path = "test_utils" }
 tokio = { version = "^1.32.0", features = ["macros"] }
 
 [package.metadata.docs.rs]

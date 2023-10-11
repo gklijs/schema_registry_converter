@@ -162,7 +162,7 @@ impl AvroDecoder {
                 value: Value::Null,
             }),
             BytesResult::Valid(id, bytes) => self.deserialize(id, &bytes),
-            BytesResult::Invalid(bytes) => Err(SRCError::non_retryable_without_cause(&*format!(
+            BytesResult::Invalid(bytes) => Err(SRCError::non_retryable_without_cause(&format!(
                 "Invalid bytes {:?}",
                 bytes
             ))),
@@ -202,7 +202,7 @@ impl AvroDecoder {
                 Ok(v) => Ok(Some(v)),
                 Err(e) => Err(e),
             },
-            BytesResult::Invalid(bytes) => Err(SRCError::non_retryable_without_cause(&*format!(
+            BytesResult::Invalid(bytes) => Err(SRCError::non_retryable_without_cause(&format!(
                 "Invalid bytes {:?}",
                 bytes
             ))),
@@ -505,16 +505,16 @@ fn add_references(
             Err(e) => {
                 return Err(SRCError::non_retryable_with_cause(
                     e,
-                    &*format!("problem with reference {:?}", r),
+                    &format!("problem with reference {:?}", r),
                 ));
             }
         };
-        let child: JsonValue = match serde_json::from_str(&*registered_schema.schema) {
+        let child: JsonValue = match serde_json::from_str(&registered_schema.schema) {
             Ok(v) => v,
             Err(e) => {
                 return Err(SRCError::non_retryable_with_cause(
                     e,
-                    &*format!("problem serializing {}", registered_schema.schema),
+                    &format!("problem serializing {}", registered_schema.schema),
                 ));
             }
         };
@@ -534,13 +534,13 @@ fn to_avro_schema(
     match registered_schema.schema_type {
         SchemaType::Avro => (),
         t => {
-            return Err(SRCError::non_retryable_without_cause(&*format!(
+            return Err(SRCError::non_retryable_without_cause(&format!(
                 "type {:?}, is not supported",
                 t
             )));
         }
     }
-    let main_schema = match serde_json::from_str(&*registered_schema.schema) {
+    let main_schema = match serde_json::from_str(&registered_schema.schema) {
         Ok(v) => match add_references(sr_settings, v, registered_schema.references.as_slice()) {
             Ok(u) => u,
             Err(e) => return Err(e),
@@ -560,7 +560,7 @@ fn to_avro_schema(
         })),
         Err(e) => Err(SRCError::non_retryable_with_cause(
             e,
-            &*format!(
+            &format!(
                 "Supplied raw value {:?} cant be turned into a Schema",
                 registered_schema.schema
             ),

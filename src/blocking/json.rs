@@ -129,7 +129,7 @@ impl JsonDecoder {
         match get_bytes_result(bytes) {
             BytesResult::Null => Ok(None),
             BytesResult::Valid(id, bytes) => Ok(Some(self.deserialize(id, &bytes)?)),
-            BytesResult::Invalid(i) => Err(SRCError::non_retryable_without_cause(&*format!(
+            BytesResult::Invalid(i) => Err(SRCError::non_retryable_without_cause(&format!(
                 "Invalid bytes: {:?}",
                 i
             ))),
@@ -182,16 +182,16 @@ fn add_refs_to_scope(
 ) -> Result<(), SRCError> {
     for rr in refs.iter() {
         let rs = get_referenced_schema(sr_settings, rr)?;
-        let id = match Url::from_str(&*rr.name) {
+        let id = match Url::from_str(&rr.name) {
             Ok(v) => v,
-            Err(e) => return Err(SRCError::non_retryable_with_cause(e, &*format!("reference schema with subject {} and version {} has invalid id {}, it has to be a fully qualified url", rr.subject, rr.version, rr.name)))
+            Err(e) => return Err(SRCError::non_retryable_with_cause(e, &format!("reference schema with subject {} and version {} has invalid id {}, it has to be a fully qualified url", rr.subject, rr.version, rr.name)))
         };
         // if it's already part of the scope, it's assumed any references are also already part of the scope.
         if scope.resolve(&id).is_some() {
             return Ok(());
         }
         add_refs_to_scope(scope, sr_settings, &rs.references)?;
-        let def: Value = to_value(&*rs.schema)?;
+        let def: Value = to_value(&rs.schema)?;
         scope.compile_with_id(&id, def, false).unwrap();
     }
     Ok(())
@@ -203,12 +203,12 @@ fn set_scoped_schema(
     registered_schema: &RegisteredSchema,
 ) -> Result<Url, SRCError> {
     add_refs_to_scope(scope, sr_settings, &registered_schema.references)?;
-    let def: Value = match serde_json::from_str(&*registered_schema.schema) {
+    let def: Value = match serde_json::from_str(&registered_schema.schema) {
         Ok(v) => v,
         Err(e) => {
             return Err(SRCError::non_retryable_with_cause(
                 e,
-                &*format!(
+                &format!(
                     "could not parse schema {} with id {} to a value",
                     registered_schema.schema, registered_schema.id
                 ),
@@ -224,7 +224,7 @@ fn set_scoped_schema(
         Err(e) => {
             return Err(SRCError::non_retryable_with_cause(
                 e,
-                &*format!("could not compile schema with id {}", registered_schema.id),
+                &format!("could not compile schema with id {}", registered_schema.id),
             ))
         }
     };
@@ -278,7 +278,7 @@ mod tests {
         let _m = mock("GET", "/subjects/testresult-value/versions/latest")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_json_body(json_result_schema(), 10))
+            .with_body(get_json_body(json_result_schema(), 10))
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
@@ -298,7 +298,7 @@ mod tests {
         let _m = mock("GET", "/subjects/testresult-value/versions/latest")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_json_body(json_result_schema_with_id(), 10))
+            .with_body(get_json_body(json_result_schema_with_id(), 10))
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
@@ -328,7 +328,7 @@ mod tests {
         let _m = mock("GET", "/subjects/testresult-value/versions/latest")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_json_body(json_result_schema(), 10))
+            .with_body(get_json_body(json_result_schema(), 10))
             .create();
 
         let encoded_data = encoder.encode(&result_example, &strategy);
@@ -349,7 +349,7 @@ mod tests {
         let _m = mock("GET", "/schemas/ids/7?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_json_body(json_result_schema(), 7))
+            .with_body(get_json_body(json_result_schema(), 7))
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
@@ -408,7 +408,7 @@ mod tests {
         let _m = mock("GET", "/schemas/ids/7?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_json_body(json_result_schema(), 7))
+            .with_body(get_json_body(json_result_schema(), 7))
             .create();
 
         let result = decoder.decode(Some(&*get_payload(7, bytes.clone())));
@@ -437,7 +437,7 @@ mod tests {
         let _m = mock("GET", "/schemas/ids/10?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_json_body(json_result_schema(), 10))
+            .with_body(get_json_body(json_result_schema(), 10))
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
@@ -481,7 +481,7 @@ mod tests {
         let _m = mock("GET", "/schemas/ids/10?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_json_body(json_result_schema(), 10))
+            .with_body(get_json_body(json_result_schema(), 10))
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
@@ -511,7 +511,7 @@ mod tests {
         let _m = mock("GET", "/schemas/ids/5?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_json_body_with_reference(
+            .with_body(get_json_body_with_reference(
                 json_test_ref_schema(),
                 5,
                 json_get_result_references(),
@@ -520,7 +520,7 @@ mod tests {
         let _m = mock("GET", "/subjects/result.json/versions/1")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_json_body(json_result_schema(), 4))
+            .with_body(get_json_body(json_result_schema(), 4))
             .create();
 
         let result = match decoder.decode(Some(&bytes)) {
@@ -553,7 +553,7 @@ mod tests {
         let _m = mock("GET", "/schemas/ids/5?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_json_body_with_reference(
+            .with_body(get_json_body_with_reference(
                 json_test_ref_schema(),
                 5,
                 json_get_result_references(),
@@ -562,7 +562,7 @@ mod tests {
         let _m = mock("GET", "/subjects/result.json/versions/1")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_json_body(&json_result_schema()[0..30], 4))
+            .with_body(get_json_body(&json_result_schema()[0..30], 4))
             .create();
 
         let error = decoder.decode(Some(&bytes)).unwrap_err();
@@ -597,7 +597,7 @@ mod tests {
         let _m = mock("GET", "/schemas/ids/5?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_json_body_with_reference(
+            .with_body(get_json_body_with_reference(
                 json_test_ref_schema(),
                 5,
                 json_get_result_references(),
@@ -606,7 +606,7 @@ mod tests {
         let _m = mock("GET", "/schemas/ids/7?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_json_body_with_reference(
+            .with_body(get_json_body_with_reference(
                 json_test_ref_schema(),
                 7,
                 json_get_result_references(),
@@ -615,7 +615,7 @@ mod tests {
         let _m = mock("GET", "/subjects/result.json/versions/1")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_json_body(json_result_schema(), 4))
+            .with_body(get_json_body(json_result_schema(), 4))
             .create();
 
         let result = match decoder.decode(Some(&bytes_id_5)) {
@@ -663,7 +663,7 @@ mod tests {
         let _m = mock("GET", "/subjects/testresult-value/versions/latest")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_json_body(json_result_schema(), 10))
+            .with_body(get_json_body(json_result_schema(), 10))
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
@@ -686,7 +686,7 @@ mod tests {
         let _m = mock("GET", "/subjects/testresult-value/versions/latest")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(&get_json_body(json_test_ref_schema(), 10))
+            .with_body(get_json_body(json_test_ref_schema(), 10))
             .create();
 
         let sr_settings = SrSettings::new(format!("http://{}", server_address()));
