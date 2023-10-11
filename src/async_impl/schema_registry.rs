@@ -12,9 +12,8 @@ use serde_json::{json, Map, Value};
 
 use crate::error::SRCError;
 use crate::schema_registry_common::{
-    get_schema, get_subject, url_for_call, RawRegisteredSchema, RegisteredReference,
-    RegisteredSchema, SchemaType, SrAuthorization, SrCall, SubjectNameStrategy, SuppliedReference,
-    SuppliedSchema,
+    url_for_call, RawRegisteredSchema, RegisteredReference, RegisteredSchema, SchemaType,
+    SrAuthorization, SrCall, SubjectNameStrategy, SuppliedReference, SuppliedSchema,
 };
 
 /// Settings used to do the calls to schema registry. For simple cases you can use `SrSettings::new`
@@ -219,13 +218,13 @@ pub async fn get_schema_by_subject(
     sr_settings: &SrSettings,
     subject_name_strategy: &SubjectNameStrategy,
 ) -> Result<RegisteredSchema, SRCError> {
-    let subject = get_subject(subject_name_strategy)?;
-    match get_schema(subject_name_strategy) {
+    let subject = subject_name_strategy.get_subject()?;
+    match subject_name_strategy.get_schema() {
         None => {
             let raw_schema = perform_sr_call(sr_settings, SrCall::GetLatest(&subject)).await?;
             raw_to_registered_schema(raw_schema, None).await
         }
-        Some(v) => post_schema(sr_settings, subject, v).await,
+        Some(v) => post_schema(sr_settings, subject, v.clone()).await,
     }
 }
 

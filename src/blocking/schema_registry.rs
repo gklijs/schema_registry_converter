@@ -11,9 +11,8 @@ use serde_json::{json, Map, Value};
 
 use crate::error::SRCError;
 use crate::schema_registry_common::{
-    get_schema, get_subject, url_for_call, RawRegisteredSchema, RegisteredReference,
-    RegisteredSchema, SchemaType, SrAuthorization, SrCall, SubjectNameStrategy, SuppliedReference,
-    SuppliedSchema,
+    url_for_call, RawRegisteredSchema, RegisteredReference, RegisteredSchema, SchemaType,
+    SrAuthorization, SrCall, SubjectNameStrategy, SuppliedReference, SuppliedSchema,
 };
 
 /// Settings used to do the calls to schema registry. For simple cases you can use `SrSettings::new`
@@ -215,13 +214,13 @@ pub fn get_schema_by_subject(
     sr_settings: &SrSettings,
     subject_name_strategy: &SubjectNameStrategy,
 ) -> Result<RegisteredSchema, SRCError> {
-    let subject = get_subject(subject_name_strategy)?;
-    match get_schema(subject_name_strategy) {
+    let subject = subject_name_strategy.get_subject()?;
+    match subject_name_strategy.get_schema() {
         None => {
             let raw_schema = perform_sr_call(sr_settings, SrCall::GetLatest(&subject))?;
             raw_to_registered_schema(raw_schema, None)
         }
-        Some(v) => post_schema(sr_settings, subject, v),
+        Some(v) => post_schema(sr_settings, subject, v.clone()),
     }
 }
 
@@ -231,10 +230,7 @@ pub fn get_referenced_schema(
 ) -> Result<RegisteredSchema, SRCError> {
     let raw_schema = perform_sr_call(
         sr_settings,
-        SrCall::GetBySubjectAndVersion(
-            &registered_reference.subject,
-            registered_reference.version,
-        ),
+        SrCall::GetBySubjectAndVersion(&registered_reference.subject, registered_reference.version),
     )?;
     raw_to_registered_schema(raw_schema, None)
 }

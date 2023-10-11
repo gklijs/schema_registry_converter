@@ -160,7 +160,7 @@ pub(crate) fn get_name(schema: &Schema) -> Option<Name> {
     }
 }
 
-pub fn get_supplied_schema(schema: &Schema) -> Box<SuppliedSchema> {
+pub fn get_supplied_schema(schema: &Schema) -> SuppliedSchema {
     let name = match get_name(schema) {
         None => None,
         Some(n) => match n.namespace {
@@ -168,12 +168,12 @@ pub fn get_supplied_schema(schema: &Schema) -> Box<SuppliedSchema> {
             Some(ns) => Some(format!("{}.{}", ns, n.name)),
         },
     };
-    Box::from(SuppliedSchema {
+    SuppliedSchema {
         name,
         schema_type: SchemaType::Avro,
         schema: schema.canonical_form(),
         references: vec![],
-    })
+    }
 }
 
 #[cfg(test)]
