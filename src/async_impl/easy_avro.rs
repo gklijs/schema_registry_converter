@@ -1,8 +1,11 @@
-use crate::async_impl::avro::{AvroDecoder, AvroEncoder};
 use crate::async_impl::schema_registry::SrSettings;
 use crate::avro_common::{DecodeResult, DecodeResultWithSchema};
 use crate::error::SRCError;
 use crate::schema_registry_common::SubjectNameStrategy;
+use crate::{
+    async_impl::avro::{AvroDecoder, AvroEncoder},
+    avro_common::AvroSchema,
+};
 use apache_avro::types::Value;
 use serde::Serialize;
 use std::sync::Arc;
@@ -40,7 +43,7 @@ impl EasyAvroEncoder {
     }
     pub async fn encode(
         &self,
-        values: Vec<(&'static str, Value)>,
+        values: Vec<(&str, Value)>,
         subject_name_strategy: SubjectNameStrategy,
     ) -> Result<Vec<u8>, SRCError> {
         self.encoder.encode(values, subject_name_strategy).await
@@ -52,6 +55,15 @@ impl EasyAvroEncoder {
     ) -> Result<Vec<u8>, SRCError> {
         self.encoder
             .encode_struct(item, subject_name_strategy)
+            .await
+    }
+    pub async fn get_schema_and_id(
+        &self,
+        key: &str,
+        subject_name_strategy: SubjectNameStrategy,
+    ) -> Result<Arc<AvroSchema>, SRCError> {
+        self.encoder
+            .get_schema_and_id(key, subject_name_strategy)
             .await
     }
 }
