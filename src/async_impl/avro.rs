@@ -451,9 +451,9 @@ impl<'a> AvroEncoder<'a> {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn encode(
+    pub async fn encode<'k>(
         &self,
-        values: Vec<(&str, Value)>,
+        values: Vec<(&'k str, Value)>,
         subject_name_strategy: SubjectNameStrategy,
     ) -> Result<Vec<u8>, SRCError> {
         let key = subject_name_strategy.get_subject()?;
@@ -519,25 +519,25 @@ impl<'a> AvroEncoder<'a> {
     ) -> Result<Vec<u8>, SRCError> {
         let key = subject_name_strategy.get_subject()?;
         let schema = self
-            .get_schema_and_id(key, subject_name_strategy.clone())
+            .get_schema_and_id(&key, subject_name_strategy.clone())
             .await?;
         item_to_bytes(&schema, item)
     }
 
-    async fn get_schema_and_id(
+    pub async fn get_schema_and_id(
         &self,
-        key: String,
+        key: &str,
         subject_name_strategy: SubjectNameStrategy,
     ) -> Result<Arc<AvroSchema>, SRCError> {
-        match self.direct_cache.get(&key) {
+        match self.direct_cache.get(key) {
             None => {
                 let result = self
-                    .get_schema_and_id_by_shared_future(key.clone(), subject_name_strategy)
+                    .get_schema_and_id_by_shared_future(key.to_string(), subject_name_strategy)
                     .await;
-                if result.is_ok() && !self.direct_cache.contains_key(&key) {
+                if result.is_ok() && !self.direct_cache.contains_key(key) {
                     self.direct_cache
-                        .insert(key.clone(), result.clone().unwrap());
-                    self.cache.remove(&key);
+                        .insert(key.to_string(), result.clone().unwrap());
+                    self.cache.remove(key);
                 };
                 result
             }
