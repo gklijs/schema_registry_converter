@@ -82,11 +82,8 @@ enum Token {
     Close,
 
     #[regex(r"\S")]
-    Ignorable,
-
-    #[error]
     #[regex(r"[\s]+", logos::skip)]
-    Error,
+    Ignorable,
 }
 
 impl ResolverHelper {
@@ -98,15 +95,15 @@ impl ResolverHelper {
         let mut imports: Vec<String> = Vec::new();
 
         let mut lex = Token::lexer(s);
-        let mut next: Option<Token> = lex.next();
+        let mut next: Option<Result<Token, _>> = lex.next();
 
-        while next.is_some() {
-            match next.unwrap() {
-                Token::Package => {
+        while let Some(token) = next {
+            match token {
+                Ok(Token::Package) => {
                     let slice = lex.slice();
                     package = Some(String::from(slice[8..slice.len() - 1].trim()));
                 }
-                Token::Message => {
+                Ok(Token::Message) => {
                     let slice = lex.slice();
                     let message = String::from(slice[8..slice.len()].trim());
                     for i in &indexes {
@@ -117,18 +114,18 @@ impl ResolverHelper {
                     indexes.push(index.clone());
                     names.push(message);
                 }
-                Token::Import => {
+                Ok(Token::Import) => {
                     let slice = lex.slice();
                     let import = String::from(slice[8..slice.len() - 2].trim());
                     imports.push(import);
                 }
-                Token::Open => {
+                Ok(Token::Open) => {
                     index.push(0);
                 }
-                Token::Close => {
+                Ok(Token::Close) => {
                     index.pop();
                 }
-                _ => (),
+                Err(_) | Ok(Token::Ignorable) => (),
             };
             next = lex.next()
         }
