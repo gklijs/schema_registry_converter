@@ -241,7 +241,6 @@ pub struct DecodeResult<'a> {
 mod tests {
     use std::fs::{read_to_string, File};
 
-    use mockito::{mock, server_address};
     use serde_json::{from_str, to_string_pretty, Value};
     use valico::json_dsl;
 
@@ -275,13 +274,15 @@ mod tests {
 
     #[test]
     fn test_encode_java_compatibility() {
-        let _m = mock("GET", "/subjects/testresult-value/versions/latest")
+        let mut server = mockito::Server::new();
+        let _m = server
+            .mock("GET", "/subjects/testresult-value/versions/latest")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(get_json_body(json_result_schema(), 10))
             .create();
 
-        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let sr_settings = SrSettings::new(server.url());
         let mut encoder = JsonEncoder::new(sr_settings);
         let strategy = SubjectNameStrategy::TopicNameStrategy(String::from("testresult"), false);
         let result_example: Value =
@@ -295,13 +296,15 @@ mod tests {
 
     #[test]
     fn test_encode_schema_with_id() {
-        let _m = mock("GET", "/subjects/testresult-value/versions/latest")
+        let mut server = mockito::Server::new();
+        let _m = server
+            .mock("GET", "/subjects/testresult-value/versions/latest")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(get_json_body(json_result_schema_with_id(), 10))
             .create();
 
-        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let sr_settings = SrSettings::new(server.url());
         let mut encoder = JsonEncoder::new(sr_settings);
         let strategy = SubjectNameStrategy::TopicNameStrategy(String::from("testresult"), false);
         let result_example: Value =
@@ -315,7 +318,9 @@ mod tests {
 
     #[test]
     fn test_encode_clean_cache() {
-        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let mut server = mockito::Server::new();
+
+        let sr_settings = SrSettings::new(server.url());
         let mut encoder = JsonEncoder::new(sr_settings);
         let strategy = SubjectNameStrategy::TopicNameStrategy(String::from("testresult"), false);
         let result_example: Value =
@@ -325,7 +330,8 @@ mod tests {
         let encoded_data = encoder.encode(&result_example, &strategy);
         assert!(encoded_data.is_err());
 
-        let _m = mock("GET", "/subjects/testresult-value/versions/latest")
+        let _m = server
+            .mock("GET", "/subjects/testresult-value/versions/latest")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(get_json_body(json_result_schema(), 10))
@@ -346,13 +352,15 @@ mod tests {
             .unwrap()
             .parse()
             .unwrap();
-        let _m = mock("GET", "/schemas/ids/7?deleted=true")
+        let mut server = mockito::Server::new();
+        let _m = server
+            .mock("GET", "/schemas/ids/7?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(get_json_body(json_result_schema(), 7))
             .create();
 
-        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let sr_settings = SrSettings::new(server.url());
         let mut decoder = JsonDecoder::new(sr_settings);
         let result = decoder.decode(Some(&*get_payload(7, result_value.into_bytes())));
 
@@ -390,6 +398,7 @@ mod tests {
 
     #[test]
     fn test_decoder_clean_cache() {
+        let mut server = mockito::Server::new();
         let result_value: String = read_to_string("tests/schema/result-example.json")
             .unwrap()
             .parse()
@@ -397,7 +406,7 @@ mod tests {
 
         let bytes = result_value.into_bytes();
 
-        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let sr_settings = SrSettings::new(server.url());
         let mut decoder = JsonDecoder::new(sr_settings);
         let error = decoder
             .decode(Some(&*get_payload(7, bytes.clone())))
@@ -405,7 +414,8 @@ mod tests {
 
         assert!(error.cached);
 
-        let _m = mock("GET", "/schemas/ids/7?deleted=true")
+        let _m = server
+            .mock("GET", "/schemas/ids/7?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(get_json_body(json_result_schema(), 7))
@@ -434,13 +444,15 @@ mod tests {
 
     #[test]
     fn test_decoder_java_compatibility() {
-        let _m = mock("GET", "/schemas/ids/10?deleted=true")
+        let mut server = mockito::Server::new();
+        let _m = server
+            .mock("GET", "/schemas/ids/10?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(get_json_body(json_result_schema(), 10))
             .create();
 
-        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let sr_settings = SrSettings::new(server.url());
         let mut decoder = JsonDecoder::new(sr_settings);
         let result = decoder.decode(Some(json_result_java_bytes()));
 
@@ -478,13 +490,15 @@ mod tests {
 
     #[test]
     fn test_decoder_value_can_not_be_read() {
-        let _m = mock("GET", "/schemas/ids/10?deleted=true")
+        let mut server = mockito::Server::new();
+        let _m = server
+            .mock("GET", "/schemas/ids/10?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(get_json_body(json_result_schema(), 10))
             .create();
 
-        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let sr_settings = SrSettings::new(server.url());
         let mut decoder = JsonDecoder::new(sr_settings);
         let result = decoder.decode(Some(json_incorrect_bytes())).unwrap_err();
         assert_eq!(
@@ -495,7 +509,8 @@ mod tests {
 
     #[test]
     fn add_referred_schema() {
-        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let mut server = mockito::Server::new();
+        let sr_settings = SrSettings::new(server.url());
         let mut decoder = JsonDecoder::new(sr_settings);
         let bytes = [
             0, 0, 0, 0, 5, 123, 34, 105, 100, 34, 58, 91, 52, 53, 44, 45, 55, 57, 44, 57, 51, 44,
@@ -508,7 +523,8 @@ mod tests {
             115, 116, 114, 105, 110, 103, 34, 125, 93, 125,
         ];
 
-        let _m = mock("GET", "/schemas/ids/5?deleted=true")
+        let _m = server
+            .mock("GET", "/schemas/ids/5?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(get_json_body_with_reference(
@@ -517,7 +533,8 @@ mod tests {
                 json_get_result_references(),
             ))
             .create();
-        let _m = mock("GET", "/subjects/result.json/versions/1")
+        let _m = server
+            .mock("GET", "/subjects/result.json/versions/1")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(get_json_body(json_result_schema(), 4))
@@ -537,7 +554,8 @@ mod tests {
 
     #[test]
     fn error_in_referred_schema() {
-        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let mut server = mockito::Server::new();
+        let sr_settings = SrSettings::new(server.url());
         let mut decoder = JsonDecoder::new(sr_settings);
         let bytes = [
             0, 0, 0, 0, 5, 123, 34, 105, 100, 34, 58, 91, 52, 53, 44, 45, 55, 57, 44, 57, 51, 44,
@@ -550,7 +568,8 @@ mod tests {
             115, 116, 114, 105, 110, 103, 34, 125, 93, 125,
         ];
 
-        let _m = mock("GET", "/schemas/ids/5?deleted=true")
+        let _m = server
+            .mock("GET", "/schemas/ids/5?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(get_json_body_with_reference(
@@ -559,7 +578,8 @@ mod tests {
                 json_get_result_references(),
             ))
             .create();
-        let _m = mock("GET", "/subjects/result.json/versions/1")
+        let _m = server
+            .mock("GET", "/subjects/result.json/versions/1")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(get_json_body(&json_result_schema()[0..30], 4))
@@ -571,7 +591,8 @@ mod tests {
 
     #[test]
     fn encounter_same_reference_again() {
-        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let mut server = mockito::Server::new();
+        let sr_settings = SrSettings::new(server.url());
         let mut decoder = JsonDecoder::new(sr_settings);
         let bytes_id_5 = [
             0, 0, 0, 0, 5, 123, 34, 105, 100, 34, 58, 91, 52, 53, 44, 45, 55, 57, 44, 57, 51, 44,
@@ -594,7 +615,8 @@ mod tests {
             115, 116, 114, 105, 110, 103, 34, 125, 93, 125,
         ];
 
-        let _m = mock("GET", "/schemas/ids/5?deleted=true")
+        let _m = server
+            .mock("GET", "/schemas/ids/5?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(get_json_body_with_reference(
@@ -603,7 +625,8 @@ mod tests {
                 json_get_result_references(),
             ))
             .create();
-        let _m = mock("GET", "/schemas/ids/7?deleted=true")
+        let _m = server
+            .mock("GET", "/schemas/ids/7?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(get_json_body_with_reference(
@@ -612,7 +635,8 @@ mod tests {
                 json_get_result_references(),
             ))
             .create();
-        let _m = mock("GET", "/subjects/result.json/versions/1")
+        let _m = server
+            .mock("GET", "/subjects/result.json/versions/1")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(get_json_body(json_result_schema(), 4))
@@ -642,7 +666,7 @@ mod tests {
 
     #[test]
     fn display_encode() {
-        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let sr_settings = SrSettings::new(String::from("http://127.0.0.1:1234"));
         let encoder = JsonEncoder::new(sr_settings);
         assert!(
             format!("{:?}", encoder).starts_with("JsonEncoder { sr_settings: SrSettings { urls: [\"http://127.0.0.1:1234\"], client: Client, authorization: None }, cache: {}, scope: Scope {")
@@ -651,7 +675,7 @@ mod tests {
 
     #[test]
     fn display_decode() {
-        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let sr_settings = SrSettings::new(String::from("http://127.0.0.1:1234"));
         let decoder = JsonDecoder::new(sr_settings);
         assert!(
                    format!("{:?}", decoder).starts_with("JsonDecoder { sr_settings: SrSettings { urls: [\"http://127.0.0.1:1234\"], client: Client, authorization: None }, cache: {}, scope: Scope {")
@@ -660,13 +684,15 @@ mod tests {
 
     #[test]
     fn test_encode_not_valid() {
-        let _m = mock("GET", "/subjects/testresult-value/versions/latest")
+        let mut server = mockito::Server::new();
+        let _m = server
+            .mock("GET", "/subjects/testresult-value/versions/latest")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(get_json_body(json_result_schema(), 10))
             .create();
 
-        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let sr_settings = SrSettings::new(server.url());
         let mut encoder = JsonEncoder::new(sr_settings);
         let strategy = SubjectNameStrategy::TopicNameStrategy(String::from("testresult"), false);
         let result_example: Value = Value::String(String::from("Foo"));
@@ -683,13 +709,15 @@ mod tests {
 
     #[test]
     fn test_encode_missing_ref() {
-        let _m = mock("GET", "/subjects/testresult-value/versions/latest")
+        let mut server = mockito::Server::new();
+        let _m = server
+            .mock("GET", "/subjects/testresult-value/versions/latest")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(get_json_body(json_test_ref_schema(), 10))
             .create();
 
-        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let sr_settings = SrSettings::new(server.url());
         let mut encoder = JsonEncoder::new(sr_settings);
         let strategy = SubjectNameStrategy::TopicNameStrategy(String::from("testresult"), false);
         let result_example: Value =
@@ -705,7 +733,7 @@ mod tests {
 
     #[test]
     fn decode_invalid_bytes() {
-        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let sr_settings = SrSettings::new(String::from("http://127.0.0.1:1234"));
         let mut decoder = JsonDecoder::new(sr_settings);
         let result = decoder.decode(Some(&[1, 0])).unwrap_err();
         assert_eq!(String::from("Invalid bytes: [1, 0]"), result.error)

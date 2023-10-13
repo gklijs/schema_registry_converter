@@ -220,7 +220,6 @@ pub struct RawDecodeResult {
 
 #[cfg(test)]
 mod tests {
-    use mockito::{mock, server_address};
 
     use crate::async_impl::proto_raw::{ProtoRawDecoder, ProtoRawEncoder};
     use crate::async_impl::schema_registry::SrSettings;
@@ -236,13 +235,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_encode_default() {
-        let _m = mock("GET", "/subjects/nl.openweb.data.Heartbeat/versions/latest")
+        let mut server = mockito::Server::new();
+        let _m = server
+            .mock("GET", "/subjects/nl.openweb.data.Heartbeat/versions/latest")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(get_proto_body(get_proto_hb_schema(), 7))
             .create();
 
-        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let sr_settings = SrSettings::new(server.url());
         let encoder = ProtoRawEncoder::new(sr_settings);
         let strategy =
             SubjectNameStrategy::RecordNameStrategy(String::from("nl.openweb.data.Heartbeat"));
@@ -261,13 +262,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_encode_single_message() {
-        let _m = mock("GET", "/subjects/nl.openweb.data.Heartbeat/versions/latest")
+        let mut server = mockito::Server::new();
+        let _m = server
+            .mock("GET", "/subjects/nl.openweb.data.Heartbeat/versions/latest")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(get_proto_body(get_proto_hb_schema(), 7))
             .create();
 
-        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let sr_settings = SrSettings::new(server.url());
         let encoder = ProtoRawEncoder::new(sr_settings);
         let strategy =
             SubjectNameStrategy::RecordNameStrategy(String::from("nl.openweb.data.Heartbeat"));
@@ -282,13 +285,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_encode_single_message_multiple_in_schema() {
-        let _m = mock("GET", "/subjects/nl.openweb.data.Heartbeat/versions/latest")
+        let mut server = mockito::Server::new();
+        let _m = server
+            .mock("GET", "/subjects/nl.openweb.data.Heartbeat/versions/latest")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(get_proto_body(get_proto_complex(), 7))
             .create();
 
-        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let sr_settings = SrSettings::new(server.url());
         let encoder = ProtoRawEncoder::new(sr_settings);
         let strategy =
             SubjectNameStrategy::RecordNameStrategy(String::from("nl.openweb.data.Heartbeat"));
@@ -301,7 +306,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_encode_cache() {
-        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let mut server = mockito::Server::new();
+        let sr_settings = SrSettings::new(server.url());
         let encoder = ProtoRawEncoder::new(sr_settings);
         let strategy =
             SubjectNameStrategy::RecordNameStrategy(String::from("nl.openweb.data.Heartbeat"));
@@ -315,7 +321,8 @@ mod tests {
             .unwrap_err();
         assert!(error.cached);
 
-        let _m = mock("GET", "/subjects/nl.openweb.data.Heartbeat/versions/latest")
+        let _m = server
+            .mock("GET", "/subjects/nl.openweb.data.Heartbeat/versions/latest")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(get_proto_body(get_proto_hb_schema(), 7))
@@ -347,25 +354,29 @@ mod tests {
 
     #[tokio::test]
     async fn test_encode_complex() {
-        let _m = mock("POST", "/subjects/result.proto/versions")
+        let mut server = mockito::Server::new();
+        let _m = server
+            .mock("POST", "/subjects/result.proto/versions")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(get_proto_body(get_proto_result(), 5))
             .create();
 
-        let _m = mock("POST", "/subjects/result.proto?deleted=false")
+        let _m = server
+            .mock("POST", "/subjects/result.proto?deleted=false")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body("{\"version\":1}")
             .create();
 
-        let _m = mock("POST", "/subjects/test.proto/versions")
+        let _m = server
+            .mock("POST", "/subjects/test.proto/versions")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(get_proto_body(get_proto_result(), 6))
             .create();
 
-        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let sr_settings = SrSettings::new(server.url());
         let encoder = ProtoRawEncoder::new(sr_settings);
         let result_reference = SuppliedReference {
             name: String::from("result.proto"),
@@ -395,7 +406,7 @@ mod tests {
 
     #[test]
     fn display_rew_decoder() {
-        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let sr_settings = SrSettings::new(String::from("http://127.0.0.1:1234"));
         let decoder = ProtoRawEncoder::new(sr_settings);
         assert!(
             format!("{:?}", decoder).starts_with("ProtoRawEncoder { sr_settings: SrSettings { urls: [\"http://127.0.0.1:1234\"], client: Client")
@@ -404,13 +415,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_decoder_default() {
-        let _m = mock("GET", "/schemas/ids/7?deleted=true")
+        let mut server = mockito::Server::new();
+        let _m = server
+            .mock("GET", "/schemas/ids/7?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(get_proto_body(get_proto_hb_schema(), 7))
             .create();
 
-        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let sr_settings = SrSettings::new(server.url());
         let decoder = ProtoRawDecoder::new(sr_settings);
         let raw_result = decoder
             .decode(Some(get_proto_hb_101()))
@@ -424,13 +437,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_decoder_cache() {
-        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let mut server = mockito::Server::new();
+        let sr_settings = SrSettings::new(server.url());
         let decoder = ProtoRawDecoder::new(sr_settings);
 
         let error = decoder.decode(Some(get_proto_hb_101())).await.unwrap_err();
         assert!(error.cached);
 
-        let _m = mock("GET", "/schemas/ids/7?deleted=true")
+        let _m = server
+            .mock("GET", "/schemas/ids/7?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(get_proto_body(get_proto_hb_schema(), 7))
@@ -453,7 +468,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_decoder_complex() {
-        let _m = mock("GET", "/schemas/ids/6?deleted=true")
+        let mut server = mockito::Server::new();
+        let _m = server
+            .mock("GET", "/schemas/ids/6?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(get_proto_body_with_reference(
@@ -463,13 +480,14 @@ mod tests {
             ))
             .create();
 
-        let _m = mock("GET", "/subjects/result.proto/versions/1")
+        let _m = server
+            .mock("GET", "/subjects/result.proto/versions/1")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(get_proto_body(get_proto_result(), 1))
             .create();
 
-        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let sr_settings = SrSettings::new(server.url());
         let decoder = ProtoRawDecoder::new(sr_settings);
         let raw_result = decoder
             .decode(Some(get_proto_complex_proto_test_message()))
@@ -482,7 +500,7 @@ mod tests {
 
     #[test]
     fn display_decoder() {
-        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let sr_settings = SrSettings::new(String::from("http://127.0.0.1:1234"));
         let decoder = ProtoRawDecoder::new(sr_settings);
         assert!(
             format!("{:?}", decoder).starts_with("ProtoRawDecoder { sr_settings: SrSettings { urls: [\"http://127.0.0.1:1234\"], client: Client")

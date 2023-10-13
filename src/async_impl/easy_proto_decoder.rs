@@ -31,19 +31,21 @@ impl EasyProtoDecoder {
 mod tests {
     use crate::async_impl::easy_proto_decoder::EasyProtoDecoder;
     use crate::async_impl::schema_registry::SrSettings;
-    use mockito::{mock, server_address};
+
     use protofish::decode::Value;
     use test_utils::{get_proto_body, get_proto_hb_101, get_proto_hb_schema};
 
     #[tokio::test]
     async fn test_decoder_default() {
-        let _m = mock("GET", "/schemas/ids/7?deleted=true")
+        let mut server = mockito::Server::new();
+        let _m = server
+            .mock("GET", "/schemas/ids/7?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(get_proto_body(get_proto_hb_schema(), 1))
             .create();
 
-        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let sr_settings = SrSettings::new(server.url());
         let decoder = EasyProtoDecoder::new(sr_settings);
         let heartbeat = decoder.decode(Some(get_proto_hb_101())).await.unwrap();
 
@@ -57,13 +59,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_decode_with_context_default() {
-        let _m = mock("GET", "/schemas/ids/7?deleted=true")
+        let mut server = mockito::Server::new();
+        let _m = server
+            .mock("GET", "/schemas/ids/7?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(get_proto_body(get_proto_hb_schema(), 1))
             .create();
 
-        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let sr_settings = SrSettings::new(server.url());
         let decoder = EasyProtoDecoder::new(sr_settings);
         let heartbeat = decoder
             .decode_with_context(Some(get_proto_hb_101()))

@@ -1,7 +1,7 @@
 [tasks.test-verbose]
 command = "cargo"
-args = ["test", "--verbose", "--all-features", "--", "--test-threads=1"]
+args = ["test", "--verbose", "--all-features"]
 
 [tasks.test]
 command = "cargo"
-args = ["test", "--all-features", "--", "--test-threads=1"]
+args = ["test", "--all-features"]

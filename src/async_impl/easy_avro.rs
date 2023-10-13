@@ -76,18 +76,19 @@ mod tests {
     use crate::schema_registry_common::SubjectNameStrategy;
     use apache_avro::types::Value;
     use apache_avro::{from_value, Schema};
-    use mockito::{mock, server_address};
+
     use test_utils::Heartbeat;
 
     #[tokio::test]
     async fn test_decoder_default() {
-        let _m = mock("GET", "/schemas/ids/1?deleted=true")
+        let mut server = mockito::Server::new();
+        let _m = server.mock("GET", "/schemas/ids/1?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
             .create();
 
-        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let sr_settings = SrSettings::new(server.url());
         let decoder = EasyAvroDecoder::new(sr_settings);
         let heartbeat = decoder
             .decode(Some(&[0, 0, 0, 0, 1, 6]))
@@ -109,13 +110,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_decode_with_schema_default() {
-        let _m = mock("GET", "/schemas/ids/1?deleted=true")
+        let mut server = mockito::Server::new();
+        let _m = server.mock("GET", "/schemas/ids/1?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
             .create();
 
-        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let sr_settings = SrSettings::new(server.url());
         let decoder = EasyAvroDecoder::new(sr_settings);
         let heartbeat = decoder
             .decode_with_schema(Some(&[0, 0, 0, 0, 1, 6]))
@@ -138,13 +140,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_encode_value() {
-        let _m = mock("GET", "/subjects/heartbeat-value/versions/latest")
+        let mut server = mockito::Server::new();
+        let _m = server.mock("GET", "/subjects/heartbeat-value/versions/latest")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(r#"{"subject":"heartbeat-value","version":1,"id":3,"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
             .create();
 
-        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let sr_settings = SrSettings::new(server.url());
         let encoder = EasyAvroEncoder::new(sr_settings);
 
         let value_strategy =
@@ -159,10 +162,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_primitive_schema() {
-        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let mut server = mockito::Server::new();
+        let sr_settings = SrSettings::new(server.url());
         let encoder = EasyAvroEncoder::new(sr_settings);
 
-        let _n = mock("POST", "/subjects/heartbeat-key/versions")
+        let _m = server
+            .mock("POST", "/subjects/heartbeat-key/versions")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(r#"{"id":4}"#)

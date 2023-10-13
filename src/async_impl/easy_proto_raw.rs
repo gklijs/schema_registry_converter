@@ -58,20 +58,22 @@ mod tests {
     use crate::async_impl::easy_proto_raw::{EasyProtoRawDecoder, EasyProtoRawEncoder};
     use crate::async_impl::schema_registry::SrSettings;
     use crate::schema_registry_common::SubjectNameStrategy;
-    use mockito::{mock, server_address};
+
     use test_utils::{
         get_proto_body, get_proto_hb_101, get_proto_hb_101_only_data, get_proto_hb_schema,
     };
 
     #[tokio::test]
     async fn test_decoder_default() {
-        let _m = mock("GET", "/schemas/ids/7?deleted=true")
+        let mut server = mockito::Server::new();
+        let _m = server
+            .mock("GET", "/schemas/ids/7?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(get_proto_body(get_proto_hb_schema(), 7))
             .create();
 
-        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let sr_settings = SrSettings::new(server.url());
         let decoder = EasyProtoRawDecoder::new(sr_settings);
         let raw_result = decoder
             .decode(Some(get_proto_hb_101()))
@@ -85,13 +87,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_encode_default() {
-        let _m = mock("GET", "/subjects/nl.openweb.data.Heartbeat/versions/latest")
+        let mut server = mockito::Server::new();
+        let _m = server
+            .mock("GET", "/subjects/nl.openweb.data.Heartbeat/versions/latest")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(get_proto_body(get_proto_hb_schema(), 7))
             .create();
 
-        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let sr_settings = SrSettings::new(server.url());
         let encoder = EasyProtoRawEncoder::new(sr_settings);
         let strategy =
             SubjectNameStrategy::RecordNameStrategy(String::from("nl.openweb.data.Heartbeat"));
@@ -110,13 +114,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_encode_single_message() {
-        let _m = mock("GET", "/subjects/nl.openweb.data.Heartbeat/versions/latest")
+        let mut server = mockito::Server::new();
+        let _m = server
+            .mock("GET", "/subjects/nl.openweb.data.Heartbeat/versions/latest")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(get_proto_body(get_proto_hb_schema(), 7))
             .create();
 
-        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let sr_settings = SrSettings::new(server.url());
         let encoder = EasyProtoRawEncoder::new(sr_settings);
         let strategy =
             SubjectNameStrategy::RecordNameStrategy(String::from("nl.openweb.data.Heartbeat"));
