@@ -467,8 +467,6 @@ async fn perform_single_sr_call(
 mod tests {
     use std::time::Duration;
 
-    use mockito::{mock, server_address};
-
     use crate::async_impl::schema_registry::{
         get_schema_by_id, get_schema_by_id_and_type, SrSettings,
     };
@@ -476,7 +474,8 @@ mod tests {
 
     #[tokio::test]
     async fn put_correct_url_as_second_check_header_set() {
-        let _m = mock("GET", "/schemas/ids/1?deleted=true")
+        let mut server = mockito::Server::new();
+        let _m = server.mock("GET", "/schemas/ids/1?deleted=true")
             .match_header("foo", "bar")
             .match_header("authorization", "Bearer some_json_web_token_for_example")
             .with_status(200)
@@ -485,7 +484,7 @@ mod tests {
             .create();
 
         let sr_settings = SrSettings::new_builder(String::from("bogus://test"))
-            .add_url(format!("http://{}", server_address()).parse().unwrap())
+            .add_url(server.url().parse().unwrap())
             .set_token_authorization("some_json_web_token_for_example")
             .add_header("foo", "bar")
             .set_timeout(Duration::from_secs(5))
@@ -507,14 +506,16 @@ mod tests {
 
     #[tokio::test]
     async fn basic_authorization() {
-        let _m = mock("GET", "/schemas/ids/1?deleted=true")
+        let mut server = mockito::Server::new();
+
+        let _m = server.mock("GET", "/schemas/ids/1?deleted=true")
             .match_header("authorization", "Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
             .create();
 
-        let sr_settings = SrSettings::new_builder(format!("http://{}", server_address()))
+        let sr_settings = SrSettings::new_builder(server.url())
             .set_basic_authorization("Aladdin", Some("open sesame"))
             .build()
             .unwrap();
@@ -534,13 +535,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_schema_by_id_and_type() {
-        let _m = mock("GET", "/schemas/ids/1?deleted=true")
+        let mut server = mockito::Server::new();
+
+        let _m = server.mock("GET", "/schemas/ids/1?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
             .create();
 
-        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let sr_settings = SrSettings::new(server.url());
 
         let result = get_schema_by_id_and_type(1, &sr_settings, SchemaType::Avro).await;
 

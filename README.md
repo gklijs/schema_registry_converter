@@ -206,17 +206,11 @@ errors in the SRCError type. So even when you get a pannic/error that's an SRCEr
 dependencies. Please make sure you are using the library correctly, and the error is not caused by a depency, before
 creating an issue.
 
-## Tests
-
-Due to mockito, used for mocking the schema registry responses, being run in a separate thread, tests have to be run
-using ` --test-threads=1` for example like
-`cargo +stable test --color=always --features easy,avro,json,proto_decoder,proto_raw -- --nocapture --test-threads=1`
-
 ## Integration test
 
 The integration tests require a Kafka cluster running on the default ports. It will create topics, register schema's,
 produce and consume some messages. They are only included when compiled with the `kafka_test` feature, so to include
-them in testing `cargo +stable test --all-features --color=always -- --nocapture --test-threads=1` needs to be run.
+them in testing `cargo +stable test --all-features --color=always -- --nocapture` needs to be run.
 The 'prepare_integration_test.sh' script can be used to create the 3 topics needed for the tests. To ensure Java
 compatibility it's also needed to run
 the [schema-registry-test-app](https://hub.docker.com/repository/docker/gklijs/schema-registry-test-app) docker image.

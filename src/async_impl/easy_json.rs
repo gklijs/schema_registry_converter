@@ -45,7 +45,7 @@ mod tests {
     use crate::async_impl::json::validate;
     use crate::async_impl::schema_registry::SrSettings;
     use crate::schema_registry_common::{get_payload, SubjectNameStrategy};
-    use mockito::{mock, server_address};
+
     use serde_json::Value;
     use std::fs::{read_to_string, File};
     use test_utils::{get_json_body, json_result_java_bytes, json_result_schema};
@@ -56,13 +56,15 @@ mod tests {
             .unwrap()
             .parse()
             .unwrap();
-        let _m = mock("GET", "/schemas/ids/7?deleted=true")
+        let mut server = mockito::Server::new();
+        let _m = server
+            .mock("GET", "/schemas/ids/7?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(get_json_body(json_result_schema(), 7))
             .create();
 
-        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let sr_settings = SrSettings::new(server.url());
         let decoder = EasyJsonDecoder::new(sr_settings);
         let message = decoder
             .decode(Some(&*get_payload(7, result_value.into_bytes())))
@@ -96,13 +98,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_encode_default() {
-        let _m = mock("GET", "/subjects/testresult-value/versions/latest")
+        let mut server = mockito::Server::new();
+        let _m = server
+            .mock("GET", "/subjects/testresult-value/versions/latest")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(get_json_body(json_result_schema(), 10))
             .create();
 
-        let sr_settings = SrSettings::new(format!("http://{}", server_address()));
+        let sr_settings = SrSettings::new(server.url());
         let encoder = EasyJsonEncoder::new(sr_settings);
         let strategy = SubjectNameStrategy::TopicNameStrategy(String::from("testresult"), false);
         let result_example: Value =
