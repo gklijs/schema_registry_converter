@@ -323,12 +323,12 @@ impl AvroEncoder {
     /// let sr_settings = SrSettings::new(format!("http://{}", server_address()));
     /// let encoder = AvroEncoder::new(sr_settings);
     ///
-    /// let strategy = SubjectNameStrategy::TopicRecordNameStrategyWithSchema(String::from("hb"), Box::from(SuppliedSchema {
+    /// let strategy = SubjectNameStrategy::TopicRecordNameStrategyWithSchema(String::from("hb"), SuppliedSchema {
     ///                 name: Some(String::from("nl.openweb.data.Heartbeat")),
     ///                 schema_type: SchemaType::Avro,
     ///                 schema: String::from(r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#),
     ///                 references: vec![],
-    ///             }));
+    ///             });
     /// let bytes = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
     /// assert_eq!(bytes, Ok(vec![0, 0, 0, 0, 23, 6]))
     /// ```
