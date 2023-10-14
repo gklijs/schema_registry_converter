@@ -13,12 +13,12 @@ pub struct MessageResolver {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct IndexResolver {
+pub struct IndexResolver {
     map: DashMap<String, Arc<Vec<i32>>>,
 }
 
 impl MessageResolver {
-    pub(crate) fn new(s: &str) -> MessageResolver {
+    pub fn new(s: &str) -> MessageResolver {
         let helper = ResolverHelper::new(s);
         let map = DashMap::new();
         for i in &helper.indexes {
@@ -30,16 +30,16 @@ impl MessageResolver {
         }
     }
 
-    pub(crate) fn find_name(&self, index: &[i32]) -> Option<Arc<String>> {
+    pub fn find_name(&self, index: &[i32]) -> Option<Arc<String>> {
         self.map.get(index).map(|e| e.value().clone())
     }
-    pub(crate) fn imports(&self) -> &Vec<String> {
+    pub fn imports(&self) -> &Vec<String> {
         &self.imports
     }
 }
 
 impl IndexResolver {
-    pub(crate) fn new(s: &str) -> IndexResolver {
+    pub fn new(s: &str) -> IndexResolver {
         let helper = ResolverHelper::new(s);
         let map = DashMap::new();
         for i in &helper.indexes {
@@ -48,16 +48,16 @@ impl IndexResolver {
         IndexResolver { map }
     }
 
-    pub(crate) fn find_index(&self, name: &str) -> Option<Arc<Vec<i32>>> {
+    pub fn find_index(&self, name: &str) -> Option<Arc<Vec<i32>>> {
         self.map.get(name).map(|e| e.value().clone())
     }
 
-    pub(crate) fn is_single_message(&self) -> bool {
+    pub fn is_single_message(&self) -> bool {
         self.map.len() == 1
     }
 }
 
-struct ResolverHelper {
+pub struct ResolverHelper {
     package: Option<String>,
     indexes: Vec<Vec<i32>>,
     names: Vec<String>,
@@ -87,7 +87,7 @@ enum Token {
 }
 
 impl ResolverHelper {
-    fn new(s: &str) -> ResolverHelper {
+    pub fn new(s: &str) -> ResolverHelper {
         let mut index: Vec<i32> = vec![0];
         let mut package: Option<String> = None;
         let mut indexes: Vec<Vec<i32>> = Vec::new();
@@ -175,7 +175,7 @@ fn same_vec(first: &[i32], second: &[i32]) -> bool {
     true
 }
 
-pub(crate) fn to_index_and_data(bytes: &[u8]) -> (Vec<i32>, Vec<u8>) {
+pub fn to_index_and_data(bytes: &[u8]) -> (Vec<i32>, Vec<u8>) {
     if bytes[0] == 0 {
         (vec![0], bytes[1..].to_vec())
     } else {
@@ -189,10 +189,7 @@ pub(crate) fn to_index_and_data(bytes: &[u8]) -> (Vec<i32>, Vec<u8>) {
     }
 }
 
-pub(crate) fn resolve_name(
-    resolver: &MessageResolver,
-    index: &[i32],
-) -> Result<Arc<String>, SRCError> {
+pub fn resolve_name(resolver: &MessageResolver, index: &[i32]) -> Result<Arc<String>, SRCError> {
     match resolver.find_name(index) {
         Some(n) => Ok(n),
         None => Err(SRCError::non_retryable_without_cause(&format!(
