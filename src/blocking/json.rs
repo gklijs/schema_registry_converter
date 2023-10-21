@@ -54,7 +54,8 @@ impl JsonEncoder {
         to_bytes(id, value)
     }
 
-    fn validate(
+    /// Validates the value as being correct according to the schema
+    pub fn validate(
         &mut self,
         key: String,
         subject_name_strategy: &SubjectNameStrategy,
