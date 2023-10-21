@@ -4,7 +4,7 @@ use protofish::decode::Value;
 
 use crate::blocking::proto_consumer::{consume_proto, DeserializedProtoRecord};
 
-fn get_schema_registry_url() -> String {
+pub fn get_schema_registry_url() -> String {
     String::from("http://localhost:8081")
 }
 

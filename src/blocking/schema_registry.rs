@@ -4,7 +4,7 @@ use std::str;
 use std::time::Duration;
 
 use dashmap::DashMap;
-use reqwest::blocking::{Client, ClientBuilder};
+use reqwest::blocking::{Client, ClientBuilder, RequestBuilder, Response};
 use reqwest::header;
 use reqwest::header::{HeaderName, ACCEPT, CONTENT_TYPE};
 use serde_json::{json, Map, Value};
@@ -385,7 +385,7 @@ fn post_reference(
     })
 }
 
-fn perform_sr_call(
+pub fn perform_sr_call(
     sr_settings: &SrSettings,
     sr_call: SrCall,
 ) -> Result<RawRegisteredSchema, SRCError> {
@@ -402,6 +402,23 @@ fn perform_sr_call(
             break result;
         }
         n += 1
+    }
+}
+
+fn apply_authentication(
+    builder: RequestBuilder,
+    authentication: &SrAuthorization,
+) -> Result<Response, reqwest::Error> {
+    match authentication {
+        SrAuthorization::None => builder.send(),
+        SrAuthorization::Token(token) => builder.bearer_auth(token).send(),
+        SrAuthorization::Basic(username, password) => {
+            let p = match password {
+                None => None,
+                Some(v) => Some(v),
+            };
+            builder.basic_auth(username, p).send()
+        }
     }
 }
 
@@ -422,23 +439,93 @@ fn perform_single_sr_call(
             .header(CONTENT_TYPE, "application/vnd.schemaregistry.v1+json")
             .header(ACCEPT, "application/vnd.schemaregistry.v1+json"),
     };
-    let call = match authentication {
-        SrAuthorization::None => builder.send(),
-        SrAuthorization::Token(token) => builder.bearer_auth(token).send(),
-        SrAuthorization::Basic(username, password) => {
-            let p = match password {
-                None => None,
-                Some(v) => Some(v),
-            };
-            builder.basic_auth(username, p).send()
-        }
-    };
+    let call = apply_authentication(builder, authentication);
     match call {
         Ok(v) => match v.json::<RawRegisteredSchema>() {
             Ok(r) => Ok(r),
             Err(e) => Err(SRCError::non_retryable_with_cause(
                 e,
                 "could not parse to RawRegisteredSchema, schema might not exist on this schema registry, the http call failed, cause will give more information",
+            )),
+        },
+        Err(e) => Err(SRCError::retryable_with_cause(
+            e,
+            "http call to schema registry failed",
+        )),
+    }
+}
+
+pub fn get_all_subjects(sr_settings: &SrSettings) -> Result<Vec<String>, SRCError> {
+    let url_count = sr_settings.urls.len();
+    let mut n = 0;
+    loop {
+        let result = perform_single_subjects_call(
+            &sr_settings.urls[n],
+            &sr_settings.client,
+            &sr_settings.authorization,
+        );
+        if result.is_ok() || n + 1 == url_count {
+            break result;
+        }
+        n += 1
+    }
+}
+
+fn perform_single_subjects_call(
+    base_url: &str,
+    client: &Client,
+    authentication: &SrAuthorization,
+) -> Result<Vec<String>, SRCError> {
+    let url = format!("{}/subjects", base_url);
+    let builder = client.get(url);
+    let call = apply_authentication(builder, authentication);
+    match call {
+        Ok(v) => match v.json::<Vec<String>>() {
+            Ok(r) => Ok(r),
+            Err(e) => Err(SRCError::non_retryable_with_cause(
+                e,
+                "could not parse to list of subjects, the http call failed, cause will give more information",
+            )),
+        },
+        Err(e) => Err(SRCError::retryable_with_cause(
+            e,
+            "http call to schema registry failed",
+        )),
+    }
+}
+
+pub fn get_all_versions(sr_settings: &SrSettings, subject: String) -> Result<Vec<u32>, SRCError> {
+    let url_count = sr_settings.urls.len();
+    let mut n = 0;
+    loop {
+        let result = perform_single_versions_call(
+            &sr_settings.urls[n],
+            &sr_settings.client,
+            &sr_settings.authorization,
+            &subject,
+        );
+        if result.is_ok() || n + 1 == url_count {
+            break result;
+        }
+        n += 1
+    }
+}
+
+fn perform_single_versions_call(
+    base_url: &str,
+    client: &Client,
+    authentication: &SrAuthorization,
+    subject: &String,
+) -> Result<Vec<u32>, SRCError> {
+    let url = format!("{}/subjects/{}/versions", base_url, subject);
+    let builder = client.get(url);
+    let call = apply_authentication(builder, authentication);
+    match call {
+        Ok(v) => match v.json::<Vec<u32>>() {
+            Ok(r) => Ok(r),
+            Err(e) => Err(SRCError::non_retryable_with_cause(
+                e,
+                "could not parse to list of versions, the http call failed, cause will give more information",
             )),
         },
         Err(e) => Err(SRCError::retryable_with_cause(

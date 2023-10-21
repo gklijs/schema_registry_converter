@@ -5,8 +5,8 @@ use std::time::Duration;
 use dashmap::DashMap;
 use futures::future::{BoxFuture, FutureExt};
 use futures::stream::{self, StreamExt};
-use reqwest::header;
 use reqwest::header::{HeaderName, ACCEPT, CONTENT_TYPE};
+use reqwest::{header, RequestBuilder, Response};
 use reqwest::{Client, ClientBuilder};
 use serde_json::{json, Map, Value};
 
@@ -399,7 +399,7 @@ fn post_reference<'a>(
     .boxed()
 }
 
-async fn perform_sr_call(
+pub async fn perform_sr_call(
     sr_settings: &SrSettings,
     sr_call: SrCall<'_>,
 ) -> Result<RawRegisteredSchema, SRCError> {
@@ -420,6 +420,23 @@ async fn perform_sr_call(
     }
 }
 
+async fn apply_authentication(
+    builder: RequestBuilder,
+    authentication: &SrAuthorization,
+) -> Result<Response, reqwest::Error> {
+    match authentication {
+        SrAuthorization::None => builder.send().await,
+        SrAuthorization::Token(token) => builder.bearer_auth(token).send().await,
+        SrAuthorization::Basic(username, password) => {
+            let p = match password {
+                None => None,
+                Some(v) => Some(v),
+            };
+            builder.basic_auth(username, p).send().await
+        }
+    }
+}
+
 async fn perform_single_sr_call(
     base_url: &str,
     client: &Client,
@@ -437,23 +454,98 @@ async fn perform_single_sr_call(
             .header(CONTENT_TYPE, "application/vnd.schemaregistry.v1+json")
             .header(ACCEPT, "application/vnd.schemaregistry.v1+json"),
     };
-    let call = match authentication {
-        SrAuthorization::None => builder.send().await,
-        SrAuthorization::Token(token) => builder.bearer_auth(token).send().await,
-        SrAuthorization::Basic(username, password) => {
-            let p = match password {
-                None => None,
-                Some(v) => Some(v),
-            };
-            builder.basic_auth(username, p).send().await
-        }
-    };
+    let call = apply_authentication(builder, authentication).await;
     match call {
         Ok(v) => match v.json::<RawRegisteredSchema>().await {
             Ok(r) => Ok(r),
             Err(e) => Err(SRCError::non_retryable_with_cause(
                 e,
                 "could not parse to RawRegisteredSchema, schema might not exist on this schema registry, the http call failed, cause will give more information",
+            )),
+        },
+        Err(e) => Err(SRCError::retryable_with_cause(
+            e,
+            "http call to schema registry failed",
+        )),
+    }
+}
+
+pub async fn get_all_subjects(sr_settings: &SrSettings) -> Result<Vec<String>, SRCError> {
+    let url_count = sr_settings.urls.len();
+    let mut n = 0;
+    loop {
+        let result = perform_single_subjects_call(
+            &sr_settings.urls[n],
+            &sr_settings.client,
+            &sr_settings.authorization,
+        )
+        .await;
+        if result.is_ok() || n + 1 == url_count {
+            break result;
+        }
+        n += 1
+    }
+}
+
+async fn perform_single_subjects_call(
+    base_url: &str,
+    client: &Client,
+    authentication: &SrAuthorization,
+) -> Result<Vec<String>, SRCError> {
+    let url = format!("{}/subjects", base_url);
+    let builder = client.get(url);
+    let call = apply_authentication(builder, authentication).await;
+    match call {
+        Ok(v) => match v.json::<Vec<String>>().await {
+            Ok(r) => Ok(r),
+            Err(e) => Err(SRCError::non_retryable_with_cause(
+                e,
+                "could not parse to list of subjects, the http call failed, cause will give more information",
+            )),
+        },
+        Err(e) => Err(SRCError::retryable_with_cause(
+            e,
+            "http call to schema registry failed",
+        )),
+    }
+}
+
+pub async fn get_all_versions(
+    sr_settings: &SrSettings,
+    subject: String,
+) -> Result<Vec<u32>, SRCError> {
+    let url_count = sr_settings.urls.len();
+    let mut n = 0;
+    loop {
+        let result = perform_single_versions_call(
+            &sr_settings.urls[n],
+            &sr_settings.client,
+            &sr_settings.authorization,
+            &subject,
+        )
+        .await;
+        if result.is_ok() || n + 1 == url_count {
+            break result;
+        }
+        n += 1
+    }
+}
+
+async fn perform_single_versions_call(
+    base_url: &str,
+    client: &Client,
+    authentication: &SrAuthorization,
+    subject: &String,
+) -> Result<Vec<u32>, SRCError> {
+    let url = format!("{}/subjects/{}/versions", base_url, subject);
+    let builder = client.get(url);
+    let call = apply_authentication(builder, authentication).await;
+    match call {
+        Ok(v) => match v.json::<Vec<u32>>().await {
+            Ok(r) => Ok(r),
+            Err(e) => Err(SRCError::non_retryable_with_cause(
+                e,
+                "could not parse to list of versions, the http call failed, cause will give more information",
             )),
         },
         Err(e) => Err(SRCError::retryable_with_cause(
