@@ -1,5 +1,11 @@
 ## Release notes
 
+### 4.0.0
+
+Opened up/added some functionality.
+Updated versions.
+Simplified the SubjectNameStrategy enum.
+
 ### 3.1.0
 
 Fix a problem with missing checks on some proto common types, like timestamp.
@@ -89,8 +95,11 @@ instead of the `encode` function on the encoder.
 #### Contributors
 
 - [@cbzehner](https://github.com/cbzehner)
-- [@j-halbert](https://github.com/j-halbert)  
+- [@johnhalbert](https://github.com/johnhalbert)  
 - [@kitsuneninetails](https://github.com/kitsuneninetails)
+- [@kujeger](https://github.com/kujeger)
+- [@Licenser](https://github.com/Licenser)
+- [@marioloko](https://github.com/marioloko)
 - [@naamancurtis](https://github.com/naamancurtis)
 - [@MariellHoversholm-Paf](https://github.com/MariellHoversholm-Paf)
 - [@SergeStrashko](https://github.com/SergeStrashko)
