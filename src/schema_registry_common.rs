@@ -72,13 +72,13 @@ pub struct RegisteredSchema {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct RawRegisteredSchema {
-    pub(crate) subject: Option<String>,
-    pub(crate) version: Option<u32>,
-    pub(crate) id: Option<u32>,
-    pub(crate) schema_type: Option<String>,
-    pub(crate) references: Option<Vec<RegisteredReference>>,
-    pub(crate) schema: Option<String>,
+pub struct RawRegisteredSchema {
+    pub subject: Option<String>,
+    pub version: Option<u32>,
+    pub id: Option<u32>,
+    pub schema_type: Option<String>,
+    pub references: Option<Vec<RegisteredReference>>,
+    pub schema: Option<String>,
 }
 
 /// Intermediate result to just handle the byte transformation. When used in a decoder just the
@@ -158,7 +158,7 @@ impl SubjectNameStrategy {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum SrCall<'a> {
+pub enum SrCall<'a> {
     GetById(u32),
     GetLatest(&'a str),
     GetBySubjectAndVersion(&'a str, u32),

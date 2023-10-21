@@ -81,7 +81,8 @@ from the diagram.
 
 ## Example with consumer and producer using Avro (blocking)
 
-Examples which does both consuming/decoding and producing/encoding. To use structs with Avro they must have an implementation
+Examples which does both consuming/decoding and producing/encoding. To use structs with Avro they must have an
+implementation
 of either the `serde::Deserialize` or `serde::Serialize` trait to work. The examples are especially useful to update
 from the 1.x.x version, when starting you probably want to use the async versions.
 
@@ -176,6 +177,13 @@ fn get_future_record_from_struct<'a>(
     }
 }
 ```
+
+## Direct interaction with schema registry
+
+Some functions have been opened so this library can be used to directly get all the subjects, all the version of a
+subject, or the raw schema with a subject and version. For these see the
+either [async](tests/async_impl/schema_registry_calls.rs) or [blocking](tests/blocking/schema_registry_calls.rs) version
+of the integration tests.
 
 ## Example using to post schema to schema registry
 
