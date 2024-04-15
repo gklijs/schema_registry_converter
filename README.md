@@ -131,7 +131,7 @@ fn get_heartbeat<'a>(
                 name => panic!("Unexpected name {}", name),
             }
         }
-        Err(e) => panic!("error getting heartbeat: {}, e"),
+        Err(e) => panic!("error getting heartbeat: {}", e),
     }
 }
 
