@@ -55,6 +55,7 @@ impl EasyProtoRawEncoder {
 
 #[cfg(test)]
 mod tests {
+    use mockito::Server;
     use crate::async_impl::easy_proto_raw::{EasyProtoRawDecoder, EasyProtoRawEncoder};
     use crate::async_impl::schema_registry::SrSettings;
     use crate::schema_registry_common::SubjectNameStrategy;
@@ -65,7 +66,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_decoder_default() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
         let _m = server
             .mock("GET", "/schemas/ids/7?deleted=true")
             .with_status(200)
@@ -87,7 +88,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_encode_default() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
         let _m = server
             .mock("GET", "/subjects/nl.openweb.data.Heartbeat/versions/latest")
             .with_status(200)
@@ -114,7 +115,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_encode_single_message() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
         let _m = server
             .mock("GET", "/subjects/nl.openweb.data.Heartbeat/versions/latest")
             .with_status(200)

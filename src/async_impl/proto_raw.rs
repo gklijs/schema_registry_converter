@@ -220,7 +220,7 @@ pub struct RawDecodeResult {
 
 #[cfg(test)]
 mod tests {
-
+    use mockito::Server;
     use crate::async_impl::proto_raw::{ProtoRawDecoder, ProtoRawEncoder};
     use crate::async_impl::schema_registry::SrSettings;
     use crate::schema_registry_common::{
@@ -235,7 +235,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_encode_default() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
         let _m = server
             .mock("GET", "/subjects/nl.openweb.data.Heartbeat/versions/latest")
             .with_status(200)
@@ -262,7 +262,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_encode_single_message() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
         let _m = server
             .mock("GET", "/subjects/nl.openweb.data.Heartbeat/versions/latest")
             .with_status(200)
@@ -285,7 +285,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_encode_single_message_multiple_in_schema() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
         let _m = server
             .mock("GET", "/subjects/nl.openweb.data.Heartbeat/versions/latest")
             .with_status(200)
@@ -306,7 +306,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_encode_cache() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
         let sr_settings = SrSettings::new(server.url());
         let encoder = ProtoRawEncoder::new(sr_settings);
         let strategy =
@@ -354,7 +354,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_encode_complex() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
         let _m = server
             .mock("POST", "/subjects/result.proto/versions")
             .with_status(200)
@@ -415,7 +415,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_decoder_default() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
         let _m = server
             .mock("GET", "/schemas/ids/7?deleted=true")
             .with_status(200)
@@ -437,7 +437,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_decoder_cache() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
         let sr_settings = SrSettings::new(server.url());
         let decoder = ProtoRawDecoder::new(sr_settings);
 
@@ -468,7 +468,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_decoder_complex() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
         let _m = server
             .mock("GET", "/schemas/ids/6?deleted=true")
             .with_status(200)

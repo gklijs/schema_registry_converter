@@ -48,6 +48,7 @@ mod tests {
 
     use serde_json::Value;
     use std::fs::{read_to_string, File};
+    use mockito::Server;
     use test_utils::{get_json_body, json_result_java_bytes, json_result_schema};
 
     #[tokio::test]
@@ -56,7 +57,7 @@ mod tests {
             .unwrap()
             .parse()
             .unwrap();
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
         let _m = server
             .mock("GET", "/schemas/ids/7?deleted=true")
             .with_status(200)
@@ -98,7 +99,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_encode_default() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
         let _m = server
             .mock("GET", "/subjects/testresult-value/versions/latest")
             .with_status(200)

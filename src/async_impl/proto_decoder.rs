@@ -206,7 +206,7 @@ async fn to_vec_of_schemas(
 
 #[cfg(test)]
 mod tests {
-
+    use mockito::Server;
     use crate::async_impl::proto_decoder::ProtoDecoder;
     use crate::async_impl::schema_registry::SrSettings;
     use protofish::prelude::Value;
@@ -231,7 +231,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_decoder_default() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
         let _m = server
             .mock("GET", "/schemas/ids/7?deleted=true")
             .with_status(200)
@@ -253,7 +253,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_decode_with_context_default() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
         let _m = server
             .mock("GET", "/schemas/ids/7?deleted=true")
             .with_status(200)
@@ -277,7 +277,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_decoder_cache() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
         let sr_settings = SrSettings::new(server.url());
         let decoder = ProtoDecoder::new(sr_settings);
         let error = decoder.decode(Some(get_proto_hb_101())).await.unwrap_err();
@@ -307,7 +307,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_decoder_complex() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
         let _m = server
             .mock("GET", "/schemas/ids/6?deleted=true")
             .with_status(200)

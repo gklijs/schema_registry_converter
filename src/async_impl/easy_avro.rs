@@ -76,12 +76,13 @@ mod tests {
     use crate::schema_registry_common::SubjectNameStrategy;
     use apache_avro::types::Value;
     use apache_avro::{from_value, Schema};
+    use mockito::Server;
 
     use test_utils::Heartbeat;
 
     #[tokio::test]
     async fn test_decoder_default() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
         let _m = server.mock("GET", "/schemas/ids/1?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
@@ -110,7 +111,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_decode_with_schema_default() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
         let _m = server.mock("GET", "/schemas/ids/1?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
@@ -140,7 +141,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_encode_value() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
         let _m = server.mock("GET", "/subjects/heartbeat-value/versions/latest")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
@@ -162,7 +163,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_primitive_schema() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
         let sr_settings = SrSettings::new(server.url());
         let encoder = EasyAvroEncoder::new(sr_settings);
 

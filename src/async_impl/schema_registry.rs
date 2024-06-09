@@ -558,6 +558,7 @@ async fn perform_single_versions_call(
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
+    use mockito::Server;
 
     use crate::async_impl::schema_registry::{
         get_schema_by_id, get_schema_by_id_and_type, SrSettings,
@@ -566,7 +567,7 @@ mod tests {
 
     #[tokio::test]
     async fn put_correct_url_as_second_check_header_set() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
         let _m = server.mock("GET", "/schemas/ids/1?deleted=true")
             .match_header("foo", "bar")
             .match_header("authorization", "Bearer some_json_web_token_for_example")
@@ -598,7 +599,7 @@ mod tests {
 
     #[tokio::test]
     async fn basic_authorization() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
 
         let _m = server.mock("GET", "/schemas/ids/1?deleted=true")
             .match_header("authorization", "Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==")
@@ -627,7 +628,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_schema_by_id_and_type() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
 
         let _m = server.mock("GET", "/schemas/ids/1?deleted=true")
             .with_status(200)

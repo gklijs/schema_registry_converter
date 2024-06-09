@@ -29,6 +29,7 @@ impl EasyProtoDecoder {
 
 #[cfg(test)]
 mod tests {
+    use mockito::Server;
     use crate::async_impl::easy_proto_decoder::EasyProtoDecoder;
     use crate::async_impl::schema_registry::SrSettings;
 
@@ -37,7 +38,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_decoder_default() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
         let _m = server
             .mock("GET", "/schemas/ids/7?deleted=true")
             .with_status(200)
@@ -59,7 +60,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_decode_with_context_default() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
         let _m = server
             .mock("GET", "/schemas/ids/7?deleted=true")
             .with_status(200)

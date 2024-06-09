@@ -291,6 +291,7 @@ pub struct DecodeResult {
 #[cfg(test)]
 mod tests {
     use std::fs::{read_to_string, File};
+    use mockito::Server;
 
     use serde_json::Value;
 
@@ -305,7 +306,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_encode_java_compatibility() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
         let _m = server
             .mock("GET", "/subjects/testresult-value/versions/latest")
             .with_status(200)
@@ -327,7 +328,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_encode_schema_with_id() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
         let _m = server
             .mock("GET", "/subjects/testresult-value/versions/latest")
             .with_status(200)
@@ -349,7 +350,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_encode_clean_cache() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
 
         let sr_settings = SrSettings::new(server.url());
         let encoder = JsonEncoder::new(sr_settings);
@@ -379,7 +380,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_decoder_default() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
         let result_value: String = read_to_string("tests/schema/result-example.json")
             .unwrap()
             .parse()
@@ -425,7 +426,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_decoder_clean_cache() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
         let result_value: String = read_to_string("tests/schema/result-example.json")
             .unwrap()
             .parse()
@@ -467,7 +468,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_decoder_java_compatibility() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
         let _m = server
             .mock("GET", "/schemas/ids/10?deleted=true")
             .with_status(200)
@@ -509,7 +510,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_decoder_value_can_not_be_read() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
         let _m = server
             .mock("GET", "/schemas/ids/10?deleted=true")
             .with_status(200)
@@ -531,7 +532,7 @@ mod tests {
 
     #[tokio::test]
     async fn add_referred_schema() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
         let sr_settings = SrSettings::new(server.url());
         let decoder = JsonDecoder::new(sr_settings);
         let bytes = [
@@ -573,7 +574,7 @@ mod tests {
 
     #[tokio::test]
     async fn error_in_referred_schema() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
         let sr_settings = SrSettings::new(server.url());
         let decoder = JsonDecoder::new(sr_settings);
         let bytes = [
@@ -610,7 +611,7 @@ mod tests {
 
     #[tokio::test]
     async fn encounter_same_reference_again() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
         let sr_settings = SrSettings::new(server.url());
         let decoder = JsonDecoder::new(sr_settings);
         let bytes_id_5 = [
@@ -707,7 +708,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_encode_not_valid() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
         let _m = server
             .mock("GET", "/subjects/testresult-value/versions/latest")
             .with_status(200)
@@ -732,7 +733,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_encode_missing_ref() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
         let _m = server
             .mock("GET", "/subjects/testresult-value/versions/latest")
             .with_status(200)

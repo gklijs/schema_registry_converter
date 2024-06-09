@@ -61,11 +61,12 @@ use crate::schema_registry_common::{
 ///
 /// ```
 /// use apache_avro::types::Value;
+/// use mockito::Server;
 /// use schema_registry_converter::async_impl::schema_registry::SrSettings;
 /// use schema_registry_converter::async_impl::avro::AvroDecoder;
 ///
 /// # async fn doc() -> Result<(), reqwest::Error> {
-/// let mut server = mockito::Server::new();
+/// let mut server = Server::new_async().await;
 /// let _m = server .mock("GET", "/schemas/ids/1?deleted=true")
 ///     .with_status(200)
 ///     .with_header("content-type", "application/vnd.schemaregistry.v1+json")
@@ -108,12 +109,13 @@ impl<'a> AvroDecoder<'a> {
     ///
     /// ```
     /// use apache_avro::types::Value;
+    /// use mockito::Server;
     /// use schema_registry_converter::async_impl::avro::AvroDecoder;
     /// use schema_registry_converter::async_impl::schema_registry::SrSettings;
     /// use schema_registry_converter::error::SRCError;
     ///
     /// # async fn doc() -> Result<(), reqwest::Error> {
-    /// let mut server = mockito::Server::new();
+    /// let mut server = Server::new_async().await;
     /// let sr_settings = SrSettings::new(server.url());
     /// let decoder = AvroDecoder::new(sr_settings);
     /// let bytes = [0,0,0,0,2,6];
@@ -292,12 +294,13 @@ impl<'a> AvroDecoder<'a> {
 /// ```
 
 /// use apache_avro::types::Value;
+/// use mockito::Server;
 /// use schema_registry_converter::async_impl::avro::AvroEncoder;
 /// use schema_registry_converter::async_impl::schema_registry::SrSettings;
 /// use schema_registry_converter::schema_registry_common::SubjectNameStrategy;
 /// # async fn doc() -> Result<(), reqwest::Error> {
 ///
-/// let mut server = mockito::Server::new();
+/// let mut server = Server::new_async().await;
 /// let _m = server .mock("GET", "/subjects/heartbeat-value/versions/latest")
 ///     .with_status(200)
 ///     .with_header("content-type", "application/vnd.schemaregistry.v1+json")
@@ -343,12 +346,13 @@ impl<'a> AvroEncoder<'a> {
     ///
     /// ```
     /// use apache_avro::types::Value;
+    /// use mockito::Server;
     /// use schema_registry_converter::async_impl::avro::AvroEncoder;
     /// use schema_registry_converter::async_impl::schema_registry::SrSettings;
     /// use schema_registry_converter::schema_registry_common::{SubjectNameStrategy, SchemaType, SuppliedSchema};
     ///
     /// # async fn doc() -> Result<(), reqwest::Error> {
-    /// let mut server = mockito::Server::new();
+    /// let mut server = Server::new_async().await;
     /// # let _m = server.mock("POST", "/subjects/hb-nl.openweb.data.Heartbeat/versions")
     /// #    .with_status(200)
     /// #    .with_header("content-type", "application/vnd.schemaregistry.v1+json")
@@ -382,13 +386,14 @@ impl<'a> AvroEncoder<'a> {
     ///
     /// ```
     /// use apache_avro::types::Value;
+    /// use mockito::Server;
     /// use schema_registry_converter::async_impl::avro::AvroEncoder;
     /// use schema_registry_converter::schema_registry_common::SubjectNameStrategy;
     /// use schema_registry_converter::error::SRCError;
     /// use schema_registry_converter::async_impl::schema_registry::SrSettings;
     ///
     /// # async fn doc() -> Result<(), reqwest::Error> {
-    /// let mut server = mockito::Server::new();
+    /// let mut server = Server::new_async().await;
     /// let sr_settings = SrSettings::new(server.url());
     /// let encoder = AvroEncoder::new(sr_settings);
     /// let strategy = SubjectNameStrategy::RecordNameStrategy(String::from("nl.openweb.data.Heartbeat"));
@@ -431,12 +436,13 @@ impl<'a> AvroEncoder<'a> {
     /// form.
     /// ```
     /// use apache_avro::types::Value;
+    /// use mockito::Server;
     /// use schema_registry_converter::async_impl::avro::AvroEncoder;
     /// use schema_registry_converter::schema_registry_common::SubjectNameStrategy;
     /// use schema_registry_converter::async_impl::schema_registry::SrSettings;
     ///
     /// # async fn doc() -> Result<(), reqwest::Error> {
-    /// let mut server = mockito::Server::new();
+    /// let mut server = Server::new_async().await;
     /// let _m = server .mock("GET", "/subjects/heartbeat-nl.openweb.data.Heartbeat/versions/latest")
     ///     .with_status(200)
     ///     .with_header("content-type", "application/vnd.schemaregistry.v1+json")
@@ -475,13 +481,14 @@ impl<'a> AvroEncoder<'a> {
     /// use serde::Serialize;
     /// use apache_avro::types::Value;
     /// use apache_avro::Schema;
+    /// use mockito::Server;
     /// use schema_registry_converter::async_impl::avro::AvroEncoder;
     /// use schema_registry_converter::schema_registry_common::SubjectNameStrategy;
     /// use schema_registry_converter::async_impl::schema_registry::SrSettings;
     /// use schema_registry_converter::avro_common::get_supplied_schema;
     ///
     /// # async fn doc() -> Result<(), reqwest::Error> {
-    /// let mut server = mockito::Server::new();
+    /// let mut server = Server::new_async().await;
     /// let _m = server .mock("GET", "/subjects/heartbeat-nl.openweb.data.Heartbeat/versions/latest")
     ///     .with_status(200)
     ///     .with_header("content-type", "application/vnd.schemaregistry.v1+json")
@@ -655,6 +662,7 @@ fn add_references<'a>(
 #[cfg(test)]
 mod tests {
     use apache_avro::from_value;
+    use mockito::Server;
 
     use crate::avro_common::get_supplied_schema;
     use crate::schema_registry_common::SuppliedSchema;
@@ -675,7 +683,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_decoder_default() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
         let _m = server.mock("GET", "/schemas/ids/1?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
@@ -704,7 +712,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_decoder_with_name() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
         let _m = server.mock("GET", "/schemas/ids/1?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
@@ -788,7 +796,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_decoder_wrong_data() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
         let _m = server.mock("GET", "/schemas/ids/1?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
@@ -804,7 +812,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_decoder_with_name_wrong_data() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
         let _m = server.mock("GET", "/schemas/ids/1?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
@@ -820,7 +828,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_decoder_no_json_response() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
         let _m = server.mock("GET", "/schemas/ids/1?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
@@ -846,7 +854,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_decoder_with_name_no_json_response() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
         let _m = server.mock("GET", "/schemas/ids/1?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
@@ -883,7 +891,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_decoder_default_no_schema_in_response() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
         let _m = server.mock("GET", "/schemas/ids/1?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
@@ -902,7 +910,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_decoder_default_wrong_schema_in_response() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
         let _m = server.mock("GET", "/schemas/ids/1?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
@@ -921,7 +929,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_decoder_fixed_with_enum() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
         let _m = server.mock("GET", "/schemas/ids/6?deleted=true")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
@@ -959,7 +967,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_decoder_cache() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
         let sr_settings = SrSettings::new(server.url());
         let decoder = AvroDecoder::new(sr_settings);
         let bytes = [0, 0, 0, 0, 2, 6];
@@ -1009,7 +1017,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_encode_key_and_value() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
         let _m = server.mock("GET", "/subjects/heartbeat-value/versions/latest")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
@@ -1049,7 +1057,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_encode_key_and_value_with_non_static_lifetime() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
         let _m = server.mock("GET", "/subjects/heartbeat-value/versions/latest")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
@@ -1091,7 +1099,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_using_record_name() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
         let _m = server.mock("GET", "/subjects/heartbeat-nl.openweb.data.Heartbeat/versions/latest")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
@@ -1114,7 +1122,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_encoder_no_id_in_response() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
         let _m = server.mock("GET", "/subjects/heartbeat-nl.openweb.data.Heartbeat/versions/latest")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
@@ -1200,7 +1208,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_encode_cache() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
         let sr_settings = SrSettings::new(server.url());
         let encoder = AvroEncoder::new(sr_settings);
         let strategy =
@@ -1248,7 +1256,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_encode_key_and_value_supplied_record() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
         let _m = server
             .mock("POST", "/subjects/heartbeat-key/versions")
             .with_status(200)
@@ -1310,7 +1318,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_encode_record_name_strategy_supplied_record() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
         let _m = server
             .mock("POST", "/subjects/nl.openweb.data.Heartbeat/versions")
             .with_status(200)
@@ -1338,7 +1346,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_encode_record_name_strategy_supplied_record_wrong_response() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
         let _m = server
             .mock("POST", "/subjects/nl.openweb.data.Heartbeat/versions")
             .with_status(200)
@@ -1370,7 +1378,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_encode_topic_record_name_strategy_supplied_record() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
         let _m = server
             .mock("POST", "/subjects/hb-nl.openweb.data.Heartbeat/versions")
             .with_status(200)
@@ -1401,7 +1409,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_encode_topic_record_name_strategy_schema_registry_not_available() {
-        let server = mockito::Server::new();
+        let server = Server::new_async().await;
         let sr_settings = SrSettings::new(server.url());
         let encoder = AvroEncoder::new(sr_settings);
 
@@ -1473,7 +1481,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_primitive_schema() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
         let sr_settings = SrSettings::new(server.url());
         let encoder = AvroEncoder::new(sr_settings);
 
@@ -1522,7 +1530,7 @@ mod tests {
 
     #[tokio::test]
     async fn replace_referred_schema() {
-        let mut server = mockito::Server::new();
+        let mut server = Server::new_async().await;
         let sr_settings = SrSettings::new(server.url());
         let decoder = AvroDecoder::new(sr_settings);
         let bytes = [
