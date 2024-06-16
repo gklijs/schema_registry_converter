@@ -785,7 +785,7 @@ mod tests {
             Err(SRCError::new(
                 "could not parse to RawRegisteredSchema, schema might not exist on this schema registry, the http call failed, cause will give more information",
                 Some(String::from(
-                    "error decoding response body: expected `:` at line 1 column 130"
+                    "error decoding response body"
                 )),
                 false,
             )
@@ -811,7 +811,7 @@ mod tests {
             Err(SRCError::new(
                 "could not parse to RawRegisteredSchema, schema might not exist on this schema registry, the http call failed, cause will give more information",
                 Some(String::from(
-                    "error decoding response body: expected `:` at line 1 column 130"
+                    "error decoding response body"
                 )),
                 false,
             )
@@ -1107,7 +1107,7 @@ mod tests {
             result,
             Err(SRCError::new(
                 "http call to schema registry failed",
-                Some(String::from("builder error for url (hxxx://bogus/subjects/heartbeat-nl.openweb.data.Balance/versions/latest): URL scheme is not allowed")),
+                Some(String::from("builder error for url (hxxx://bogus/subjects/heartbeat-nl.openweb.data.Balance/versions/latest)")),
                 true,
             )
                 .into_cache())
@@ -1341,7 +1341,7 @@ mod tests {
             Err(SRCError::new(
                 "could not parse to RawRegisteredSchema, schema might not exist on this schema registry, the http call failed, cause will give more information",
                 Some(String::from(
-                    "error decoding response body: EOF while parsing a value at line 1 column 0"
+                    "error decoding response body"
                 )),
                 false,
             )

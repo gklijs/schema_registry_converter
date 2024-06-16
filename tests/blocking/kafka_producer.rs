@@ -42,7 +42,6 @@ impl<'a> RecordProducer {
 pub fn get_producer(brokers: &str, schema_registry_url: String) -> RecordProducer {
     let producer: FutureProducer = ClientConfig::new()
         .set("bootstrap.servers", brokers)
-        .set("produce.offset.report", "true")
         .set("message.timeout.ms", "60000")
         .set("queue.buffering.max.messages", "10")
         .create()
