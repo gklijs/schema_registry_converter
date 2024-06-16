@@ -26,13 +26,13 @@ kafka_test = []
 default = ["futures", "native_tls"]
 
 [dependencies.byteorder]
-version = "^1.4"
+version = "^1.5"
 
 [dependencies.dashmap]
-version = "^5.4"
+version = "^5.5"
 
 [dependencies.reqwest]
-version = "^0.11"
+version = "^0.12"
 default-features = false
 features = ["json"]
 
@@ -60,7 +60,7 @@ version = "^4.0"
 optional = true
 
 [dependencies.logos]
-version = "^0.13"
+version = "^0.14"
 optional = true
 
 [dependencies.protofish]
@@ -68,7 +68,7 @@ version = "^0.5"
 optional = true
 
 [dependencies.url]
-version = "^2.3"
+version = "^2.5"
 optional = true
 
 [dependencies.tokio]

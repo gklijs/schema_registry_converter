@@ -66,23 +66,23 @@ pub struct ResolverHelper {
 
 #[derive(Logos, Debug, PartialEq)]
 enum Token {
-    #[regex(r"package\s+[a-zA-z0-9\\.\\_]+;")]
+    #[regex(r"package\s+[a-zA-z0-9\\.\\_]+;", priority = 10)]
     Package,
 
-    #[regex(r"message\s+[a-zA-z0-9\\_]+")]
+    #[regex(r"message\s+[a-zA-z0-9\\_]+", priority = 10)]
     Message,
 
-    #[regex(r#"import\s+"[a-zA-z0-9\\.\\_/]+";"#)]
+    #[regex(r#"import\s+"[a-zA-z0-9\\.\\_/]+";"#, priority = 10)]
     Import,
 
-    #[token("{")]
+    #[token("{", priority = 10)]
     Open,
 
-    #[token("}")]
+    #[token("}", priority = 10)]
     Close,
 
-    #[regex(r"\S")]
-    #[regex(r"[\s]+", logos::skip)]
+    #[regex(r"\S", logos::skip, priority = 1)]
+    #[regex(r"[\s]+", logos::skip, priority = 1)]
     Ignorable,
 }
 
