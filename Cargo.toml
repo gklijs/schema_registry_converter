@@ -29,7 +29,7 @@ default = ["futures", "native_tls"]
 version = "^1.5"
 
 [dependencies.dashmap]
-version = "^5.5"
+version = "^6.0"
 
 [dependencies.reqwest]
 version = "^0.12"
