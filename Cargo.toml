@@ -64,8 +64,8 @@ version = "^0.14"
 optional = true
 
 [dependencies.protofish]
-git = "https://github.com/Rantanen/protofish.git"
-rev = "bd53a38"
+git = "https://github.com/fennel-ai/protofish.git"
+branch = "main"
 optional = true
 
 [dependencies.url]
