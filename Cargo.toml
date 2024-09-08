@@ -1,9 +1,9 @@
 [package]
-name = "schema_registry_converter"
+name = "schema_registry_converter_sf"
 version = "4.1.0"
 authors = ["Gerard Klijs <g.klijs@gmail.com>"]
 include = ["src/**/*", "Cargo.toml"]
-description = "Encode/decode data from/to kafka using the Confluent Schema Registry"
+description = "It is just a fork of the original schema_registry_converter crate with a fix for the avro serialization"
 homepage = "https://github.com/gklijs/schema_registry_converter"
 repository = "https://github.com/gklijs/schema_registry_converter"
 readme = "README.md"
@@ -11,6 +11,9 @@ keywords = ["kafka", "schema", "avro", "protobuf", "jsonschema"]
 categories = ["encoding", "parsing"]
 license = "MIT/Apache-2.0"
 edition = "2021"
+
+[workspace]
+resolver = "2"
 
 [features]
 native_tls = ["reqwest/native-tls"]
@@ -44,7 +47,7 @@ features = ["derive"]
 version = "^1.0"
 
 [dependencies.apache-avro]
-version = "^0.16"
+version = "0.17.0"
 optional = true
 
 [dependencies.bytes]

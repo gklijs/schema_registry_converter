@@ -38,7 +38,7 @@ use crate::async_impl::schema_registry::{
     get_referenced_schema, get_schema_by_id_and_type, get_schema_by_subject, SrSettings,
 };
 use crate::avro_common::{
-    get_name, item_to_bytes, replace_reference, values_to_bytes, AvroSchema, DecodeResult,
+    get_name, item_to_bytes, replace_reference, values_to_bytes, AvroSchema, DecodeResult, record_to_bytes,
     DecodeResultWithSchema,
 };
 use crate::error::SRCError;
@@ -530,6 +530,18 @@ impl<'a> AvroEncoder<'a> {
             .get_schema_and_id(&key, subject_name_strategy.clone())
             .await?;
         item_to_bytes(&schema, item)
+    }
+
+    pub async fn encode_value(
+        &self,
+        item: Value,
+        subject_name_strategy: &SubjectNameStrategy,
+    ) -> Result<Vec<u8>, SRCError> {
+        let key = subject_name_strategy.get_subject()?;
+        let schema = self
+            .get_schema_and_id(&key, subject_name_strategy.clone())
+            .await?;
+        record_to_bytes(&schema, item)
     }
 
     pub async fn get_schema_and_id(
