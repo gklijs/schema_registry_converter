@@ -1,9 +1,9 @@
 [package]
-name = "schema_registry_converter_sf"
+name = "schema_registry_converter"
 version = "4.1.0"
 authors = ["Gerard Klijs <g.klijs@gmail.com>"]
 include = ["src/**/*", "Cargo.toml"]
-description = "It is just a fork of the original schema_registry_converter crate with a fix for the avro serialization"
+description = "Encode/decode data from/to kafka using the Confluent Schema Registry"
 homepage = "https://github.com/gklijs/schema_registry_converter"
 repository = "https://github.com/gklijs/schema_registry_converter"
 readme = "README.md"
