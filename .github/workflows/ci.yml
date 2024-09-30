@@ -20,7 +20,7 @@ jobs:
       - name: Build
         run: cargo build --verbose
       - name: prepare env
-        run: docker-compose up -d
+        run: docker compose up -d
       - name: check test app done
         run: ./check_test_app_done.sh
         shell: bash
