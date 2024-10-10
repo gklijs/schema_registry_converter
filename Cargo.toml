@@ -12,6 +12,9 @@ categories = ["encoding", "parsing"]
 license = "MIT/Apache-2.0"
 edition = "2021"
 
+[workspace]
+resolver = "2"
+
 [features]
 native_tls = ["reqwest/native-tls"]
 rustls_tls = ["reqwest/rustls-tls"]

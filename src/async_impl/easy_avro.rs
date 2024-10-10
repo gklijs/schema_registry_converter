@@ -57,6 +57,15 @@ impl EasyAvroEncoder {
             .encode_struct(item, subject_name_strategy)
             .await
     }
+
+    pub async fn encode_value(
+        &self,
+        item: Value,
+        subject_name_strategy: &SubjectNameStrategy,
+    ) -> Result<Vec<u8>, SRCError> {
+        self.encoder.encode_value(item, subject_name_strategy).await
+    }
+
     pub async fn get_schema_and_id(
         &self,
         key: &str,
