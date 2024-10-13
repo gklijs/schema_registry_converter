@@ -1,11 +1,15 @@
 ## Release notes
 
-### 4.1.0
+### 4.2.0
 
 Updated versions.
 Add possibility to directly encode avro values.
 Make it possible to have slashes in subject names.
 By updating to the latest [avro-rs](https://crates.io/crates/avro-rs) being able to [have custom name validators](https://github.com/apache/avro-rs/blob/main/avro/README.md#custom-names-validators) in Avro.
+
+### 4.1.0
+
+Updated versions.
 
 ### 4.0.0
 
