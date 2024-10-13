@@ -290,8 +290,8 @@ pub struct DecodeResult {
 
 #[cfg(test)]
 mod tests {
-    use std::fs::{read_to_string, File};
     use mockito::Server;
+    use std::fs::{read_to_string, File};
 
     use serde_json::Value;
 

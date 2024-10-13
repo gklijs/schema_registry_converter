@@ -119,7 +119,6 @@ pub(crate) fn values_to_bytes(
     avro_schema: &AvroSchema,
     values: Vec<(&str, Value)>,
 ) -> Result<Vec<u8>, SRCError> {
-
     let mut record = match Record::new(&avro_schema.parsed) {
         Some(v) => v,
         None => {
@@ -135,7 +134,6 @@ pub(crate) fn values_to_bytes(
     }
     to_bytes(avro_schema, Value::from(record))
 }
-
 
 /// Using the schema with an item implementing serialize the item will be correctly deserialized
 /// according to the avro specification.
@@ -155,10 +153,7 @@ pub(crate) fn item_to_bytes(
     }
 }
 
-pub(crate) fn record_to_bytes(
-    avro_schema: &AvroSchema,
-    item: Value,
-) -> Result<Vec<u8>, SRCError> {
+pub(crate) fn record_to_bytes(avro_schema: &AvroSchema, item: Value) -> Result<Vec<u8>, SRCError> {
     to_bytes(avro_schema, item)
 }
 

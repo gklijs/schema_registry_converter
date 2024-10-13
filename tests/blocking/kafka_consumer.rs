@@ -1,6 +1,6 @@
 use rdkafka::config::{ClientConfig, RDKafkaLogLevel};
-use rdkafka::consumer::{Consumer, DefaultConsumerContext};
 use rdkafka::consumer::base_consumer::BaseConsumer;
+use rdkafka::consumer::{Consumer, DefaultConsumerContext};
 
 type TestConsumer = BaseConsumer<DefaultConsumerContext>;
 

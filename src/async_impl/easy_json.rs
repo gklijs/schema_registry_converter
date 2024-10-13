@@ -46,9 +46,9 @@ mod tests {
     use crate::async_impl::schema_registry::SrSettings;
     use crate::schema_registry_common::{get_payload, SubjectNameStrategy};
 
+    use mockito::Server;
     use serde_json::Value;
     use std::fs::{read_to_string, File};
-    use mockito::Server;
     use test_utils::{get_json_body, json_result_java_bytes, json_result_schema};
 
     #[tokio::test]
