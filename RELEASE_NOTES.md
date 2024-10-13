@@ -111,6 +111,7 @@ instead of the `encode` function on the encoder.
 - [@kitsuneninetails](https://github.com/kitsuneninetails)
 - [@kujeger](https://github.com/kujeger)
 - [@Licenser](https://github.com/Licenser)
+- [@mdroogh](https://github.com/mdroogh)
 - [@marioloko](https://github.com/marioloko)
 - [@naamancurtis](https://github.com/naamancurtis)
 - [@MariellHoversholm-Paf](https://github.com/MariellHoversholm-Paf)
