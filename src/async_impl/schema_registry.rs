@@ -557,8 +557,8 @@ async fn perform_single_versions_call(
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
     use mockito::Server;
+    use std::time::Duration;
 
     use crate::async_impl::schema_registry::{
         get_schema_by_id, get_schema_by_id_and_type, SrSettings,

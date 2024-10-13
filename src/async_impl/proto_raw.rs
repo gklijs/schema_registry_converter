@@ -220,12 +220,12 @@ pub struct RawDecodeResult {
 
 #[cfg(test)]
 mod tests {
-    use mockito::Server;
     use crate::async_impl::proto_raw::{ProtoRawDecoder, ProtoRawEncoder};
     use crate::async_impl::schema_registry::SrSettings;
     use crate::schema_registry_common::{
         SchemaType, SubjectNameStrategy, SuppliedReference, SuppliedSchema,
     };
+    use mockito::Server;
     use test_utils::{
         get_proto_body, get_proto_body_with_reference, get_proto_complex,
         get_proto_complex_only_data, get_proto_complex_proto_test_message,

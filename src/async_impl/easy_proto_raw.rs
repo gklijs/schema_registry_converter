@@ -55,10 +55,10 @@ impl EasyProtoRawEncoder {
 
 #[cfg(test)]
 mod tests {
-    use mockito::Server;
     use crate::async_impl::easy_proto_raw::{EasyProtoRawDecoder, EasyProtoRawEncoder};
     use crate::async_impl::schema_registry::SrSettings;
     use crate::schema_registry_common::SubjectNameStrategy;
+    use mockito::Server;
 
     use test_utils::{
         get_proto_body, get_proto_hb_101, get_proto_hb_101_only_data, get_proto_hb_schema,

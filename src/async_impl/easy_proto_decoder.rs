@@ -29,9 +29,9 @@ impl EasyProtoDecoder {
 
 #[cfg(test)]
 mod tests {
-    use mockito::Server;
     use crate::async_impl::easy_proto_decoder::EasyProtoDecoder;
     use crate::async_impl::schema_registry::SrSettings;
+    use mockito::Server;
 
     use protofish::decode::Value;
     use test_utils::{get_proto_body, get_proto_hb_101, get_proto_hb_schema};

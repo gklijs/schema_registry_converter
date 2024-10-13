@@ -206,9 +206,9 @@ async fn to_vec_of_schemas(
 
 #[cfg(test)]
 mod tests {
-    use mockito::Server;
     use crate::async_impl::proto_decoder::ProtoDecoder;
     use crate::async_impl::schema_registry::SrSettings;
+    use mockito::Server;
     use protofish::prelude::Value;
     use test_utils::{
         get_proto_complex, get_proto_complex_proto_test_message, get_proto_complex_references,

@@ -38,8 +38,8 @@ use crate::async_impl::schema_registry::{
     get_referenced_schema, get_schema_by_id_and_type, get_schema_by_subject, SrSettings,
 };
 use crate::avro_common::{
-    get_name, item_to_bytes, replace_reference, values_to_bytes, AvroSchema, DecodeResult, record_to_bytes,
-    DecodeResultWithSchema,
+    get_name, item_to_bytes, record_to_bytes, replace_reference, values_to_bytes, AvroSchema,
+    DecodeResult, DecodeResultWithSchema,
 };
 use crate::error::SRCError;
 use crate::schema_registry_common::{
