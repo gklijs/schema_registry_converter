@@ -169,16 +169,25 @@ pub enum SrCall<'a> {
 pub(crate) fn url_for_call(call: &SrCall, base_url: &str) -> String {
     match call {
         SrCall::GetById(id) => format!("{}/schemas/ids/{}?deleted=true", base_url, id),
-        SrCall::GetLatest(subject) => format!("{}/subjects/{}/versions/latest", base_url, subject),
-        SrCall::GetBySubjectAndVersion(subject, version) => {
-            format!("{}/subjects/{}/versions/{}", base_url, subject, version)
+        SrCall::GetLatest(subject) => {
+            // Use escape sequences instead of slashes in the subject
+            format!("{}/subjects/{}/versions/latest", base_url, subject.replace("/", "%2F"))
         }
-        SrCall::PostNew(subject, _) => format!("{}/subjects/{}/versions", base_url, subject),
+        SrCall::GetBySubjectAndVersion(subject, version) => {
+            // Use escape sequences instead of slashes in the subject
+            format!("{}/subjects/{}/versions/{}", base_url, subject.replace("/", "%2F"), version)
+        }
+        SrCall::PostNew(subject, _) => {
+            // Use escape sequences instead of slashes in the subject
+            format!("{}/subjects/{}/versions", base_url, subject.replace("/", "%2F"))
+        }
         SrCall::PostForVersion(subject, _) => {
-            format!("{}/subjects/{}?deleted=false", base_url, subject)
+            // Use escape sequences instead of slashes in the subject
+            format!("{}/subjects/{}?deleted=false", base_url, subject.replace("/", "%2F"))
         }
     }
 }
+
 
 /// Creates payload that can be included as a key or value on a kafka record
 pub fn get_payload(id: u32, encoded_bytes: Vec<u8>) -> Vec<u8> {
