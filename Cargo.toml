@@ -32,7 +32,7 @@ default = ["futures", "native_tls"]
 version = "^1.5"
 
 [dependencies.dashmap]
-version = "^6.0"
+version = "^6.1"
 
 [dependencies.reqwest]
 version = "^0.12"
@@ -75,7 +75,7 @@ version = "^2.5"
 optional = true
 
 [dependencies.tokio]
-version = "^1.38"
+version = "^1.40"
 features = ["macros"]
 optional = true
 
@@ -84,11 +84,11 @@ version = "^4.0"
 optional = true
 
 [dev-dependencies]
-mockito = "^1.4.0"
+mockito = "^1.5.0"
 rdkafka = { version = "^0.36.2", features = ["cmake-build"] }
 rand = "^0.8.5"
 test_utils = { path = "test_utils" }
-tokio = { version = "^1.38.0", features = ["macros"] }
+tokio = { version = "^1.40.0", features = ["macros"] }
 
 [package.metadata.docs.rs]
 all-features = true

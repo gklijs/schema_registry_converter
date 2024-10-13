@@ -1,5 +1,12 @@
 ## Release notes
 
+### 4.1.0
+
+Updated versions.
+Add possibility to directly encode avro values.
+Make it possible to have slashes in subject names.
+By updating to the latest [avro-rs](https://crates.io/crates/avro-rs) being able to [have custom name validators](https://github.com/apache/avro-rs/blob/main/avro/README.md#custom-names-validators) in Avro.
+
 ### 4.0.0
 
 Opened up/added some functionality.
@@ -95,6 +102,7 @@ instead of the `encode` function on the encoder.
 #### Contributors
 
 - [@cbzehner](https://github.com/cbzehner)
+- [@benmanns](https://github.com/benmanns)
 - [@johnhalbert](https://github.com/johnhalbert)  
 - [@kitsuneninetails](https://github.com/kitsuneninetails)
 - [@kujeger](https://github.com/kujeger)
@@ -102,4 +110,6 @@ instead of the `encode` function on the encoder.
 - [@marioloko](https://github.com/marioloko)
 - [@naamancurtis](https://github.com/naamancurtis)
 - [@MariellHoversholm-Paf](https://github.com/MariellHoversholm-Paf)
+- [@saiharshavellanki](https://github.com/saiharshavellanki)
 - [@SergeStrashko](https://github.com/SergeStrashko)
+- [@sfsf9797](https://github.com/sfsf9797)
