@@ -31,7 +31,9 @@ titled [confluent Schema Registry and Rust](https://blog.openweb.nl/blog/conflue
 recommended to look there for the newest and more elaborate documentation. It has a couple of feature flags, be sure to
 set them correctly.
 
-To use it to convert using avro async use:
+### Avro
+
+To use it to convert using Avro async use:
 
 ```toml
 [dependencies]
@@ -63,6 +65,26 @@ depending on your use.
 [dependencies]
 schema_registry_converter = { version = "4.2.0", features = ["avro", "blocking"] }
 ```
+
+### Protobuf
+
+To use it to convert using Protobuf async use:
+
+```toml
+[dependencies]
+schema_registry_converter = { version = "4.2.0", features = ["proto_raw"] }
+```
+
+For simplicity there are `easy` variants that internally have an arc.
+Making it easier to use at the price of some overhead. To use the `easy` variants add the `easy` feature and use the
+structs that start with `Easy` in the name to do the conversions.
+
+```toml
+[dependencies]
+schema_registry_converter = { version = "4.2.0", features = ["easy", "proto_raw"] }
+```
+
+...and see the [docs](https://docs.rs/schema_registry_converter) for how to use it.
 
 ## Consumer
 
