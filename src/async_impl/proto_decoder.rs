@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use bytes::Bytes;
 use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
@@ -181,10 +182,10 @@ pub struct DecodeContext {
 
 fn into_decode_context(vec_of_schemas: Vec<String>) -> Result<DecodeContext, SRCError> {
     let resolver = MessageResolver::new(vec_of_schemas.last().unwrap());
-    let mut files: Vec<String> = Vec::new();
+    let mut files: HashSet<String> = HashSet::new();
     add_common_files(resolver.imports(), &mut files);
     for s in vec_of_schemas {
-        files.push(s);
+        files.insert(s);
     }
     match Context::parse(files) {
         Ok(context) => Ok(DecodeContext { resolver, context }),
