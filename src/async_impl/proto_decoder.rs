@@ -142,8 +142,8 @@ impl<'a> ProtoDecoder<'a> {
                         Err(e) => Err(e.into_cache()),
                     }
                 }
-                .boxed()
-                .shared();
+                    .boxed()
+                    .shared();
                 e.insert(v).value().clone()
             }
         }
@@ -171,7 +171,7 @@ fn add_files<'a>(
         files.push(registered_schema.schema);
         Ok(())
     }
-    .boxed()
+        .boxed()
 }
 
 #[derive(Debug)]
@@ -183,8 +183,9 @@ pub struct DecodeContext {
 fn into_decode_context(vec_of_schemas: Vec<String>) -> Result<DecodeContext, SRCError> {
     let resolver = MessageResolver::new(vec_of_schemas.last().unwrap());
     let mut files: HashSet<String> = HashSet::new();
-    add_common_files(resolver.imports(), &mut files);
     for s in vec_of_schemas {
+        let dependent_resolver = MessageResolver::new(&s);
+        add_common_files(dependent_resolver.imports(), &mut files);
         files.insert(s);
     }
     match Context::parse(files) {
@@ -207,7 +208,7 @@ async fn to_vec_of_schemas(
 
 #[cfg(test)]
 mod tests {
-    use crate::async_impl::proto_decoder::ProtoDecoder;
+    use crate::async_impl::proto_decoder::{into_decode_context, ProtoDecoder};
     use crate::async_impl::schema_registry::SrSettings;
     use mockito::Server;
     use protofish::prelude::Value;
@@ -348,5 +349,14 @@ mod tests {
         assert!(
             format!("{:?}", decoder).starts_with("ProtoDecoder { sr_settings: SrSettings { urls: [\"http://127.0.0.1:1234\"], client: Client {")
         )
+    }
+
+    #[test]
+    fn test_into_decode_context() {
+        let base_schema = "syntax = \"proto3\";\npackage a.b.c;\n\nimport \"google/protobuf/timestamp.proto\";\n\noption java_outer_classname = \"MetadataProto\";\n\nmessage Metadata {\n  string field1 = 1;\n  string field2 = 2;\n  .google.protobuf.Timestamp field3 = 3;\n}\n";
+        let top_schema = "syntax = \"proto3\";\npackage a.b.c.d;\n\nimport \"a/b/c/metadata.proto\";\n\noption java_outer_classname = \"TopLevelProto\";\n\nmessage TopLevelMetadata {\n  uint64 field1 = 1;\n  .a.b.c.Metadata metadata = 3;\n\n}\n";
+        let vec_of_schemas = vec![base_schema.to_string(), top_schema.to_string()];
+        let result = into_decode_context(vec_of_schemas);
+        assert!(result.is_ok())
     }
 }
