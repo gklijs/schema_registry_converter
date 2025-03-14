@@ -179,7 +179,7 @@ pub fn to_index_and_data(bytes: &[u8]) -> (Vec<i32>, Vec<u8>) {
     if bytes[0] == 0 {
         (vec![0], bytes[1..].to_vec())
     } else {
-        let mut reader = BufReader::new(bytes);
+        let mut reader = BufReader::with_capacity(bytes.len(), bytes);
         let count: i32 = reader.read_varint().unwrap();
         let mut index = Vec::new();
         for _ in 0..count {
