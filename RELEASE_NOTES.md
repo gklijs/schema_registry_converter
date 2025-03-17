@@ -1,5 +1,9 @@
 ## Release notes
 
+### 4.3.0
+
+Updated versions. Bug fixes.
+
 ### 4.2.0
 
 Updated versions.
@@ -107,6 +111,7 @@ instead of the `encode` function on the encoder.
 
 - [@cbzehner](https://github.com/cbzehner)
 - [@benmanns](https://github.com/benmanns)
+- [@icdevin](https://github.com/icdevin)
 - [@johnhalbert](https://github.com/johnhalbert)  
 - [@kitsuneninetails](https://github.com/kitsuneninetails)
 - [@kujeger](https://github.com/kujeger)
