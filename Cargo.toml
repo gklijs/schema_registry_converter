@@ -47,7 +47,7 @@ features = ["derive"]
 version = "^1.0"
 
 [dependencies.apache-avro]
-version = "^0.17"
+version = "^0.18"
 optional = true
 
 [dependencies.bytes]
