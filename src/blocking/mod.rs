@@ -1,3 +1,4 @@
+//! blocking implementations. Requires `blocking` feature.
 #[cfg(feature = "avro")]
 pub mod avro;
 #[cfg(feature = "json")]

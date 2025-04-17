@@ -1,3 +1,4 @@
+//! Common structures and functions of the crate
 use apache_avro::schema::{Name, Schema};
 use apache_avro::types::{Record, Value};
 use apache_avro::{to_avro_datum, to_value};

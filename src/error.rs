@@ -1,3 +1,4 @@
+//! implementation for [`SRCError`]
 use std::error::Error;
 use std::fmt;
 use std::fmt::Display;

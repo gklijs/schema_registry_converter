@@ -1,3 +1,10 @@
+//! [`Arc`] wrapped implementations for [`JsonEncoder`] and [`JsonDecoder`]
+//!
+//! Implementations for [`EasyJsonDecoder`] and [`EasyJsonEncoder`]. These Newtype
+//! structs wrap the [`JsonDecoder`] and [`JsonEncoder`] structs in an [`Arc`] to make it
+//! _easy_.
+//!
+//! **NOTE**: This module requires `easy` and `json` features to be enabled.
 use crate::async_impl::json::{DecodeResult, JsonDecoder, JsonEncoder};
 use crate::async_impl::schema_registry::SrSettings;
 use crate::error::SRCError;

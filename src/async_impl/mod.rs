@@ -1,3 +1,4 @@
+//! async supported implementations. Requires `futures` feature.
 #[cfg(feature = "avro")]
 pub mod avro;
 #[cfg(all(feature = "easy", feature = "avro"))]
