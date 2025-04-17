@@ -1,3 +1,6 @@
+//! Implementations for JSON based Schemas.
+//!
+//! **NOTE**: Requires the `json` feature
 use std::str::FromStr;
 use std::sync::Arc;
 
