@@ -1,3 +1,10 @@
+//! [`Arc`] wrapped implementations for [`AvroEncoder`] and [`AvroDecoder`].
+//!
+//! Implementations for [`EasyAvroDecoder`] and [`EasyAvroEncoder`]. These Newtype
+//! structs wrap the existing [`AvroDecoder`] and [`AvroEncoder`] structs in an [`Arc`] to
+//! make it _easy_.
+//!
+//! **NOTE**: This module requires `easy` and `avro` features to be enabled.
 use crate::async_impl::schema_registry::SrSettings;
 use crate::avro_common::{DecodeResult, DecodeResultWithSchema};
 use crate::error::SRCError;
@@ -10,7 +17,8 @@ use apache_avro::types::Value;
 use serde::Serialize;
 use std::sync::Arc;
 
-/// A decoder used to transform bytes to a [DecodeResult], its much like [AvroDecoder] but wrapped with an arc to make it easier.
+/// A decoder used to transform bytes to a [DecodeResult], its much like
+/// [AvroDecoder] but wrapped with an [`Arc`] to make it easier.
 pub struct EasyAvroDecoder {
     decoder: Arc<AvroDecoder<'static>>,
 }
@@ -31,7 +39,8 @@ impl EasyAvroDecoder {
     }
 }
 
-/// An encoder used to transform a [Value] to bytes, its much like [AvroEncoder] but wrapped with an arc to make it easier.
+/// An encoder used to transform a [Value] to bytes, its much like [AvroEncoder]
+/// but wrapped with an [`Arc`] to make it easier.
 pub struct EasyAvroEncoder {
     encoder: Arc<AvroEncoder<'static>>,
 }
