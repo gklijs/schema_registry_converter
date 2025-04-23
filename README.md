@@ -10,9 +10,11 @@
 This library provides a way of using
 the [Confluent Schema Registry](https://docs.confluent.io/platform/current/schema-registry/index.html) in a way that is
 compliant with the Java client. Since
-[Karapace](https://github.com/aiven/karapace/blob/master/README.rst) is API compatible it could also be used with this
-library. The release notes can be found
-on [github](https://github.com/gklijs/schema_registry_converter/blob/master/RELEASE_NOTES.md)
+[Karapace](https://github.com/Aiven-Open/karapace/blob/main/README.rst) is API compatible it could also be used with this
+library. If you want to use advances features of the Confluent Schema Registry like client side encryption 
+[schema-registry-client](https://crates.io/crates/schema-registry-client) is likely better suited.
+
+The release notes can be found on [github](https://github.com/gklijs/schema_registry_converter/blob/master/RELEASE_NOTES.md)
 Consuming/decoding and producing/encoding is supported. It's also possible to provide the schema to use when decoding.
 You can also include references when decoding. Without a schema provided, the latest schema with the same `subject` will
 be used.
