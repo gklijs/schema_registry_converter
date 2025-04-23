@@ -270,10 +270,7 @@ async fn raw_to_registered_schema(
             ));
         }
     };
-    let references = match raw_schema.references {
-        None => Vec::new(),
-        Some(v) => v,
-    };
+    let references = raw_schema.references.unwrap_or_default();
     Ok(RegisteredSchema {
         id,
         schema_type,

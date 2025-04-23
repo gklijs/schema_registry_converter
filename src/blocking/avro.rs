@@ -3,10 +3,14 @@
 //! This crate contains ways to handle encoding and decoding of messages making use of the
 //! [confluent schema-registry]. This happens in a way that is compatible to the
 //! [confluent java serde]. As a result it becomes easy to work with the same data in both the jvm
-//! and rust.
+//! and rust. Since [karapace] is api compatible, it also works with this library.
+//! If you want to use advances features of the Confluent Schema Registry like client side
+//! encryption [schema-registry-client] is likely better suited.
 //!
 //! [confluent schema-registry]: https://docs.confluent.io/current/schema-registry/docs/index.html
 //! [confluent java serde]: https://github.com/confluentinc/schema-registry/tree/master/avro-serde/src/main/java/io/confluent/kafka/streams/serdes/avro
+//! [karapace]: https://github.com/Aiven-Open/karapace/blob/main/README.rst
+//! [schema-registry-client]: https://crates.io/crates/schema-registry-client
 //!
 //! Both the Decoder and the Encoder have a cache to allow re-use of the Schema objects used for
 //! the avro transitions.
@@ -56,9 +60,7 @@ use crate::schema_registry_common::{
 /// For both the key and the payload/key it's possible to use the schema registry, this struct supports
 /// both. But only using the SubjectNameStrategy::TopicNameStrategy it has to be made explicit
 /// whether it's actual used as key or value.
-///
 /// ```
-
 /// use apache_avro::types::Value;
 /// use schema_registry_converter::blocking::schema_registry::SrSettings;
 /// use schema_registry_converter::blocking::avro::AvroDecoder;
@@ -260,9 +262,7 @@ impl AvroDecoder {
 /// For both the key and the payload/key it's possible to use the schema registry, this struct supports
 /// both. But only using the SubjectNameStrategy::TopicNameStrategy it has to be made explicit
 /// whether it's actual used as key or value.
-///
 /// ```
-
 /// use apache_avro::types::Value;
 /// use schema_registry_converter::blocking::avro::AvroEncoder;
 /// use schema_registry_converter::blocking::schema_registry::SrSettings;
@@ -521,10 +521,7 @@ fn add_references(
             }
         };
         new_value = replace_reference(new_value, child);
-        new_value = match add_references(sr_settings, new_value, &registered_schema.references) {
-            Ok(v) => v,
-            Err(e) => return Err(e),
-        }
+        new_value = add_references(sr_settings, new_value, &registered_schema.references)?;
     }
     Ok(new_value)
 }
@@ -543,10 +540,7 @@ fn to_avro_schema(
         }
     }
     let main_schema = match serde_json::from_str(&registered_schema.schema) {
-        Ok(v) => match add_references(sr_settings, v, registered_schema.references.as_slice()) {
-            Ok(u) => u,
-            Err(e) => return Err(e),
-        },
+        Ok(v) => add_references(sr_settings, v, registered_schema.references.as_slice())?,
         Err(e) => {
             return Err(SRCError::non_retryable_with_cause(
                 e,

@@ -1,5 +1,9 @@
 ## Release notes
 
+### 4.3.1
+
+Updated versions and small code improvements.
+
 ### 4.3.0
 
 Updated versions. Bug fixes.
@@ -116,6 +120,7 @@ instead of the `encode` function on the encoder.
 - [@kitsuneninetails](https://github.com/kitsuneninetails)
 - [@kujeger](https://github.com/kujeger)
 - [@Licenser](https://github.com/Licenser)
+- [@lukecampbell](https://github.com/lukecampbell)
 - [@mdroogh](https://github.com/mdroogh)
 - [@marioloko](https://github.com/marioloko)
 - [@naamancurtis](https://github.com/naamancurtis)

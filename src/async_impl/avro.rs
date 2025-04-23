@@ -58,7 +58,6 @@ use crate::schema_registry_common::{
 /// For both the key and the payload/key it's possible to use the schema registry, this struct supports
 /// both. But only using the SubjectNameStrategy::TopicNameStrategy it has to be made explicit
 /// whether it's actual used as key or value.
-///
 /// ```
 /// use apache_avro::types::Value;
 /// use mockito::Server;
@@ -290,9 +289,7 @@ impl<'a> AvroDecoder<'a> {
 /// For both the key and the payload/key it's possible to use the schema registry, this struct supports
 /// both. But only using the SubjectNameStrategy::TopicNameStrategy it has to be made explicit
 /// whether it's actual used as key or value.
-///
 /// ```
-
 /// use apache_avro::types::Value;
 /// use mockito::Server;
 /// use schema_registry_converter::async_impl::avro::AvroEncoder;
@@ -458,9 +455,9 @@ impl<'a> AvroEncoder<'a> {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn encode<'k>(
+    pub async fn encode(
         &self,
-        values: Vec<(&'k str, Value)>,
+        values: Vec<(&str, Value)>,
         subject_name_strategy: SubjectNameStrategy,
     ) -> Result<Vec<u8>, SRCError> {
         let key = subject_name_strategy.get_subject()?;
