@@ -1,6 +1,6 @@
 ## Release notes
 
-### 4.3.1
+### 4.4.0
 
 Updated versions and small code improvements.
 
