@@ -1,7 +1,7 @@
 > # schema_registry_converter
 
 [![Build Status](https://github.com/gklijs/schema_registry_converter/actions/workflows/ci.yml/badge.svg)](https://github.com/gklijs/schema_registry_converter/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/gklijs/schema_registry_converter/branch/master/graph/badge.svg)](https://codecov.io/gh/gklijs/schema_registry_converter)
+[![codecov](https://codecov.io/gh/gklijs/schema_registry_converter/branch/main/graph/badge.svg)](https://codecov.io/gh/gklijs/schema_registry_converter)
 [![Crates.io](https://img.shields.io/crates/d/schema_registry_converter.svg?maxAge=2592000)](https://crates.io/crates/schema_registry_converter)
 [![Crates.io](https://img.shields.io/crates/v/schema_registry_converter.svg?maxAge=2592000)](https://crates.io/crates/schema_registry_converter)
 [![docs.rs](https://docs.rs/schema_registry_converter/badge.svg)](https://docs.rs/schema_registry_converter/)
@@ -246,6 +246,11 @@ them in testing `cargo test --verbose --all-features -- --test-threads=1` needs 
 The 'prepare_integration_test.sh' script can be used to create the 3 topics needed for the tests. To ensure Java
 compatibility it's also needed to run
 the [schema-registry-test-app](https://hub.docker.com/repository/docker/gklijs/schema-registry-test-app) docker image.
+
+## Code Coverage
+
+Code coverage is measured using [Codecov](https://app.codecov.io/gh/gklijs/schema_registry_converter).
+![Circle diagram showing coverage](https://codecov.io/gh/gklijs/schema_registry_converter/graphs/sunburst.svg?token=H3R2O2OooT)
 
 ## License
 

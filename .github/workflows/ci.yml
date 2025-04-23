@@ -7,6 +7,7 @@ env:
   RUST_BACKTRACE: 1
   RUSTFLAGS: "-C link-dead-code"
   CARGO_MAKE_RUN_CODECOV: true
+  CODECOV_TOKEN: ee9fe20a-5285-4805-b1a9-5af664534997
 
 jobs:
   build:
