@@ -4,7 +4,7 @@
 //! [confluent schema-registry]. This happens in a way that is compatible to the
 //! [confluent java serde]. As a result it becomes easy to work with the same data in both the jvm
 //! and rust. Since [karapace] is api compatible, it also works with this library.
-//! If you want to use advances features of the Confluent Schema Registry like client side
+//! If you want to use advanced features of the Confluent Schema Registry like client side
 //! encryption [schema-registry-client] is likely better suited.
 //!
 //! [confluent schema-registry]: https://docs.confluent.io/current/schema-registry/docs/index.html
