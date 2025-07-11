@@ -243,7 +243,10 @@ mod tests {
             .with_body(get_proto_body(get_proto_hb_schema(), 7))
             .create();
 
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let encoder = ProtoRawEncoder::new(sr_settings);
         let strategy =
             SubjectNameStrategy::RecordNameStrategy(String::from("nl.openweb.data.Heartbeat"));
@@ -270,7 +273,10 @@ mod tests {
             .with_body(get_proto_body(get_proto_hb_schema(), 7))
             .create();
 
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let encoder = ProtoRawEncoder::new(sr_settings);
         let strategy =
             SubjectNameStrategy::RecordNameStrategy(String::from("nl.openweb.data.Heartbeat"));
@@ -293,7 +299,10 @@ mod tests {
             .with_body(get_proto_body(get_proto_complex(), 7))
             .create();
 
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let encoder = ProtoRawEncoder::new(sr_settings);
         let strategy =
             SubjectNameStrategy::RecordNameStrategy(String::from("nl.openweb.data.Heartbeat"));
@@ -307,7 +316,10 @@ mod tests {
     #[tokio::test]
     async fn test_encode_cache() {
         let mut server = Server::new_async().await;
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let encoder = ProtoRawEncoder::new(sr_settings);
         let strategy =
             SubjectNameStrategy::RecordNameStrategy(String::from("nl.openweb.data.Heartbeat"));
@@ -376,7 +388,10 @@ mod tests {
             .with_body(get_proto_body(get_proto_result(), 6))
             .create();
 
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let encoder = ProtoRawEncoder::new(sr_settings);
         let result_reference = SuppliedReference {
             name: String::from("result.proto"),
@@ -423,7 +438,10 @@ mod tests {
             .with_body(get_proto_body(get_proto_hb_schema(), 7))
             .create();
 
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let decoder = ProtoRawDecoder::new(sr_settings);
         let raw_result = decoder
             .decode(Some(get_proto_hb_101()))
@@ -438,7 +456,10 @@ mod tests {
     #[tokio::test]
     async fn test_decoder_cache() {
         let mut server = Server::new_async().await;
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let decoder = ProtoRawDecoder::new(sr_settings);
 
         let error = decoder.decode(Some(get_proto_hb_101())).await.unwrap_err();
@@ -487,7 +508,10 @@ mod tests {
             .with_body(get_proto_body(get_proto_result(), 1))
             .create();
 
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let decoder = ProtoRawDecoder::new(sr_settings);
         let raw_result = decoder
             .decode(Some(get_proto_complex_proto_test_message()))

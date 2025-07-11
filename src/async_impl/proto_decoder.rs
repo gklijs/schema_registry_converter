@@ -1,9 +1,9 @@
-use std::collections::HashSet;
 use bytes::Bytes;
 use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
 use futures::future::{BoxFuture, Shared};
 use futures::FutureExt;
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::async_impl::schema_registry::{
@@ -142,8 +142,8 @@ impl<'a> ProtoDecoder<'a> {
                         Err(e) => Err(e.into_cache()),
                     }
                 }
-                    .boxed()
-                    .shared();
+                .boxed()
+                .shared();
                 e.insert(v).value().clone()
             }
         }
@@ -171,7 +171,7 @@ fn add_files<'a>(
         files.push(registered_schema.schema);
         Ok(())
     }
-        .boxed()
+    .boxed()
 }
 
 #[derive(Debug)]
@@ -241,7 +241,10 @@ mod tests {
             .with_body(get_proto_body(get_proto_hb_schema(), 1))
             .create();
 
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let decoder = ProtoDecoder::new(sr_settings);
         let heartbeat = decoder.decode(Some(get_proto_hb_101())).await.unwrap();
 
@@ -263,7 +266,10 @@ mod tests {
             .with_body(get_proto_body(get_proto_hb_schema(), 1))
             .create();
 
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let decoder = ProtoDecoder::new(sr_settings);
         let heartbeat = decoder
             .decode_with_context(Some(get_proto_hb_101()))
@@ -280,7 +286,10 @@ mod tests {
     #[tokio::test]
     async fn test_decoder_cache() {
         let mut server = Server::new_async().await;
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let decoder = ProtoDecoder::new(sr_settings);
         let error = decoder.decode(Some(get_proto_hb_101())).await.unwrap_err();
         assert!(error.cached);
@@ -328,7 +337,10 @@ mod tests {
             .with_body(get_proto_body(get_proto_result(), 1))
             .create();
 
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let decoder = ProtoDecoder::new(sr_settings);
         let proto_test = decoder
             .decode(Some(get_proto_complex_proto_test_message()))

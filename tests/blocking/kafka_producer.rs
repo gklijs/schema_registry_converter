@@ -47,7 +47,10 @@ pub fn get_producer(brokers: &str, schema_registry_url: String) -> RecordProduce
         .create()
         .expect("Producer creation error");
 
-    let sr_settings = SrSettings::new(schema_registry_url);
+    let sr_settings = SrSettings::new_builder(schema_registry_url)
+        .no_proxy()
+        .build()
+        .unwrap();
     let avro_encoder = AvroEncoder::new(sr_settings);
     RecordProducer {
         producer,

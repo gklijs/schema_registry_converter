@@ -22,7 +22,10 @@ pub fn consume_avro(
     auto_commit: bool,
     test: Box<dyn Fn(DeserializedAvroRecord)>,
 ) {
-    let sr_settings = SrSettings::new(registry);
+    let sr_settings = SrSettings::new_builder(registry)
+        .no_proxy()
+        .build()
+        .unwrap();
     let decoder = AvroDecoder::new(sr_settings);
     let consumer = get_consumer(brokers, group_id, topics, auto_commit);
 

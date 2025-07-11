@@ -32,6 +32,7 @@ pub struct SrSettingsBuilder {
     authorization: SrAuthorization,
     headers: DashMap<String, String>,
     proxy: Option<String>,
+    no_proxy: bool,
     timeout: Duration,
 }
 
@@ -59,6 +60,7 @@ impl SrSettings {
             authorization: SrAuthorization::None,
             headers: DashMap::new(),
             proxy: None,
+            no_proxy: false,
             timeout: Duration::from_secs(30),
         }
     }
@@ -120,6 +122,12 @@ impl SrSettingsBuilder {
         self
     }
 
+    /// prevents using any proxy to every call.
+    pub fn no_proxy(&mut self) -> &mut SrSettingsBuilder {
+        self.no_proxy = true;
+        self
+    }
+
     /// Set a timeout, it will be used for the connect and the read.
     pub fn set_timeout(&mut self, duration: Duration) -> &mut SrSettingsBuilder {
         self.timeout = duration;
@@ -174,6 +182,9 @@ impl SrSettingsBuilder {
                 Ok(v) => builder = builder.proxy(v),
                 Err(e) => return Err(SRCError::non_retryable_with_cause(e, "invalid proxy value")),
             };
+        }
+        if self.no_proxy {
+            builder = builder.no_proxy()
         }
         builder = builder.timeout(self.timeout);
         match builder.build() {
@@ -555,6 +566,7 @@ mod tests {
             .set_token_authorization("some_json_web_token_for_example")
             .add_header("foo", "bar")
             .set_timeout(Duration::from_secs(5))
+            .no_proxy()
             .build()
             .unwrap();
 
@@ -584,6 +596,7 @@ mod tests {
 
         let sr_settings = SrSettings::new_builder(server.url())
             .set_basic_authorization("Aladdin", Some("open sesame"))
+            .no_proxy()
             .build()
             .unwrap();
 

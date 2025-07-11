@@ -24,7 +24,10 @@ pub fn consume_proto(
     auto_commit: bool,
     test: Box<dyn Fn(DeserializedProtoRecord)>,
 ) {
-    let sr_settings = SrSettings::new(registry);
+    let sr_settings = SrSettings::new_builder(registry)
+        .no_proxy()
+        .build()
+        .unwrap();
     let decoder = ProtoDecoder::new(sr_settings);
     let consumer = get_consumer(brokers, group_id, topics, auto_commit);
 

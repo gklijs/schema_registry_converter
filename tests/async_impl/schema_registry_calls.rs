@@ -9,7 +9,10 @@ fn get_schema_registry_url() -> String {
 
 #[tokio::test]
 async fn test_get_all_subjects() {
-    let sr_settings = SrSettings::new(get_schema_registry_url());
+    let sr_settings = SrSettings::new_builder(get_schema_registry_url())
+        .no_proxy()
+        .build()
+        .unwrap();
     let result = get_all_subjects(&sr_settings).await.unwrap();
     assert!(
         result.contains(&String::from("testavro-value")),
@@ -19,7 +22,10 @@ async fn test_get_all_subjects() {
 
 #[tokio::test]
 async fn test_get_versions_for_testavro_value() {
-    let sr_settings = SrSettings::new(get_schema_registry_url());
+    let sr_settings = SrSettings::new_builder(get_schema_registry_url())
+        .no_proxy()
+        .build()
+        .unwrap();
     let result = get_all_versions(&sr_settings, String::from("testavro-value"))
         .await
         .unwrap();
@@ -28,7 +34,10 @@ async fn test_get_versions_for_testavro_value() {
 
 #[tokio::test]
 async fn test_get_schema_for_testavro_value() {
-    let sr_settings = SrSettings::new(get_schema_registry_url());
+    let sr_settings = SrSettings::new_builder(get_schema_registry_url())
+        .no_proxy()
+        .build()
+        .unwrap();
     let sr_call = SrCall::GetBySubjectAndVersion("testavro-value", 1);
     let result = perform_sr_call(&sr_settings, sr_call).await.unwrap();
     assert_eq!(Some(1), result.version, "Returned schema has version 1");

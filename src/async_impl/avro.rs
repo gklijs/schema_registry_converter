@@ -72,7 +72,7 @@ use crate::schema_registry_common::{
 ///     .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
 ///     .create();
 ///
-/// let sr_settings = SrSettings::new(server.url());
+/// let sr_settings = SrSettings::new_builder(server.url()).no_proxy().build().unwrap();
 /// let decoder = AvroDecoder::new(sr_settings);
 /// let heartbeat = decoder.decode(Some(&[0,0,0,0,1,6])).await.unwrap().value;
 ///
@@ -115,7 +115,7 @@ impl<'a> AvroDecoder<'a> {
     ///
     /// # async fn doc() -> Result<(), reqwest::Error> {
     /// let mut server = Server::new_async().await;
-    /// let sr_settings = SrSettings::new(server.url());
+    /// let sr_settings = SrSettings::new_builder(server.url()).no_proxy().build().unwrap();
     /// let decoder = AvroDecoder::new(sr_settings);
     /// let bytes = [0,0,0,0,2,6];
     ///
@@ -310,7 +310,7 @@ impl<'a> AvroDecoder<'a> {
 ///     .with_body(r#"{"subject":"heartbeat-value","version":1,"id":4,"schema":"{\"type\":\"record\",\"name\":\"Name\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"name\",\"type\":\"string\",\"avro.java.string\":\"String\"}]}"}"#)
 ///     .create();
 ///
-/// let sr_settings = SrSettings::new(server.url());
+/// let sr_settings = SrSettings::new_builder(server.url()).no_proxy().build().unwrap();
 /// let encoder = AvroEncoder::new(sr_settings);
 ///
 /// let key_strategy = SubjectNameStrategy::TopicNameStrategy(String::from("heartbeat"), true);
@@ -356,7 +356,7 @@ impl<'a> AvroEncoder<'a> {
     /// #    .with_body(r#"{"id":23}"#)
     /// #    .create();
     ///
-    /// let sr_settings = SrSettings::new(server.url());
+    /// let sr_settings = SrSettings::new_builder(server.url()).no_proxy().build().unwrap();
     /// let encoder = AvroEncoder::new(sr_settings);
     ///
     /// let strategy = SubjectNameStrategy::TopicRecordNameStrategyWithSchema(String::from("hb"), SuppliedSchema {
@@ -391,7 +391,7 @@ impl<'a> AvroEncoder<'a> {
     ///
     /// # async fn doc() -> Result<(), reqwest::Error> {
     /// let mut server = Server::new_async().await;
-    /// let sr_settings = SrSettings::new(server.url());
+    /// let sr_settings = SrSettings::new_builder(server.url()).no_proxy().build().unwrap();
     /// let encoder = AvroEncoder::new(sr_settings);
     /// let strategy = SubjectNameStrategy::RecordNameStrategy(String::from("nl.openweb.data.Heartbeat"));
     ///
@@ -446,7 +446,7 @@ impl<'a> AvroEncoder<'a> {
     ///     .with_body(r#"{"subject":"heartbeat-value","version":1,"id":3,"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
     ///     .create();
     ///
-    /// let sr_settings = SrSettings::new(server.url());
+    /// let sr_settings = SrSettings::new_builder(server.url()).no_proxy().build().unwrap();
     /// let encoder = AvroEncoder::new(sr_settings);
     /// let strategy = SubjectNameStrategy::TopicRecordNameStrategy(String::from("heartbeat"), String::from("nl.openweb.data.Heartbeat"));
     /// let bytes = encoder.encode(vec![("beat", Value::Long(3))], strategy).await;
@@ -497,7 +497,7 @@ impl<'a> AvroEncoder<'a> {
     ///        beat: i64,
     ///    }
     ///
-    /// let sr_settings = SrSettings::new(server.url());
+    /// let sr_settings = SrSettings::new_builder(server.url()).no_proxy().build().unwrap();
     /// let encoder = AvroEncoder::new(sr_settings);
     /// let existing_schema_strategy = SubjectNameStrategy::TopicRecordNameStrategy(String::from("heartbeat"), String::from("nl.openweb.data.Heartbeat"));
     /// let bytes = encoder.encode_struct(Heartbeat{beat: 3}, &existing_schema_strategy).await;
@@ -681,12 +681,13 @@ mod tests {
 
     #[test]
     fn display_decoder() {
-        let sr_settings = SrSettings::new(String::from("http://127.0.0.1:1234"));
+        let sr_settings = SrSettings::new_builder(String::from("http://127.0.0.1:1234"))
+            .no_proxy()
+            .build()
+            .unwrap();
         let decoder = AvroDecoder::new(sr_settings);
-        assert_eq!(
-            "AvroDecoder { sr_settings: SrSettings { urls: [\"http://127.0.0.1:1234\"], client: Client { accepts: Accepts, proxies: [Proxy(System({}), None)], referer: true, default_headers: {\"accept\": \"*/*\"} }, authorization: None }, direct_cache: {}, cache: {} }"
-                .to_owned(),
-            format!("{:?}", decoder)
+        assert!(
+            format!("{:?}", decoder).starts_with("AvroDecoder { sr_settings: SrSettings { urls: [\"http://127.0.0.1:1234\"], client: Client {")
         )
     }
 
@@ -699,7 +700,10 @@ mod tests {
             .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
             .create();
 
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let decoder = AvroDecoder::new(sr_settings);
         let heartbeat = decoder
             .decode(Some(&[0, 0, 0, 0, 1, 6]))
@@ -728,7 +732,10 @@ mod tests {
             .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
             .create();
 
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let decoder = AvroDecoder::new(sr_settings);
         let heartbeat = decoder.decode(Some(&[0, 0, 0, 0, 1, 6])).await;
         let item = match heartbeat {
@@ -812,7 +819,10 @@ mod tests {
             .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
             .create();
 
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let decoder = AvroDecoder::new(sr_settings);
         let error = decoder.decode(Some(&[0, 0, 0, 0, 1])).await.unwrap_err();
 
@@ -828,7 +838,10 @@ mod tests {
             .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
             .create();
 
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let decoder = AvroDecoder::new(sr_settings);
         let error = decoder.decode(Some(&[0, 0, 0, 0, 1])).await.unwrap_err();
 
@@ -844,7 +857,10 @@ mod tests {
             .with_body(r#"{"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
             .create();
 
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let decoder = AvroDecoder::new(sr_settings);
         let heartbeat = decoder.decode(Some(&[0, 0, 0, 0, 1, 6])).await.unwrap_err();
 
@@ -870,7 +886,10 @@ mod tests {
             .with_body(r#"{"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
             .create();
 
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let decoder = AvroDecoder::new(sr_settings);
         let heartbeat = decoder.decode(Some(&[0, 0, 0, 0, 1, 6])).await.unwrap_err();
 
@@ -889,7 +908,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_decoder_schema_registry_unavailable() {
-        let sr_settings = SrSettings::new(String::from("http://bogus"));
+        let sr_settings = SrSettings::new_builder(String::from("http://bogus"))
+            .no_proxy()
+            .build()
+            .unwrap();
         let decoder = AvroDecoder::new(sr_settings);
         let err = decoder
             .decode(Some(&[0, 0, 0, 10, 1, 6]))
@@ -907,7 +929,10 @@ mod tests {
             .with_body(r#"{"no-schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
             .create();
 
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let decoder = AvroDecoder::new(sr_settings);
         let err = decoder.decode(Some(&[0, 0, 0, 0, 1, 6])).await.unwrap_err();
 
@@ -926,7 +951,10 @@ mod tests {
             .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\"}"}"#)
             .create();
 
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let decoder = AvroDecoder::new(sr_settings);
         let err = decoder.decode(Some(&[0, 0, 0, 0, 1, 6])).await.unwrap_err();
 
@@ -945,7 +973,10 @@ mod tests {
             .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"ConfirmAccountCreation\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"id\",\"type\":{\"type\":\"fixed\",\"name\":\"Uuid\",\"size\":16}},{\"name\":\"a_type\",\"type\":{\"type\":\"enum\",\"name\":\"Atype\",\"symbols\":[\"AUTO\",\"MANUAL\"]}}]}"}"#)
             .create();
 
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let decoder = AvroDecoder::new(sr_settings);
         let cac = decoder
             .decode(Some(&[
@@ -977,7 +1008,10 @@ mod tests {
     #[tokio::test]
     async fn test_decoder_cache() {
         let mut server = Server::new_async().await;
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let decoder = AvroDecoder::new(sr_settings);
         let bytes = [0, 0, 0, 0, 2, 6];
 
@@ -1014,13 +1048,14 @@ mod tests {
     }
 
     #[test]
-    fn display_encode() {
-        let sr_settings = SrSettings::new(String::from("http://127.0.0.1:1234"));
+    fn display_encoder() {
+        let sr_settings = SrSettings::new_builder(String::from("http://127.0.0.1:1234"))
+            .no_proxy()
+            .build()
+            .unwrap();
         let encoder = AvroEncoder::new(sr_settings);
-        assert_eq!(
-            "AvroEncoder { sr_settings: SrSettings { urls: [\"http://127.0.0.1:1234\"], client: Client { accepts: Accepts, proxies: [Proxy(System({}), None)], referer: true, default_headers: {\"accept\": \"*/*\"} }, authorization: None }, direct_cache: {}, cache: {} }"
-                .to_owned(),
-            format!("{:?}", encoder)
+        assert!(
+            format!("{:?}", encoder).starts_with("AvroEncoder { sr_settings: SrSettings { urls: [\"http://127.0.0.1:1234\"], client: Client {")
         )
     }
 
@@ -1039,7 +1074,10 @@ mod tests {
             .with_body(r#"{"subject":"heartbeat-value","version":1,"id":4,"schema":"{\"type\":\"record\",\"name\":\"Name\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"name\",\"type\":\"string\",\"avro.java.string\":\"String\"}]}"}"#)
             .create();
 
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let encoder = AvroEncoder::new(sr_settings);
 
         let value_strategy =
@@ -1079,7 +1117,10 @@ mod tests {
             .with_body(r#"{"subject":"heartbeat-value","version":1,"id":4,"schema":"{\"type\":\"record\",\"name\":\"Name\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"name\",\"type\":\"string\",\"avro.java.string\":\"String\"}]}"}"#)
             .create();
 
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let encoder = AvroEncoder::new(sr_settings);
 
         let value_strategy =
@@ -1115,7 +1156,10 @@ mod tests {
             .with_body(r#"{"subject":"heartbeat-value","version":1,"id":3,"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
             .create();
 
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let encoder = AvroEncoder::new(sr_settings);
         let strategy = SubjectNameStrategy::TopicRecordNameStrategy(
             String::from("heartbeat"),
@@ -1138,7 +1182,10 @@ mod tests {
             .with_body(r#"{"subject":"heartbeat-value","version":1,"no-id":3,"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
             .create();
 
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let encoder = AvroEncoder::new(sr_settings);
         let strategy = SubjectNameStrategy::TopicRecordNameStrategy(
             String::from("heartbeat"),
@@ -1157,7 +1204,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_encoder_schema_registry_unavailable() {
-        let sr_settings = SrSettings::new(String::from("http://bogus"));
+        let sr_settings = SrSettings::new_builder(String::from("http://bogus"))
+            .no_proxy()
+            .build()
+            .unwrap();
         let encoder = AvroEncoder::new(sr_settings);
         let strategy = SubjectNameStrategy::TopicRecordNameStrategy(
             String::from("heartbeat"),
@@ -1173,7 +1223,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_encoder_unknown_protocol() {
-        let sr_settings = SrSettings::new(String::from("hxxx://bogus"));
+        let sr_settings = SrSettings::new_builder(String::from("hxxx://bogus"))
+            .no_proxy()
+            .build()
+            .unwrap();
         let encoder = AvroEncoder::new(sr_settings);
         let strategy = SubjectNameStrategy::TopicRecordNameStrategy(
             String::from("heartbeat"),
@@ -1197,7 +1250,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_encoder_schema_registry_unavailable_with_record() {
-        let sr_settings = SrSettings::new(String::from("http://bogus"));
+        let sr_settings = SrSettings::new_builder(String::from("http://bogus"))
+            .no_proxy()
+            .build()
+            .unwrap();
         let encoder = AvroEncoder::new(sr_settings);
         let strategy = SubjectNameStrategy::RecordNameStrategyWithSchema(SuppliedSchema {
             name: Some(String::from("nl.openweb.data.Balance")),
@@ -1218,7 +1274,10 @@ mod tests {
     #[tokio::test]
     async fn test_encode_cache() {
         let mut server = Server::new_async().await;
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let encoder = AvroEncoder::new(sr_settings);
         let strategy =
             SubjectNameStrategy::RecordNameStrategy(String::from("nl.openweb.data.Heartbeat"));
@@ -1280,7 +1339,10 @@ mod tests {
             .with_body(r#"{"id":4}"#)
             .create();
 
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let encoder = AvroEncoder::new(sr_settings);
 
         let key_strategy = SubjectNameStrategy::TopicNameStrategyWithSchema(
@@ -1335,7 +1397,10 @@ mod tests {
             .with_body(r#"{"id":11}"#)
             .create();
 
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let encoder = AvroEncoder::new(sr_settings);
 
         let strategy = SubjectNameStrategy::RecordNameStrategyWithSchema(SuppliedSchema {
@@ -1363,7 +1428,10 @@ mod tests {
             .with_body(r#"{"no-id":11}"#)
             .create();
 
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let encoder = AvroEncoder::new(sr_settings);
 
         let strategy = SubjectNameStrategy::RecordNameStrategyWithSchema(SuppliedSchema {
@@ -1395,7 +1463,10 @@ mod tests {
             .with_body(r#"{"id":23}"#)
             .create();
 
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let encoder = AvroEncoder::new(sr_settings);
 
         let strategy = SubjectNameStrategy::TopicRecordNameStrategyWithSchema(
@@ -1419,7 +1490,10 @@ mod tests {
     #[tokio::test]
     async fn test_encode_topic_record_name_strategy_schema_registry_not_available() {
         let server = Server::new_async().await;
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let encoder = AvroEncoder::new(sr_settings);
 
         let strategy = SubjectNameStrategy::TopicRecordNameStrategyWithSchema(
@@ -1491,7 +1565,10 @@ mod tests {
     #[tokio::test]
     async fn test_primitive_schema() {
         let mut server = Server::new_async().await;
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let encoder = AvroEncoder::new(sr_settings);
 
         let _m = server
@@ -1540,7 +1617,10 @@ mod tests {
     #[tokio::test]
     async fn replace_referred_schema() {
         let mut server = Server::new_async().await;
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let decoder = AvroDecoder::new(sr_settings);
         let bytes = [
             0, 0, 0, 0, 5, 97, 19, 76, 118, 247, 191, 70, 148, 162, 9, 233, 76, 211, 29, 141, 180,

@@ -3599,10 +3599,10 @@ message BytesValue {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
     use crate::proto_common_types::{
         add_common_files, get_schema, get_schemas, CommonSchema, CommonType,
     };
+    use std::collections::HashSet;
 
     #[test]
     fn test_get_schemas() {
