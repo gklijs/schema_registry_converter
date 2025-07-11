@@ -72,7 +72,10 @@ mod tests {
             .with_body(get_json_body(json_result_schema(), 7))
             .create();
 
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let decoder = EasyJsonDecoder::new(sr_settings);
         let message = decoder
             .decode(Some(&*get_payload(7, result_value.into_bytes())))
@@ -114,7 +117,10 @@ mod tests {
             .with_body(get_json_body(json_result_schema(), 10))
             .create();
 
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let encoder = EasyJsonEncoder::new(sr_settings);
         let strategy = SubjectNameStrategy::TopicNameStrategy(String::from("testresult"), false);
         let result_example: Value =

@@ -46,7 +46,10 @@ mod tests {
             .with_body(get_proto_body(get_proto_hb_schema(), 1))
             .create();
 
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let decoder = EasyProtoDecoder::new(sr_settings);
         let heartbeat = decoder.decode(Some(get_proto_hb_101())).await.unwrap();
 
@@ -68,7 +71,10 @@ mod tests {
             .with_body(get_proto_body(get_proto_hb_schema(), 1))
             .create();
 
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let decoder = EasyProtoDecoder::new(sr_settings);
         let heartbeat = decoder
             .decode_with_context(Some(get_proto_hb_101()))

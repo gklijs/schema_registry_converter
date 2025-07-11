@@ -56,9 +56,9 @@ fn do_avro_test(
     key_strategy: SubjectNameStrategy,
     value_strategy: SubjectNameStrategy,
 ) {
-    let mut rng = rand::thread_rng();
-    let key_value = rng.gen::<i64>();
-    let value_value = rng.gen::<i64>();
+    let mut rng = rand::rng();
+    let key_value: i64 = rng.random();
+    let value_value: i64 = rng.random();
     let mut producer = get_producer(get_brokers(), get_schema_registry_url());
     let key_values = vec![("beat", Value::Long(key_value))];
     let value_values = vec![("beat", Value::Long(value_value))];

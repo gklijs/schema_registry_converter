@@ -74,7 +74,10 @@ mod tests {
             .with_body(get_proto_body(get_proto_hb_schema(), 7))
             .create();
 
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let decoder = EasyProtoRawDecoder::new(sr_settings);
         let raw_result = decoder
             .decode(Some(get_proto_hb_101()))
@@ -96,7 +99,10 @@ mod tests {
             .with_body(get_proto_body(get_proto_hb_schema(), 7))
             .create();
 
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let encoder = EasyProtoRawEncoder::new(sr_settings);
         let strategy =
             SubjectNameStrategy::RecordNameStrategy(String::from("nl.openweb.data.Heartbeat"));
@@ -123,7 +129,10 @@ mod tests {
             .with_body(get_proto_body(get_proto_hb_schema(), 7))
             .create();
 
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let encoder = EasyProtoRawEncoder::new(sr_settings);
         let strategy =
             SubjectNameStrategy::RecordNameStrategy(String::from("nl.openweb.data.Heartbeat"));

@@ -317,7 +317,10 @@ mod tests {
             .with_body(get_json_body(json_result_schema(), 10))
             .create();
 
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let encoder = JsonEncoder::new(sr_settings);
         let strategy = SubjectNameStrategy::TopicNameStrategy(String::from("testresult"), false);
         let result_example: Value =
@@ -339,7 +342,10 @@ mod tests {
             .with_body(get_json_body(json_result_schema_with_id(), 10))
             .create();
 
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let encoder = JsonEncoder::new(sr_settings);
         let strategy = SubjectNameStrategy::TopicNameStrategy(String::from("testresult"), false);
         let result_example: Value =
@@ -355,7 +361,10 @@ mod tests {
     async fn test_encode_clean_cache() {
         let mut server = Server::new_async().await;
 
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let encoder = JsonEncoder::new(sr_settings);
         let strategy = SubjectNameStrategy::TopicNameStrategy(String::from("testresult"), false);
         let result_example: Value =
@@ -395,7 +404,10 @@ mod tests {
             .with_body(get_json_body(json_result_schema(), 7))
             .create();
 
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let decoder = JsonDecoder::new(sr_settings);
         let message = decoder
             .decode(Some(&*get_payload(7, result_value.into_bytes())))
@@ -437,7 +449,10 @@ mod tests {
 
         let bytes = result_value.into_bytes();
 
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let decoder = JsonDecoder::new(sr_settings);
         let error = decoder
             .decode(Some(&*get_payload(7, bytes.clone())))
@@ -479,7 +494,10 @@ mod tests {
             .with_body(get_json_body(json_result_schema(), 10))
             .create();
 
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let decoder = JsonDecoder::new(sr_settings);
         let message = decoder
             .decode(Some(json_result_java_bytes()))
@@ -521,7 +539,10 @@ mod tests {
             .with_body(get_json_body(json_result_schema(), 10))
             .create();
 
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let decoder = JsonDecoder::new(sr_settings);
         let result = decoder
             .decode(Some(json_incorrect_bytes()))
@@ -536,7 +557,10 @@ mod tests {
     #[tokio::test]
     async fn add_referred_schema() {
         let mut server = Server::new_async().await;
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let decoder = JsonDecoder::new(sr_settings);
         let bytes = [
             0, 0, 0, 0, 5, 123, 34, 105, 100, 34, 58, 91, 52, 53, 44, 45, 55, 57, 44, 57, 51, 44,
@@ -578,7 +602,10 @@ mod tests {
     #[tokio::test]
     async fn error_in_referred_schema() {
         let mut server = Server::new_async().await;
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let decoder = JsonDecoder::new(sr_settings);
         let bytes = [
             0, 0, 0, 0, 5, 123, 34, 105, 100, 34, 58, 91, 52, 53, 44, 45, 55, 57, 44, 57, 51, 44,
@@ -615,7 +642,10 @@ mod tests {
     #[tokio::test]
     async fn encounter_same_reference_again() {
         let mut server = Server::new_async().await;
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let decoder = JsonDecoder::new(sr_settings);
         let bytes_id_5 = [
             0, 0, 0, 0, 5, 123, 34, 105, 100, 34, 58, 91, 52, 53, 44, 45, 55, 57, 44, 57, 51, 44,
@@ -719,7 +749,10 @@ mod tests {
             .with_body(get_json_body(json_result_schema(), 10))
             .create();
 
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let encoder = JsonEncoder::new(sr_settings);
         let strategy = SubjectNameStrategy::TopicNameStrategy(String::from("testresult"), false);
         let result_example: Value = Value::String(String::from("Foo"));
@@ -744,7 +777,10 @@ mod tests {
             .with_body(get_json_body(json_test_ref_schema(), 10))
             .create();
 
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let encoder = JsonEncoder::new(sr_settings);
         let strategy = SubjectNameStrategy::TopicNameStrategy(String::from("testresult"), false);
         let result_example: Value =

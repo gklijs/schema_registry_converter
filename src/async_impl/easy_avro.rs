@@ -107,7 +107,10 @@ mod tests {
             .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
             .create();
 
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let decoder = EasyAvroDecoder::new(sr_settings);
         let heartbeat = decoder
             .decode(Some(&[0, 0, 0, 0, 1, 6]))
@@ -136,7 +139,10 @@ mod tests {
             .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
             .create();
 
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let decoder = EasyAvroDecoder::new(sr_settings);
         let heartbeat = decoder
             .decode_with_schema(Some(&[0, 0, 0, 0, 1, 6]))
@@ -166,7 +172,10 @@ mod tests {
             .with_body(r#"{"subject":"heartbeat-value","version":1,"id":3,"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
             .create();
 
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let encoder = EasyAvroEncoder::new(sr_settings);
 
         let value_strategy =
@@ -182,7 +191,10 @@ mod tests {
     #[tokio::test]
     async fn test_primitive_schema() {
         let mut server = Server::new_async().await;
-        let sr_settings = SrSettings::new(server.url());
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
         let encoder = EasyAvroEncoder::new(sr_settings);
 
         let _m = server
