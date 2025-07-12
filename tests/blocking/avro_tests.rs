@@ -80,7 +80,7 @@ fn do_avro_test(
 }
 
 #[test]
-fn test1_topic_name_strategy_with_schema() {
+fn test1_topic_name_strategy() {
     let topic = "topicnamestrategy";
     let key_strategy = SubjectNameStrategy::TopicNameStrategyWithSchema(
         String::from(topic),
@@ -92,14 +92,24 @@ fn test1_topic_name_strategy_with_schema() {
         false,
         get_heartbeat_schema(),
     );
+    do_avro_test(topic, key_strategy, value_strategy);
+
+    let key_strategy = SubjectNameStrategy::TopicNameStrategy(String::from(topic), true);
+    let value_strategy = SubjectNameStrategy::TopicNameStrategy(String::from(topic), false);
     do_avro_test(topic, key_strategy, value_strategy)
 }
 
 #[test]
-fn test2_record_name_strategy_with_schema() {
+fn test2_record_name_strategy() {
     let topic = "recordnamestrategy";
     let key_strategy = SubjectNameStrategy::RecordNameStrategyWithSchema(get_heartbeat_schema());
     let value_strategy = SubjectNameStrategy::RecordNameStrategyWithSchema(get_heartbeat_schema());
+    do_avro_test(topic, key_strategy, value_strategy);
+
+    let key_strategy =
+        SubjectNameStrategy::RecordNameStrategy(String::from("nl.openweb.data.Heartbeat"));
+    let value_strategy =
+        SubjectNameStrategy::RecordNameStrategy(String::from("nl.openweb.data.Heartbeat"));
     do_avro_test(topic, key_strategy, value_strategy)
 }
 
@@ -114,30 +124,8 @@ fn test3_topic_record_name_strategy_with_schema() {
         String::from(topic),
         get_heartbeat_schema(),
     );
-    do_avro_test(topic, key_strategy, value_strategy)
-}
+    do_avro_test(topic, key_strategy, value_strategy);
 
-#[test]
-fn test4_topic_name_strategy_schema_now_available() {
-    let topic = "topicnamestrategy";
-    let key_strategy = SubjectNameStrategy::TopicNameStrategy(String::from(topic), true);
-    let value_strategy = SubjectNameStrategy::TopicNameStrategy(String::from(topic), false);
-    do_avro_test(topic, key_strategy, value_strategy)
-}
-
-#[test]
-fn test5_record_name_strategy_schema_now_available() {
-    let topic = "recordnamestrategy";
-    let key_strategy =
-        SubjectNameStrategy::RecordNameStrategy(String::from("nl.openweb.data.Heartbeat"));
-    let value_strategy =
-        SubjectNameStrategy::RecordNameStrategy(String::from("nl.openweb.data.Heartbeat"));
-    do_avro_test(topic, key_strategy, value_strategy)
-}
-
-#[test]
-fn test6_topic_record_name_strategy_schema_now_available() {
-    let topic = "topicrecordnamestrategy";
     let key_strategy = SubjectNameStrategy::TopicRecordNameStrategy(
         String::from(topic),
         String::from("nl.openweb.data.Heartbeat"),
@@ -150,7 +138,7 @@ fn test6_topic_record_name_strategy_schema_now_available() {
 }
 
 #[test]
-fn test7_test_avro_from_java_test_app() {
+fn test4_test_avro_from_java_test_app() {
     let topic = "testavro";
     let test = Box::new(move |rec: DeserializedAvroRecord| {
         println!("testing record {:#?}", rec);
