@@ -47,7 +47,7 @@ features = ["derive"]
 version = "^1.0"
 
 [dependencies.apache-avro]
-version = "^0.18"
+version = "^0.19"
 optional = true
 
 [dependencies.bytes]
@@ -75,7 +75,7 @@ version = "^2.5"
 optional = true
 
 [dependencies.tokio]
-version = "^1.44"
+version = "^1.46"
 features = ["macros"]
 optional = true
 
@@ -85,10 +85,10 @@ optional = true
 
 [dev-dependencies]
 mockito = "^1.7.0"
-rdkafka = { version = "^0.37.0", features = ["cmake-build"] }
+rdkafka = { version = "^0.38.0", features = ["cmake-build"] }
 rand = "^0.9.1"
 test_utils = { path = "test_utils" }
-tokio = { version = "^1.44.2", features = ["macros"] }
+tokio = { version = "^1.46.1", features = ["macros"] }
 
 [package.metadata.docs.rs]
 all-features = true
