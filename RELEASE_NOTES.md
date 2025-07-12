@@ -1,5 +1,9 @@
 ## Release notes
 
+### 4.5.0
+
+Updated versions and added option to not use a proxy.
+
 ### 4.4.0
 
 Updated versions and small code improvements.
