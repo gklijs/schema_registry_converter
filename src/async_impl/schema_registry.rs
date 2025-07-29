@@ -1,4 +1,6 @@
 //! This module contains the code specific for the schema registry.
+
+use std::collections::HashMap;
 use std::str;
 use std::time::Duration;
 
@@ -13,7 +15,7 @@ use serde_json::{json, Map, Value};
 use crate::error::SRCError;
 use crate::schema_registry_common::{
     url_for_call, RawRegisteredSchema, RegisteredReference, RegisteredSchema, SchemaType,
-    SrAuthorization, SrCall, SubjectNameStrategy, SuppliedReference, SuppliedSchema,
+    SrAuthorization, SrCall, SubjectNameStrategy, SuppliedReference, SuppliedSchema
 };
 
 /// Settings used to do the calls to schema registry. For simple cases you can use `SrSettings::new`
@@ -287,6 +289,8 @@ async fn raw_to_registered_schema(
         schema_type,
         schema,
         references,
+        properties: raw_schema.properties,
+        tags: raw_schema.tags,
     })
 }
 
@@ -320,17 +324,19 @@ pub async fn post_schema(
             ));
         }
     };
-    let body = get_body(&schema_type, &schema.schema, &references).await;
+    let body = get_body(&schema_type, &schema.schema, &references, schema.properties.as_ref(), schema.tags.as_ref()).await;
     let id = call_and_get_id(sr_settings, SrCall::PostNew(&subject, &body)).await?;
     Ok(RegisteredSchema {
         id,
         schema_type: schema.schema_type,
         schema: schema.schema,
         references,
+        properties: schema.properties,
+        tags: schema.tags,
     })
 }
 
-async fn get_body(schema_type: &str, schema: &str, references: &[RegisteredReference]) -> String {
+async fn get_body(schema_type: &str, schema: &str, references: &[RegisteredReference], properties: Option<&HashMap<String, String>>, tags: Option<&HashMap<String, Vec<String>>>) -> String {
     let mut root_element = Map::new();
     root_element.insert(String::from("schema"), Value::String(String::from(schema)));
     root_element.insert(
@@ -340,6 +346,25 @@ async fn get_body(schema_type: &str, schema: &str, references: &[RegisteredRefer
     if !references.is_empty() {
         let values: Vec<Value> = references.iter().map(|x| json!(x)).collect();
         root_element.insert(String::from("references"), Value::Array(values));
+    }
+    if tags.is_some() || properties.is_some() {
+        let mut metadata = Map::new();
+        if let Some(properties) = properties {
+            let mut props = Map::new();
+            for (name, value) in properties {
+                props.insert(String::from(name), json!{ value });
+            }
+            metadata.insert(String::from("properties"), Value::Object(props));
+        }
+        if let Some(tags) = tags {
+            let mut props = Map::new();
+            for (tag, values) in tags {
+                let tag_value = Value::Array(values.iter().map(|v| json!(v)).collect());
+                props.insert(String::from(tag), tag_value);
+            }
+            metadata.insert(String::from("tags"), Value::Object(props));
+        }
+        root_element.insert(String::from("metadata"), Value::Object(metadata));
     }
     let schema_element = Value::Object(root_element);
     schema_element.to_string()
@@ -391,7 +416,7 @@ fn post_reference<'a>(
                 ));
             }
         };
-        let body = get_body(schema_type, &reference.schema, &references).await;
+        let body = get_body(schema_type, &reference.schema, &references, reference.properties.as_ref(), reference.tags.as_ref()).await;
         perform_sr_call(sr_settings, SrCall::PostNew(&reference.subject, &body)).await?;
         let version = call_and_get_version(
             sr_settings,
@@ -402,6 +427,8 @@ fn post_reference<'a>(
             name: reference.name,
             subject: reference.subject,
             version,
+            properties: reference.properties,
+            tags: reference.tags,
         })
     }
     .boxed()

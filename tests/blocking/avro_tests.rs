@@ -24,6 +24,8 @@ fn get_heartbeat_schema() -> SuppliedSchema {
             r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#,
         ),
         references: vec![],
+        properties: None,
+        tags: None,
     }
 }
 
