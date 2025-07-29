@@ -282,6 +282,8 @@ fn raw_to_registered_schema(
         schema_type,
         schema,
         references,
+        properties: raw_schema.properties,
+        tags: raw_schema.tags,
     })
 }
 
@@ -321,6 +323,8 @@ pub fn post_schema(
         schema_type: schema.schema_type,
         schema: schema.schema,
         references,
+        properties: schema.properties,
+        tags: schema.tags,
     })
 }
 
@@ -390,6 +394,8 @@ fn post_reference(
         name: reference.name,
         subject: reference.subject,
         version,
+        properties: reference.properties,
+        tags: reference.tags,
     })
 }
 

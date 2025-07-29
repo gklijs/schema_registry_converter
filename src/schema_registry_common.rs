@@ -1,7 +1,7 @@
 //! Contains structs, enums' and functions common to async and blocking implementation of schema
 //! registry. So stuff dealing with the responses from schema registry, determining the subject, etc.
 use core::fmt;
-
+use std::collections::HashMap;
 use byteorder::{BigEndian, ByteOrder, ReadBytesExt};
 use serde::{Deserialize, Serialize};
 
@@ -41,6 +41,8 @@ pub struct SuppliedReference {
     pub subject: String,
     pub schema: String,
     pub references: Vec<SuppliedReference>,
+    pub properties: Option<HashMap<String, String>>,
+    pub tags: Option<HashMap<String, Vec<String>>>,
 }
 
 /// Schema as it might be provided to create messages, they will be added to th schema registry if
@@ -51,6 +53,8 @@ pub struct SuppliedSchema {
     pub schema_type: SchemaType,
     pub schema: String,
     pub references: Vec<SuppliedReference>,
+    pub properties: Option<HashMap<String, String>>,
+    pub tags: Option<HashMap<String, Vec<String>>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -58,6 +62,8 @@ pub struct RegisteredReference {
     pub name: String,
     pub subject: String,
     pub version: u32,
+    pub properties: Option<HashMap<String, String>>,
+    pub tags: Option<HashMap<String, Vec<String>>>,
 }
 
 /// Schema as retrieved from the schema registry. It's close to the json received and doesn't do
@@ -68,6 +74,8 @@ pub struct RegisteredSchema {
     pub schema_type: SchemaType,
     pub schema: String,
     pub references: Vec<RegisteredReference>,
+    pub properties: Option<HashMap<String, String>>,
+    pub tags: Option<HashMap<String, Vec<String>>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -79,6 +87,8 @@ pub struct RawRegisteredSchema {
     pub schema_type: Option<String>,
     pub references: Option<Vec<RegisteredReference>>,
     pub schema: Option<String>,
+    pub properties: Option<HashMap<String, String>>,
+    pub tags: Option<HashMap<String, Vec<String>>>,
 }
 
 /// Intermediate result to just handle the byte transformation. When used in a decoder just the
@@ -296,13 +306,17 @@ mod test {
             schema_type: SchemaType::Avro,
             schema: String::from("some schema"),
             references: vec![],
+            properties: None,
+            tags: None,
         };
         assert_eq!(0, registered_schema.id);
         assert_eq!(SchemaType::Avro, registered_schema.schema_type);
         assert_eq!("some schema", registered_schema.schema);
         assert!(registered_schema.references.is_empty());
+        assert!(registered_schema.properties.is_none());
+        assert!(registered_schema.tags.is_none());
         assert_eq!(
-            r#"RegisteredSchema { id: 0, schema_type: Avro, schema: "some schema", references: [] }"#,
+            r#"RegisteredSchema { id: 0, schema_type: Avro, schema: "some schema", references: [], properties: None, tags: None }"#,
             format!("{:?}", registered_schema)
         )
     }
@@ -328,6 +342,8 @@ mod test {
                 schema_type: SchemaType::Other(String::from("foo")),
                 schema: "".to_string(),
                 references: vec![],
+                properties: None,
+                tags: None,
             },
         );
 
