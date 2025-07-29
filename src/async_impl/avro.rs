@@ -364,6 +364,8 @@ impl<'a> AvroEncoder<'a> {
     ///                 schema_type: SchemaType::Avro,
     ///                 schema: String::from(r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#),
     ///                 references: vec![],
+    ///                 properties: None,
+    ///                 tags: None,
     ///             });
     /// let bytes = encoder.encode(vec![("beat", Value::Long(3))], strategy).await;
     /// assert_eq!(bytes, Ok(vec![0, 0, 0, 0, 23, 6]));
@@ -1262,6 +1264,8 @@ mod tests {
                 r#"{"type":"record","name":"Balance","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#,
             ),
             references: vec![],
+            properties: None,
+            tags: None,
         });
         let err = encoder
             .encode(vec![("beat", Value::Long(3))], strategy)
@@ -1355,6 +1359,8 @@ mod tests {
                     r#"{"type":"record","name":"Name","namespace":"nl.openweb.data","fields":[{"name":"name","type":"string","avro.java.string":"String"}]}"#,
                 ),
                 references: vec![],
+                properties: None,
+                tags: None,
             },
         );
         let bytes = encoder
@@ -1378,6 +1384,8 @@ mod tests {
                     r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#,
                 ),
                 references: vec![],
+                properties: None,
+                tags: None,
             },
         );
         let bytes = encoder
@@ -1410,6 +1418,8 @@ mod tests {
                 r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#,
             ),
             references: vec![],
+            properties: None,
+            tags: None,
         });
         let bytes = encoder
             .encode(vec![("beat", Value::Long(3))], strategy)
@@ -1441,6 +1451,8 @@ mod tests {
                 r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#,
             ),
             references: vec![],
+            properties: None,
+            tags: None,
         });
         let result = encoder
             .encode(vec![("beat", Value::Long(3))], strategy)
@@ -1478,6 +1490,8 @@ mod tests {
                     r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#,
                 ),
                 references: vec![],
+                properties: None,
+                tags: None,
             },
         );
         let bytes = encoder
@@ -1505,6 +1519,8 @@ mod tests {
                     r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#,
                 ),
                 references: vec![],
+                properties: None,
+                tags: None,
             },
         );
         let error = encoder
@@ -1531,6 +1547,8 @@ mod tests {
             schema_type: SchemaType::Avro,
             schema: String::from(r#"{"type":"record","name":"Name"}"#),
             references: vec![],
+            properties: None,
+            tags: None,
         };
         let sr_settings = SrSettings::new(String::from("http://127.0.0.1:1234"));
         let result = to_avro_schema(&sr_settings, registered_schema)
@@ -1551,6 +1569,8 @@ mod tests {
                 r#"syntax = "proto3"; package org.schema_registry_test_app.proto; message Result { string up = 1; string down = 2; }"#,
             ),
             references: vec![],
+            properties: None,
+            tags: None,
         };
         let sr_settings = SrSettings::new(String::from("http://127.0.0.1:1234"));
         let err = to_avro_schema(&sr_settings, registered_schema)

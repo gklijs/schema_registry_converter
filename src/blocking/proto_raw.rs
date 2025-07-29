@@ -162,7 +162,6 @@ pub struct RawDecodeResult {
 
 #[cfg(test)]
 mod tests {
-
     use crate::blocking::proto_raw::{ProtoRawDecoder, ProtoRawEncoder};
     use crate::blocking::schema_registry::SrSettings;
     use crate::schema_registry_common::{
@@ -334,12 +333,16 @@ mod tests {
             subject: String::from("result.proto"),
             schema: String::from(get_proto_result()),
             references: vec![],
+            properties: None,
+            tags: None,
         };
         let supplied_schema = SuppliedSchema {
             name: Some(String::from("test.proto")),
             schema_type: SchemaType::Protobuf,
             schema: String::from(get_proto_complex()),
             references: vec![result_reference],
+            properties: None,
+            tags: None,
         };
         let strategy = SubjectNameStrategy::RecordNameStrategyWithSchema(supplied_schema);
 
