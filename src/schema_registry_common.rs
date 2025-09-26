@@ -24,8 +24,8 @@ impl fmt::Debug for SrAuthorization {
     }
 }
 
-/// By default the schema registry supports three types. It's possible there will be more in the future
-/// or to add your own. Therefore the other is one of the schema types.
+/// By default, the schema registry supports three types. It's possible there will be more in the future
+/// or to add your own. Therefore, the other is one of the schema types.
 #[derive(Clone, Debug, PartialEq)]
 pub enum SchemaType {
     Avro,
@@ -100,11 +100,11 @@ pub enum BytesResult {
     Valid(u32, Vec<u8>),
 }
 
-/// Strategy similar to the one in the Java client. By default schema's needs to be backwards
+/// Strategy similar to the one in the Java client. By default, schema's needs to be backwards
 /// compatible. Historically the only available strategy was the TopicNameStrategy. This meant in
 /// practice that a topic could only have one type, or the restriction on backwards compatibility
 /// was to be abandoned. Using either of the two other strategies allows multiple types of schema
-/// on on topic, while still being able to keep the restriction on schema's being backwards
+/// on topic, while still being able to keep the restriction on schema's being backwards
 /// compatible.
 /// Depending on the strategy, either the topic, whether the value is used as key, the fully
 /// qualified name (only for RecordNameStrategy), or the schema needs to be provided.
