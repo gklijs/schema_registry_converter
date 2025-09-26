@@ -1,5 +1,10 @@
 ## Release notes
 
+### 4.6.0
+
+Add support for properties and tags metadata.
+Update versions, most noteworthy apache avro.
+
 ### 4.5.0
 
 Updated versions and added option to not use a proxy.
@@ -117,8 +122,9 @@ instead of the `encode` function on the encoder.
 
 #### Contributors
 
-- [@cbzehner](https://github.com/cbzehner)
+- [@ahassany](https://github.com/ahassany)
 - [@benmanns](https://github.com/benmanns)
+- [@cbzehner](https://github.com/cbzehner)
 - [@icdevin](https://github.com/icdevin)
 - [@johnhalbert](https://github.com/johnhalbert)  
 - [@kitsuneninetails](https://github.com/kitsuneninetails)
