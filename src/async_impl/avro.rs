@@ -672,6 +672,7 @@ fn add_references<'a>(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
     use apache_avro::from_value;
     use mockito::Server;
 
@@ -1682,5 +1683,41 @@ mod tests {
             _ => panic!("Not a long value for counter while that was expected"),
         };
         assert_eq!(&1i64, counter_value, "counter is 1");
+    }
+
+    #[tokio::test]
+    async fn test_properties() {
+        let mut server = Server::new_async().await;
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
+        let encoder = AvroEncoder::new(sr_settings);
+
+        let strategy = SubjectNameStrategy::TopicRecordNameStrategyWithSchema(
+            String::from("hb"),
+            SuppliedSchema {
+                name: Some(String::from("nl.openweb.data.Heartbeat")),
+                schema_type: SchemaType::Avro,
+                schema: String::from(
+                    r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#,
+                ),
+                references: vec![],
+                properties: Some(HashMap::from([("propA".to_string(), "value1".to_string())])),
+                tags: None,
+            },
+        );
+        let error = encoder.encode(vec![("beat", Value::Long(3))], strategy).await;
+        assert_eq!(
+            error,
+            Err(SRCError::new(
+                "could not parse to RawRegisteredSchema, schema might not exist on this schema registry, the http call failed, cause will give more information",
+                Some(String::from(
+                    "error decoding response body"
+                )),
+                false,
+            )
+                .into_cache())
+        )
     }
 }
