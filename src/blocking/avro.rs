@@ -568,8 +568,8 @@ fn to_avro_schema(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
     use apache_avro::from_value;
+    use std::collections::HashMap;
 
     use crate::avro_common::get_supplied_schema;
     use crate::schema_registry_common::SuppliedSchema;

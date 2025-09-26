@@ -15,7 +15,7 @@ use serde_json::{json, Map, Value};
 use crate::error::SRCError;
 use crate::schema_registry_common::{
     url_for_call, RawRegisteredSchema, RegisteredReference, RegisteredSchema, SchemaType,
-    SrAuthorization, SrCall, SubjectNameStrategy, SuppliedReference, SuppliedSchema
+    SrAuthorization, SrCall, SubjectNameStrategy, SuppliedReference, SuppliedSchema,
 };
 
 /// Settings used to do the calls to schema registry. For simple cases you can use `SrSettings::new`
@@ -324,7 +324,14 @@ pub async fn post_schema(
             ));
         }
     };
-    let body = get_body(&schema_type, &schema.schema, &references, schema.properties.as_ref(), schema.tags.as_ref()).await;
+    let body = get_body(
+        &schema_type,
+        &schema.schema,
+        &references,
+        schema.properties.as_ref(),
+        schema.tags.as_ref(),
+    )
+    .await;
     let id = call_and_get_id(sr_settings, SrCall::PostNew(&subject, &body)).await?;
     Ok(RegisteredSchema {
         id,
@@ -336,7 +343,13 @@ pub async fn post_schema(
     })
 }
 
-async fn get_body(schema_type: &str, schema: &str, references: &[RegisteredReference], properties: Option<&HashMap<String, String>>, tags: Option<&HashMap<String, Vec<String>>>) -> String {
+async fn get_body(
+    schema_type: &str,
+    schema: &str,
+    references: &[RegisteredReference],
+    properties: Option<&HashMap<String, String>>,
+    tags: Option<&HashMap<String, Vec<String>>>,
+) -> String {
     let mut root_element = Map::new();
     root_element.insert(String::from("schema"), Value::String(String::from(schema)));
     root_element.insert(
@@ -352,7 +365,7 @@ async fn get_body(schema_type: &str, schema: &str, references: &[RegisteredRefer
         if let Some(properties) = properties {
             let mut props = Map::new();
             for (name, value) in properties {
-                props.insert(String::from(name), json!{ value });
+                props.insert(String::from(name), json! { value });
             }
             metadata.insert(String::from("properties"), Value::Object(props));
         }
@@ -416,7 +429,14 @@ fn post_reference<'a>(
                 ));
             }
         };
-        let body = get_body(schema_type, &reference.schema, &references, reference.properties.as_ref(), reference.tags.as_ref()).await;
+        let body = get_body(
+            schema_type,
+            &reference.schema,
+            &references,
+            reference.properties.as_ref(),
+            reference.tags.as_ref(),
+        )
+        .await;
         perform_sr_call(sr_settings, SrCall::PostNew(&reference.subject, &body)).await?;
         let version = call_and_get_version(
             sr_settings,
