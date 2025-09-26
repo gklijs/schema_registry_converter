@@ -1,9 +1,9 @@
 //! Contains structs, enums' and functions common to async and blocking implementation of schema
 //! registry. So stuff dealing with the responses from schema registry, determining the subject, etc.
-use core::fmt;
-use std::collections::HashMap;
 use byteorder::{BigEndian, ByteOrder, ReadBytesExt};
+use core::fmt;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 use crate::error::SRCError;
 

@@ -672,9 +672,9 @@ fn add_references<'a>(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
     use apache_avro::from_value;
     use mockito::Server;
+    use std::collections::HashMap;
 
     use crate::avro_common::get_supplied_schema;
     use crate::schema_registry_common::SuppliedSchema;
@@ -1707,7 +1707,9 @@ mod tests {
                 tags: None,
             },
         );
-        let error = encoder.encode(vec![("beat", Value::Long(3))], strategy).await;
+        let error = encoder
+            .encode(vec![("beat", Value::Long(3))], strategy)
+            .await;
         assert_eq!(
             error,
             Err(SRCError::new(
