@@ -1687,7 +1687,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_properties() {
-        let mut server = Server::new_async().await;
+        let server = Server::new_async().await;
         let sr_settings = SrSettings::new_builder(server.url())
             .no_proxy()
             .build()

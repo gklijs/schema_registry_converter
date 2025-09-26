@@ -177,7 +177,7 @@ pub fn get_supplied_schema(schema: &Schema) -> SuppliedSchema {
     SuppliedSchema {
         name,
         schema_type: SchemaType::Avro,
-        schema: schema.canonical_form(),
+        schema: serde_json::to_string(schema).unwrap(),
         references: vec![],
         properties: None,
         tags: None,

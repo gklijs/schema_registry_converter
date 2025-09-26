@@ -316,13 +316,13 @@ impl AvroEncoder {
     /// use schema_registry_converter::schema_registry_common::{SubjectNameStrategy, SchemaType, SuppliedSchema};
     ///
     /// let mut server = mockito::Server::new();
-    /// # let _m = server.mock("POST", "/subjects/hb-nl.openweb.data.Heartbeat/versions")
-    /// #    .with_status(200)
-    /// #    .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-    /// #    .with_body(r#"{"id":23}"#)
-    /// #    .create();
+    /// let _m = server.mock("POST", "/subjects/hb-nl.openweb.data.Heartbeat/versions")
+    ///     .with_status(200)
+    ///     .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+    ///     .with_body(r#"{"id":23}"#)
+    ///     .create();
     ///
-    /// let sr_settings = SrSettings::new(String::from(server.url()));
+    /// let sr_settings = SrSettings::new_builder(server.url()).no_proxy().build().unwrap();
     /// let encoder = AvroEncoder::new(sr_settings);
     ///
     /// let strategy = SubjectNameStrategy::TopicRecordNameStrategyWithSchema(String::from("hb"), SuppliedSchema {
