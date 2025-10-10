@@ -15,7 +15,7 @@ pub(crate) enum SrAuthorization {
 }
 
 impl fmt::Debug for SrAuthorization {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
             SrAuthorization::None => write!(f, "None"),
             SrAuthorization::Token(_) => write!(f, "Token"),
@@ -176,7 +176,7 @@ pub enum SrCall<'a> {
     PostForVersion(&'a str, &'a str),
 }
 
-pub(crate) fn url_for_call(call: &SrCall, base_url: &str) -> String {
+pub(crate) fn url_for_call(call: &SrCall<'_>, base_url: &str) -> String {
     match call {
         SrCall::GetById(id) => format!("{}/schemas/ids/{}?deleted=true", base_url, id),
         SrCall::GetLatest(subject) => {
