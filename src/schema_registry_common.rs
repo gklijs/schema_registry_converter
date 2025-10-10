@@ -15,7 +15,7 @@ pub(crate) enum SrAuthorization {
 }
 
 impl fmt::Debug for SrAuthorization {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
             SrAuthorization::None => write!(f, "None"),
             SrAuthorization::Token(_) => write!(f, "Token"),
@@ -26,7 +26,7 @@ impl fmt::Debug for SrAuthorization {
 
 /// By default, the schema registry supports three types. It's possible there will be more in the future
 /// or to add your own. Therefore, the other is one of the schema types.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum SchemaType {
     Avro,
     Protobuf,
@@ -35,7 +35,7 @@ pub enum SchemaType {
 }
 
 /// The schema registry supports sub schema's they will be stored separately in the schema registry
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SuppliedReference {
     pub name: String,
     pub subject: String,
@@ -45,9 +45,9 @@ pub struct SuppliedReference {
     pub tags: Option<HashMap<String, Vec<String>>>,
 }
 
-/// Schema as it might be provided to create messages, they will be added to th schema registry if
+/// Schema as it might be provided to create messages, they will be added to the schema registry if
 /// not already present
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SuppliedSchema {
     pub name: Option<String>,
     pub schema_type: SchemaType,
@@ -176,7 +176,7 @@ pub enum SrCall<'a> {
     PostForVersion(&'a str, &'a str),
 }
 
-pub(crate) fn url_for_call(call: &SrCall, base_url: &str) -> String {
+pub(crate) fn url_for_call(call: &SrCall<'_>, base_url: &str) -> String {
     match call {
         SrCall::GetById(id) => format!("{}/schemas/ids/{}?deleted=true", base_url, id),
         SrCall::GetLatest(subject) => {

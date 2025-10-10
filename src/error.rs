@@ -30,7 +30,7 @@ impl Clone for SRCError {
 
 /// Gives the information from the error in a readable format.
 impl fmt::Display for SRCError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.cause {
             Some(cause) => write!(
                 f,
