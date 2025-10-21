@@ -1,5 +1,9 @@
 ## Release notes
 
+### 4.6.1
+
+Serialization support for SuppliedSchema
+
 ### 4.6.0
 
 Add support for properties and tags metadata.
@@ -131,10 +135,11 @@ instead of the `encode` function on the encoder.
 - [@kujeger](https://github.com/kujeger)
 - [@Licenser](https://github.com/Licenser)
 - [@lukecampbell](https://github.com/lukecampbell)
+- [@MariellHoversholm-Paf](https://github.com/MariellHoversholm-Paf)
 - [@mdroogh](https://github.com/mdroogh)
 - [@marioloko](https://github.com/marioloko)
 - [@naamancurtis](https://github.com/naamancurtis)
-- [@MariellHoversholm-Paf](https://github.com/MariellHoversholm-Paf)
+- [@rodonile](https://github.com/rodonile)
 - [@saiharshavellanki](https://github.com/saiharshavellanki)
 - [@SergeStrashko](https://github.com/SergeStrashko)
 - [@sfsf9797](https://github.com/sfsf9797)
