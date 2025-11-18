@@ -68,7 +68,7 @@ pub struct RegisteredReference {
 
 /// Schema as retrieved from the schema registry. It's close to the json received and doesn't do
 /// type specific transformations.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct RegisteredSchema {
     pub id: u32,
     pub schema_type: SchemaType,
@@ -78,7 +78,7 @@ pub struct RegisteredSchema {
     pub tags: Option<HashMap<String, Vec<String>>>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct RawRegisteredSchema {
     pub subject: Option<String>,
@@ -87,8 +87,14 @@ pub struct RawRegisteredSchema {
     pub schema_type: Option<String>,
     pub references: Option<Vec<RegisteredReference>>,
     pub schema: Option<String>,
-    pub properties: Option<HashMap<String, String>>,
+    pub metadata: Option<Metadata>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Metadata {
     pub tags: Option<HashMap<String, Vec<String>>>,
+    pub properties: Option<HashMap<String, String>>,
 }
 
 /// Intermediate result to just handle the byte transformation. When used in a decoder just the
