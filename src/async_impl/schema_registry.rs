@@ -284,13 +284,18 @@ async fn raw_to_registered_schema(
         }
     };
     let references = raw_schema.references.unwrap_or_default();
+    let (properties, tags) = match raw_schema.metadata {
+        Some(m) => (m.properties, m.tags),
+        None => (None, None),
+    };
+
     Ok(RegisteredSchema {
         id,
         schema_type,
         schema,
         references,
-        properties: raw_schema.properties,
-        tags: raw_schema.tags,
+        properties,
+        tags,
     })
 }
 
@@ -618,7 +623,9 @@ mod tests {
     use crate::async_impl::schema_registry::{
         get_schema_by_id, get_schema_by_id_and_type, SrSettings,
     };
-    use crate::schema_registry_common::SchemaType;
+    use crate::schema_registry_common::{
+        Metadata, RawRegisteredSchema, RegisteredReference, RegisteredSchema, SchemaType,
+    };
 
     #[tokio::test]
     async fn put_correct_url_as_second_check_header_set() {
@@ -709,5 +716,104 @@ mod tests {
             ),
             _ => panic!(),
         }
+    }
+
+    #[tokio::test]
+    async fn test_parse_and_raw_to_registered_schema_async() {
+        let json_str = r#"{
+          "subject": "ietf-telemetry-message",
+          "version": 1,
+          "id": 28,
+          "guid": "32da7798-bb83-b04e-4ecd-1216eb767df2",
+          "schemaType": "YANG",
+          "references": [
+            { "name": "ietf-yang-types", "subject": "ietf-yang-types", "version": 1 },
+            { "name": "ietf-inet-types", "subject": "ietf-inet-types", "version": 1 },
+            { "name": "ietf-platform-manifest", "subject": "ietf-platform-manifest", "version": 1 }
+          ],
+          "metadata": {
+            "tags": {
+              "features": ["data-collection-manifest", "network-node-manifest"]
+            }
+          },
+          "schema": "module ietf-telemetry-message {\n  yang-version 1.1;\n  ...}",
+          "ts": 1763116523340,
+          "deleted": false
+        }"#;
+
+        let expected_raw_schema = RawRegisteredSchema {
+            subject: Some("ietf-telemetry-message".to_string()),
+            version: Some(1),
+            id: Some(28),
+            schema_type: Some("YANG".to_string()),
+            references: Some(vec![
+                RegisteredReference {
+                    name: "ietf-yang-types".to_string(),
+                    subject: "ietf-yang-types".to_string(),
+                    version: 1,
+                    properties: None,
+                    tags: None,
+                },
+                RegisteredReference {
+                    name: "ietf-inet-types".to_string(),
+                    subject: "ietf-inet-types".to_string(),
+                    version: 1,
+                    properties: None,
+                    tags: None,
+                },
+                RegisteredReference {
+                    name: "ietf-platform-manifest".to_string(),
+                    subject: "ietf-platform-manifest".to_string(),
+                    version: 1,
+                    properties: None,
+                    tags: None,
+                },
+            ]),
+            schema: Some(
+                "module ietf-telemetry-message {\n  yang-version 1.1;\n  ...}".to_string(),
+            ),
+            metadata: Some(Metadata {
+                tags: Some({
+                    let mut tags = std::collections::HashMap::new();
+                    tags.insert(
+                        "features".to_string(),
+                        vec![
+                            "data-collection-manifest".to_string(),
+                            "network-node-manifest".to_string(),
+                        ],
+                    );
+                    tags
+                }),
+                properties: None,
+            }),
+        };
+
+        let expected_registered_schema = RegisteredSchema {
+            id: 28,
+            schema_type: SchemaType::Other("YANG".to_string()),
+            schema: "module ietf-telemetry-message {\n  yang-version 1.1;\n  ...}".to_string(),
+            references: expected_raw_schema.references.clone().unwrap(),
+            properties: None,
+            tags: Some({
+                let mut tags = std::collections::HashMap::new();
+                tags.insert(
+                    "features".to_string(),
+                    vec![
+                        "data-collection-manifest".to_string(),
+                        "network-node-manifest".to_string(),
+                    ],
+                );
+                tags
+            }),
+        };
+
+        let parsed: RawRegisteredSchema = serde_json::from_str(json_str).expect("parse json");
+        assert_eq!(parsed, expected_raw_schema);
+
+        let reg =
+            crate::async_impl::schema_registry::raw_to_registered_schema(parsed.clone(), None)
+                .await
+                .expect("convert to registered");
+        assert_eq!(reg, expected_registered_schema);
     }
 }

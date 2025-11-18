@@ -277,13 +277,18 @@ fn raw_to_registered_schema(
         }
     };
     let references = raw_schema.references.unwrap_or_default();
+    let (properties, tags) = match raw_schema.metadata {
+        Some(m) => (m.properties, m.tags),
+        None => (None, None),
+    };
+
     Ok(RegisteredSchema {
         id,
         schema_type,
         schema,
         references,
-        properties: raw_schema.properties,
-        tags: raw_schema.tags,
+        properties,
+        tags,
     })
 }
 
@@ -551,9 +556,12 @@ fn perform_single_versions_call(
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::{collections::HashMap, time::Duration};
 
     use crate::blocking::schema_registry::{get_schema_by_id, SrSettings};
+    use crate::schema_registry_common::{
+        Metadata, RawRegisteredSchema, RegisteredReference, RegisteredSchema, SchemaType,
+    };
 
     #[test]
     fn put_correct_url_as_second_check_header_set() {
@@ -617,5 +625,135 @@ mod tests {
             ),
             _ => panic!(),
         }
+    }
+
+    #[test]
+    fn test_parse_and_raw_to_registered_schema_sync() {
+        let json_str = r#"{
+          "subject": "ietf-tls-common",
+          "version": 1,
+          "id": 68,
+          "guid": "9550709c-d6c9-0194-fefa-6381b953668d",
+          "schemaType": "YANG",
+          "references": [
+            {
+              "name": "iana-tls-cipher-suite-algs",
+              "subject": "iana-tls-cipher-suite-algs",
+              "version": 1
+            },
+            {
+              "name": "ietf-crypto-types",
+              "subject": "ietf-crypto-types",
+              "version": 1
+            },
+            {
+              "name": "ietf-keystore",
+              "subject": "ietf-keystore",
+              "version": 1
+            }
+          ],
+          "metadata": {
+            "tags": {
+              "features": [
+                "algorithm-discovery",
+                "asymmetric-key-pair-generation",
+                "hello-params",
+                "tls12",
+                "tls13"
+              ]
+            },
+            "properties": {
+              "env": "PROD"
+            }
+          },
+          "schema": "module ietf-tls-common { ... }\n",
+          "ts": 1763117237172,
+          "deleted": false
+        }"#;
+
+        let expected_raw_schema = RawRegisteredSchema {
+            subject: Some("ietf-tls-common".to_string()),
+            version: Some(1),
+            id: Some(68),
+            schema_type: Some("YANG".to_string()),
+            references: Some(vec![
+                RegisteredReference {
+                    name: "iana-tls-cipher-suite-algs".to_string(),
+                    subject: "iana-tls-cipher-suite-algs".to_string(),
+                    version: 1,
+                    properties: None,
+                    tags: None,
+                },
+                RegisteredReference {
+                    name: "ietf-crypto-types".to_string(),
+                    subject: "ietf-crypto-types".to_string(),
+                    version: 1,
+                    properties: None,
+                    tags: None,
+                },
+                RegisteredReference {
+                    name: "ietf-keystore".to_string(),
+                    subject: "ietf-keystore".to_string(),
+                    version: 1,
+                    properties: None,
+                    tags: None,
+                },
+            ]),
+            schema: Some("module ietf-tls-common { ... }\n".to_string()),
+            metadata: Some(Metadata {
+                tags: Some({
+                    let mut tags = HashMap::new();
+                    tags.insert(
+                        "features".to_string(),
+                        vec![
+                            "algorithm-discovery".to_string(),
+                            "asymmetric-key-pair-generation".to_string(),
+                            "hello-params".to_string(),
+                            "tls12".to_string(),
+                            "tls13".to_string(),
+                        ],
+                    );
+                    tags
+                }),
+                properties: Some({
+                    let mut properties = HashMap::new();
+                    properties.insert("env".to_string(), "PROD".to_string());
+                    properties
+                }),
+            }),
+        };
+
+        let expected_registered_schema = RegisteredSchema {
+            id: 68,
+            schema_type: SchemaType::Other("YANG".to_string()),
+            schema: "module ietf-tls-common { ... }\n".to_string(),
+            references: expected_raw_schema.references.clone().unwrap(),
+            properties: Some({
+                let mut properties = HashMap::new();
+                properties.insert("env".to_string(), "PROD".to_string());
+                properties
+            }),
+            tags: Some({
+                let mut tags = std::collections::HashMap::new();
+                tags.insert(
+                    "features".to_string(),
+                    vec![
+                        "algorithm-discovery".to_string(),
+                        "asymmetric-key-pair-generation".to_string(),
+                        "hello-params".to_string(),
+                        "tls12".to_string(),
+                        "tls13".to_string(),
+                    ],
+                );
+                tags
+            }),
+        };
+
+        let parsed: RawRegisteredSchema = serde_json::from_str(json_str).expect("parse json");
+        assert_eq!(parsed, expected_raw_schema);
+
+        let reg = crate::blocking::schema_registry::raw_to_registered_schema(parsed.clone(), None)
+            .expect("convert to registered");
+        assert_eq!(reg, expected_registered_schema);
     }
 }
