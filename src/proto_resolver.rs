@@ -237,6 +237,29 @@ message GoogleTest {
   }
 }"#
     }
+    fn get_including_optional() -> &'static str {
+        r#"syntax = "proto3";
+
+package in.abc.event_entities;
+
+option java_outer_classname = "EventSourceProto";
+
+message EventSource {
+  message Actor {
+    enum UserEntity {
+      USER_ENTITY_UNSPECIFIED = 0;
+      USER_ENTITY_ADMIN = 1;
+    }
+
+    UserEntity entity = 1; // the user type
+    uint32 id = 2; // unique identifier of the user entity
+  }
+  string system = 1; // the system from where the order event originated from
+  optional Actor initiator = 2; // the user that initiated the change to the order
+  optional Actor proxy = 3; // the user that executed the change on behalf of another user
+  optional string reason = 4; // reason for change to the order
+}"#
+    }
 
     #[test]
     fn test_simple_schema_message_resolver() {
@@ -297,6 +320,17 @@ message GoogleTest {
             String::from("google/type/datetime.proto")
         );
         assert_eq!(resolver.imports[2], String::from("google/type/money.proto"));
+    }
+
+    #[test]
+    fn test_schema_with_optional_fields() {
+        let resolver = MessageResolver::new(get_including_optional());
+        assert_eq!(
+            resolver.find_name(&[0]),
+            Some(Arc::new(String::from("in.abc.event_entities.EventSource")))
+        );
+        assert_eq!(resolver.find_name(&[1]), None);
+        assert_eq!(resolver.imports.len(), 0)
     }
 
     #[test]
