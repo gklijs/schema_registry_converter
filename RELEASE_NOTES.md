@@ -1,5 +1,9 @@
 ## Release notes
 
+### 4.7.0
+
+Update avro dependency and add properties inside the metadata of the schema registry response.
+
 ### 4.6.1
 
 Serialization support for SuppliedSchema
