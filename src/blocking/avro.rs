@@ -117,9 +117,8 @@ impl AvroDecoder {
     ///     .with_body(r#"{"error_code":40403,"message":"Schema not found"}"#)
     ///     .create();
     ///
-    /// let heartbeat = decoder.decode(Some(&bytes));
-    ///
-    /// assert_eq!(heartbeat, Err(SRCError::new("Could not get raw schema from response", None, false).into_cache()));
+    /// let error = decoder.decode(Some(&bytes)).unwrap_err();
+    /// assert_eq!(error, SRCError::new("HTTP request to schema registry failed with status 404 Not Found", Some(String::from("error_code: 40403, message: Schema not found")), false).into_cache());
     ///
     /// let _m = server .mock("GET", "/schemas/ids/2?deleted=true")
     ///     .with_status(200)
@@ -127,8 +126,8 @@ impl AvroDecoder {
     ///     .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
     ///     .create();
     ///
-    /// let heartbeat = decoder.decode(Some(&bytes));
-    /// assert_eq!(heartbeat, Err(SRCError::new("Could not get raw schema from response", None, false).into_cache()));
+    /// let error = decoder.decode(Some(&bytes)).unwrap_err();
+    /// assert_eq!(error, SRCError::new("HTTP request to schema registry failed with status 404 Not Found", Some(String::from("error_code: 40403, message: Schema not found")), false).into_cache());
     ///
     /// decoder.remove_errors_from_cache();
     ///
@@ -364,8 +363,9 @@ impl AvroEncoder {
     ///     .with_body(r#"{"error_code":40403,"message":"Schema not found"}"#)
     ///     .create();
     ///
-    /// let bytes = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
-    /// assert_eq!(bytes, Err(SRCError::new("Could not get id from response", None, false).into_cache()));
+    /// let error = encoder.encode(vec![("beat", Value::Long(3))], &strategy).unwrap_err();
+    /// assert_eq!(error, SRCError::new("HTTP request to schema registry failed with status 404 Not Found", Some(String::from("error_code: 40403, message: Schema not found")), false).into_cache());
+    ///
     ///
     /// let _m = server .mock("GET", "/subjects/nl.openweb.data.Heartbeat/versions/latest")
     ///     .with_status(200)
@@ -373,8 +373,8 @@ impl AvroEncoder {
     ///     .with_body(r#"{"subject":"heartbeat-value","version":1,"id":4,"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
     ///     .create();
     ///
-    /// let bytes = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
-    /// assert_eq!(bytes, Err(SRCError::new("Could not get id from response", None, false).into_cache()));
+    /// let error = encoder.encode(vec![("beat", Value::Long(3))], &strategy).unwrap_err();
+    /// assert_eq!(error, SRCError::new("HTTP request to schema registry failed with status 404 Not Found", Some(String::from("error_code: 40403, message: Schema not found")), false).into_cache());
     ///
     /// encoder.remove_errors_from_cache();
     ///
@@ -791,18 +791,16 @@ mod tests {
             .build()
             .unwrap();
         let decoder = AvroDecoder::new(sr_settings);
-        let heartbeat = decoder.decode(Some(&[0, 0, 0, 0, 1, 6]));
+        let error = decoder.decode(Some(&[0, 0, 0, 0, 1, 6])).unwrap_err();
 
         assert_eq!(
-            heartbeat,
-            Err(SRCError::new(
-                "could not parse to RawRegisteredSchema, schema might not exist on this schema registry, the http call failed, cause will give more information",
-                Some(String::from(
-                    "error decoding response body"
-                )),
+            error,
+            SRCError::new(
+                "could not parse to RawRegisteredSchema",
+                Some(String::from("error decoding response body")),
                 false,
             )
-            .into_cache())
+            .into_cache()
         )
     }
 
@@ -820,18 +818,16 @@ mod tests {
             .build()
             .unwrap();
         let decoder = AvroDecoder::new(sr_settings);
-        let heartbeat = decoder.decode(Some(&[0, 0, 0, 0, 1, 6]));
+        let error = decoder.decode(Some(&[0, 0, 0, 0, 1, 6])).unwrap_err();
 
         assert_eq!(
-            heartbeat,
-            Err(SRCError::new(
-                "could not parse to RawRegisteredSchema, schema might not exist on this schema registry, the http call failed, cause will give more information",
-                Some(String::from(
-                    "error decoding response body"
-                )),
+            error,
+            SRCError::new(
+                "could not parse to RawRegisteredSchema",
+                Some(String::from("error decoding response body")),
                 false,
             )
-            .into_cache())
+            .into_cache()
         )
     }
 
@@ -950,10 +946,15 @@ mod tests {
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(r#"{"error_code":40403,"message":"Schema not found"}"#)
             .create();
-        let heartbeat = decoder.decode(Some(&bytes));
+        let error = decoder.decode(Some(&bytes)).unwrap_err();
         assert_eq!(
-            heartbeat,
-            Err(SRCError::new("Could not get raw schema from response", None, false).into_cache())
+            error,
+            SRCError::new(
+                "HTTP request to schema registry failed with status 404 Not Found",
+                Some(String::from("error_code: 40403, message: Schema not found")),
+                false
+            )
+            .into_cache()
         );
         let _m = server.mock("GET", "/schemas/ids/2?deleted=true")
             .with_status(200)
@@ -961,10 +962,15 @@ mod tests {
             .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
             .create();
 
-        let heartbeat = decoder.decode(Some(&bytes));
+        let error = decoder.decode(Some(&bytes)).unwrap_err();
         assert_eq!(
-            heartbeat,
-            Err(SRCError::new("Could not get raw schema from response", None, false).into_cache())
+            error,
+            SRCError::new(
+                "HTTP request to schema registry failed with status 404 Not Found",
+                Some(String::from("error_code: 40403, message: Schema not found")),
+                false
+            )
+            .into_cache()
         );
 
         decoder.remove_errors_from_cache();
@@ -1207,10 +1213,17 @@ mod tests {
             .with_body(r#"{"error_code":40403,"message":"Schema not found"}"#)
             .create();
 
-        let bytes = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
+        let error = encoder
+            .encode(vec![("beat", Value::Long(3))], &strategy)
+            .unwrap_err();
         assert_eq!(
-            bytes,
-            Err(SRCError::new("Could not get id from response", None, false).into_cache())
+            error,
+            SRCError::new(
+                "HTTP request to schema registry failed with status 404 Not Found",
+                Some(String::from("error_code: 40403, message: Schema not found")),
+                false
+            )
+            .into_cache()
         );
 
         let _m = server.mock("GET", "/subjects/nl.openweb.data.Heartbeat/versions/latest")
@@ -1219,13 +1232,17 @@ mod tests {
             .with_body(r#"{"subject":"heartbeat-value","version":1,"id":4,"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
             .create();
 
-        let bytes = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
+        let error = encoder
+            .encode(vec![("beat", Value::Long(3))], &strategy)
+            .unwrap_err();
         assert_eq!(
-            bytes,
-            Err(
-                SRCError::non_retryable_without_cause("Could not get id from response")
-                    .into_cache()
+            error,
+            SRCError::new(
+                "HTTP request to schema registry failed with status 404 Not Found",
+                Some(String::from("error_code: 40403, message: Schema not found")),
+                false
             )
+            .into_cache()
         );
 
         encoder.remove_errors_from_cache();
@@ -1400,7 +1417,12 @@ mod tests {
 
     #[test]
     fn test_encode_topic_record_name_strategy_schema_registry_not_available() {
-        let server = mockito::Server::new();
+        let mut server = mockito::Server::new();
+        let _m = server
+            .mock("POST", "/subjects/hb-nl.openweb.data.Heartbeat/versions")
+            .with_status(503)
+            .with_body(r#"NOT THERE!"#)
+            .create();
         let sr_settings = SrSettings::new_builder(server.url())
             .no_proxy()
             .build()
@@ -1420,17 +1442,19 @@ mod tests {
                 tags: None,
             },
         );
-        let error = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
+        let error = encoder
+            .encode(vec![("beat", Value::Long(3))], &strategy)
+            .unwrap_err();
         assert_eq!(
             error,
-            Err(SRCError::new(
-                "could not parse to RawRegisteredSchema, schema might not exist on this schema registry, the http call failed, cause will give more information",
+            SRCError::new(
+                "HTTP request to schema registry failed with status 503 Service Unavailable",
                 Some(String::from(
-                    "error decoding response body"
+                    "error_code: 0, message: couldn't parse schema registry error json"
                 )),
-                false,
+                true,
             )
-            .into_cache())
+            .into_cache()
         )
     }
 
@@ -1602,16 +1626,17 @@ mod tests {
             },
         );
         let error = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
+        // TODO this test doesn't seem to be mocked properly, we need to figure what the right behavior is
         assert_eq!(
             error,
             Err(SRCError::new(
-                "could not parse to RawRegisteredSchema, schema might not exist on this schema registry, the http call failed, cause will give more information",
+                "HTTP request to schema registry failed with status 501 Not Implemented",
                 Some(String::from(
-                    "error decoding response body"
+                    "error_code: 0, message: couldn't parse schema registry error json"
                 )),
                 false,
             )
-                .into_cache())
+            .into_cache())
         )
     }
 }

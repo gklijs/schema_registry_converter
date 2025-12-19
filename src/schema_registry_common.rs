@@ -1,11 +1,11 @@
 //! Contains structs, enums' and functions common to async and blocking implementation of schema
 //! registry. So stuff dealing with the responses from schema registry, determining the subject, etc.
+use crate::error::SRCError;
 use byteorder::{BigEndian, ByteOrder, ReadBytesExt};
 use core::fmt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-
-use crate::error::SRCError;
+use std::fmt::{Display, Formatter};
 
 #[derive(Clone)]
 pub(crate) enum SrAuthorization {
@@ -43,6 +43,23 @@ pub struct SuppliedReference {
     pub references: Vec<SuppliedReference>,
     pub properties: Option<HashMap<String, String>>,
     pub tags: Option<HashMap<String, Vec<String>>>,
+}
+
+/// Errors as returned by the schema registry API
+#[derive(Clone, Debug, Deserialize)]
+pub struct RawError {
+    pub error_code: u32,
+    pub message: String,
+}
+
+impl Display for RawError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "error_code: {}, message: {}",
+            self.error_code, self.message
+        )
+    }
 }
 
 /// Schema as it might be provided to create messages, they will be added to the schema registry if

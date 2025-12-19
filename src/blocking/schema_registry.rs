@@ -11,7 +11,7 @@ use serde_json::{json, Map, Value};
 
 use crate::error::SRCError;
 use crate::schema_registry_common::{
-    url_for_call, RawRegisteredSchema, RegisteredReference, RegisteredSchema, SchemaType,
+    url_for_call, RawError, RawRegisteredSchema, RegisteredReference, RegisteredSchema, SchemaType,
     SrAuthorization, SrCall, SubjectNameStrategy, SuppliedReference, SuppliedSchema,
 };
 
@@ -424,11 +424,11 @@ pub fn perform_sr_call(
     }
 }
 
-fn apply_authentication(
+fn send_with_auth(
     builder: RequestBuilder,
     authentication: &SrAuthorization,
-) -> Result<Response, reqwest::Error> {
-    match authentication {
+) -> Result<Response, SRCError> {
+    let res = match authentication {
         SrAuthorization::None => builder.send(),
         SrAuthorization::Token(token) => builder.bearer_auth(token).send(),
         SrAuthorization::Basic(username, password) => {
@@ -439,6 +439,28 @@ fn apply_authentication(
             builder.basic_auth(username, p).send()
         }
     }
+    .map_err(|e| SRCError::retryable_with_cause(e, "http call to schema registry failed"))?;
+    let st = res.status();
+    if st.is_success() {
+        return Ok(res);
+    }
+    // Handle non successful HTTP Requests
+    Err(match st.as_u16() {
+        502 | 503 => SRCError::retryable_with_cause(
+            res.json::<RawError>().unwrap_or_else(|_| RawError {
+                error_code: 0,
+                message: "couldn't parse schema registry error json".to_owned(),
+            }),
+            format!("HTTP request to schema registry failed with status {}", st).as_str(),
+        ),
+        _ => SRCError::non_retryable_with_cause(
+            res.json::<RawError>().unwrap_or_else(|_| RawError {
+                error_code: 0,
+                message: "couldn't parse schema registry error json".to_owned(),
+            }),
+            format!("HTTP request to schema registry failed with status {}", st).as_str(),
+        ),
+    })
 }
 
 fn perform_single_sr_call(
@@ -458,20 +480,12 @@ fn perform_single_sr_call(
             .header(CONTENT_TYPE, "application/vnd.schemaregistry.v1+json")
             .header(ACCEPT, "application/vnd.schemaregistry.v1+json"),
     };
-    let call = apply_authentication(builder, authentication);
-    match call {
-        Ok(v) => match v.json::<RawRegisteredSchema>() {
-            Ok(r) => Ok(r),
-            Err(e) => Err(SRCError::non_retryable_with_cause(
-                e,
-                "could not parse to RawRegisteredSchema, schema might not exist on this schema registry, the http call failed, cause will give more information",
-            )),
-        },
-        Err(e) => Err(SRCError::retryable_with_cause(
-            e,
-            "http call to schema registry failed",
-        )),
-    }
+    let successful_response = send_with_auth(builder, authentication)?;
+    successful_response
+        .json::<RawRegisteredSchema>()
+        .map_err(|e| {
+            SRCError::non_retryable_with_cause(e, "could not parse to RawRegisteredSchema")
+        })
 }
 
 pub fn get_all_subjects(sr_settings: &SrSettings) -> Result<Vec<String>, SRCError> {
@@ -497,20 +511,10 @@ fn perform_single_subjects_call(
 ) -> Result<Vec<String>, SRCError> {
     let url = format!("{}/subjects", base_url);
     let builder = client.get(url);
-    let call = apply_authentication(builder, authentication);
-    match call {
-        Ok(v) => match v.json::<Vec<String>>() {
-            Ok(r) => Ok(r),
-            Err(e) => Err(SRCError::non_retryable_with_cause(
-                e,
-                "could not parse to list of subjects, the http call failed, cause will give more information",
-            )),
-        },
-        Err(e) => Err(SRCError::retryable_with_cause(
-            e,
-            "http call to schema registry failed",
-        )),
-    }
+    let successful_response = send_with_auth(builder, authentication)?;
+    successful_response
+        .json::<Vec<String>>()
+        .map_err(|e| SRCError::non_retryable_with_cause(e, "could not parse to list of subjects"))
 }
 
 pub fn get_all_versions(sr_settings: &SrSettings, subject: String) -> Result<Vec<u32>, SRCError> {
@@ -538,20 +542,13 @@ fn perform_single_versions_call(
 ) -> Result<Vec<u32>, SRCError> {
     let url = format!("{}/subjects/{}/versions", base_url, subject);
     let builder = client.get(url);
-    let call = apply_authentication(builder, authentication);
-    match call {
-        Ok(v) => match v.json::<Vec<u32>>() {
-            Ok(r) => Ok(r),
-            Err(e) => Err(SRCError::non_retryable_with_cause(
-                e,
-                "could not parse to list of versions, the http call failed, cause will give more information",
-            )),
-        },
-        Err(e) => Err(SRCError::retryable_with_cause(
+    let successful_response = send_with_auth(builder, authentication)?;
+    successful_response.json::<Vec<u32>>().map_err(|e| {
+        SRCError::non_retryable_with_cause(
             e,
-            "http call to schema registry failed",
-        )),
-    }
+            "could not parse to list of versions, the http call failed, cause will give more information",
+        )
+    })
 }
 
 #[cfg(test)]
@@ -624,6 +621,34 @@ mod tests {
                 )
             ),
             _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn test_get_schema_by_id_unauthenticated() {
+        let mut server = mockito::Server::new();
+
+        let _m = server
+            .mock("GET", "/schemas/ids/1?deleted=true")
+            .with_status(401)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"error_code":401,"message":"Unauthorized"}"#)
+            .create();
+
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
+
+        let result = crate::blocking::schema_registry::get_schema_by_id(1, &sr_settings);
+        match result {
+            Ok(_) => panic!("success, when error is expected"),
+            Err(e) => {
+                assert_eq!(
+                    e.error,
+                    "HTTP request to schema registry failed with status 401 Unauthorized"
+                );
+            }
         }
     }
 
