@@ -526,7 +526,6 @@ async fn perform_single_sr_call(
     sr_call: SrCall<'_>,
 ) -> Result<RawRegisteredSchema, SRCError> {
     let url = url_for_call(&sr_call, base_url);
-    println!("URLLLLL: {}", url.as_str());
     let builder = match sr_call {
         SrCall::GetById(_) | SrCall::GetLatest(_) | SrCall::GetBySubjectAndVersion(_, _) => {
             client.get(&url)
