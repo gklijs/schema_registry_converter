@@ -2,8 +2,8 @@ use crate::blocking::proto_tests::get_schema_registry_url;
 use schema_registry_converter::blocking::schema_registry::{
     get_all_subjects, get_all_versions, perform_sr_call, SrSettings,
 };
-use schema_registry_converter::schema_registry_common::SrCall;
 use schema_registry_converter::error::SRCError;
+use schema_registry_converter::schema_registry_common::SrCall;
 
 #[test]
 fn test_get_all_subjects() {
@@ -48,5 +48,14 @@ fn test_get_unknown_schema() {
     let sr_call = SrCall::GetBySubjectAndVersion("unknown-schema", 1);
     let result = perform_sr_call(&sr_settings, sr_call);
     assert!(result.is_err(), "Call should have failed");
-    assert_eq!(result.err().unwrap(), SRCError::new("HTTP request to schema registry failed with status 404 Not Found", Some(String::from("error_code: 40401, message: Subject 'unknown-schema' not found.")), false));
+    assert_eq!(
+        result.err().unwrap(),
+        SRCError::new(
+            "HTTP request to schema registry failed with status 404 Not Found",
+            Some(String::from(
+                "error_code: 40401, message: Subject 'unknown-schema' not found."
+            )),
+            false
+        )
+    );
 }

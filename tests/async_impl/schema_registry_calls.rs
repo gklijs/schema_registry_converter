@@ -53,5 +53,14 @@ async fn test_get_unknown_schema() {
     let sr_call = SrCall::GetBySubjectAndVersion("unknown-schema", 1);
     let result = perform_sr_call(&sr_settings, sr_call).await;
     assert!(result.is_err(), "Call should have failed");
-    assert_eq!(result.err().unwrap(), SRCError::new("HTTP request to schema registry failed with status 404 Not Found", Some(String::from("error_code: 40401, message: Subject 'unknown-schema' not found.")), false));
+    assert_eq!(
+        result.err().unwrap(),
+        SRCError::new(
+            "HTTP request to schema registry failed with status 404 Not Found",
+            Some(String::from(
+                "error_code: 40401, message: Subject 'unknown-schema' not found."
+            )),
+            false
+        )
+    );
 }
