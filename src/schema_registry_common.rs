@@ -264,12 +264,30 @@ pub fn get_bytes_result(bytes: Option<&[u8]>) -> BytesResult {
     }
 }
 
+/// Returns a descriptive error message for invalid bytes, including a hint about the magic byte
+/// when the first byte is not 0x00.
+pub fn invalid_bytes_error(bytes: &[u8]) -> String {
+    if bytes.is_empty() {
+        "Invalid bytes: empty payload, expected confluent schema registry wire format".to_string()
+    } else if bytes.len() <= 4 {
+        format!(
+            "Invalid bytes: payload too short ({} bytes), expected at least 5 bytes for confluent schema registry wire format",
+            bytes.len()
+        )
+    } else {
+        format!(
+            "Invalid bytes: first byte is {:#04x}, expected magic byte 0x00 for confluent schema registry wire format. The message may not be encoded with the schema registry serializer.",
+            bytes[0]
+        )
+    }
+}
+
 #[cfg(test)]
 mod test {
     use crate::error::SRCError;
     use crate::schema_registry_common::{
-        get_bytes_result, BytesResult, RegisteredSchema, SchemaType, SrAuthorization,
-        SubjectNameStrategy, SuppliedSchema,
+        get_bytes_result, invalid_bytes_error, BytesResult, RegisteredSchema, SchemaType,
+        SrAuthorization, SubjectNameStrategy, SuppliedSchema,
     };
 
     #[test]
@@ -396,5 +414,32 @@ mod test {
     fn get_bytes_result_invalid() {
         let result = get_bytes_result(Some(&[0, 0, 0, 0]));
         assert_eq!(BytesResult::Invalid(vec![0, 0, 0, 0]), result)
+    }
+
+    #[test]
+    fn invalid_bytes_error_empty() {
+        let result = invalid_bytes_error(&[]);
+        assert_eq!(
+            "Invalid bytes: empty payload, expected confluent schema registry wire format",
+            result
+        )
+    }
+
+    #[test]
+    fn invalid_bytes_error_too_short() {
+        let result = invalid_bytes_error(&[0, 0, 0, 0]);
+        assert_eq!(
+            "Invalid bytes: payload too short (4 bytes), expected at least 5 bytes for confluent schema registry wire format",
+            result
+        )
+    }
+
+    #[test]
+    fn invalid_bytes_error_wrong_magic_byte() {
+        let result = invalid_bytes_error(&[1, 0, 0, 0, 1, 6]);
+        assert_eq!(
+            "Invalid bytes: first byte is 0x01, expected magic byte 0x00 for confluent schema registry wire format. The message may not be encoded with the schema registry serializer.",
+            result
+        )
     }
 }

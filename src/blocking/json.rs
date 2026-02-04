@@ -13,8 +13,8 @@ use crate::blocking::schema_registry::{
 use crate::error::SRCError;
 use crate::json_common::{fetch_fallback, fetch_id, handle_validation, to_bytes, to_value};
 use crate::schema_registry_common::{
-    get_bytes_result, BytesResult, RegisteredReference, RegisteredSchema, SchemaType,
-    SubjectNameStrategy,
+    get_bytes_result, invalid_bytes_error, BytesResult, RegisteredReference, RegisteredSchema,
+    SchemaType, SubjectNameStrategy,
 };
 
 /// Encoder that works by prepending the correct bytes in order to make it valid schema registry
@@ -130,10 +130,9 @@ impl JsonDecoder {
         match get_bytes_result(bytes) {
             BytesResult::Null => Ok(None),
             BytesResult::Valid(id, bytes) => Ok(Some(self.deserialize(id, &bytes)?)),
-            BytesResult::Invalid(i) => Err(SRCError::non_retryable_without_cause(&format!(
-                "Invalid bytes: {:?}",
-                i
-            ))),
+            BytesResult::Invalid(i) => Err(SRCError::non_retryable_without_cause(
+                &invalid_bytes_error(&i),
+            )),
         }
     }
     /// The actual deserialization trying to get the id from the bytes to retrieve the schema, and
@@ -773,6 +772,6 @@ mod tests {
         let sr_settings = SrSettings::new(String::from("http://127.0.0.1:1234"));
         let mut decoder = JsonDecoder::new(sr_settings);
         let result = decoder.decode(Some(&[1, 0])).unwrap_err();
-        assert_eq!(String::from("Invalid bytes: [1, 0]"), result.error)
+        assert_eq!(String::from("Invalid bytes: payload too short (2 bytes), expected at least 5 bytes for confluent schema registry wire format"), result.error)
     }
 }
