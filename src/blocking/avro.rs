@@ -45,8 +45,8 @@ use crate::blocking::schema_registry::{
 };
 use crate::error::SRCError;
 use crate::schema_registry_common::{
-    get_bytes_result, BytesResult, RegisteredReference, RegisteredSchema, SchemaType,
-    SubjectNameStrategy,
+    get_bytes_result, invalid_bytes_error, BytesResult, RegisteredReference, RegisteredSchema,
+    SchemaType, SubjectNameStrategy,
 };
 
 /// A decoder used to transform bytes to a Value object
@@ -164,10 +164,9 @@ impl AvroDecoder {
                 value: Value::Null,
             }),
             BytesResult::Valid(id, bytes) => self.deserialize(id, &bytes),
-            BytesResult::Invalid(bytes) => Err(SRCError::non_retryable_without_cause(&format!(
-                "Invalid bytes {:?}",
-                bytes
-            ))),
+            BytesResult::Invalid(bytes) => Err(SRCError::non_retryable_without_cause(
+                &invalid_bytes_error(&bytes),
+            )),
         }
     }
     /// The actual deserialization trying to get the id from the bytes to retrieve the schema, and
@@ -204,10 +203,9 @@ impl AvroDecoder {
                 Ok(v) => Ok(Some(v)),
                 Err(e) => Err(e),
             },
-            BytesResult::Invalid(bytes) => Err(SRCError::non_retryable_without_cause(&format!(
-                "Invalid bytes {:?}",
-                bytes
-            ))),
+            BytesResult::Invalid(bytes) => Err(SRCError::non_retryable_without_cause(
+                &invalid_bytes_error(&bytes),
+            )),
         }
     }
     /// The actual deserialization trying to get the id from the bytes to retrieve the schema, and
@@ -706,7 +704,7 @@ mod tests {
         assert_eq!(
             result,
             Err(SRCError::non_retryable_without_cause(
-                "Invalid bytes [1, 0, 0, 0, 1, 6]"
+                "Invalid bytes: first byte is 0x01, expected magic byte 0x00 for confluent schema registry wire format. The message may not be encoded with the schema registry serializer."
             ))
         )
     }
@@ -720,7 +718,7 @@ mod tests {
         assert_eq!(
             result,
             Err(SRCError::non_retryable_without_cause(
-                "Invalid bytes [1, 0, 0, 0, 1, 6]"
+                "Invalid bytes: first byte is 0x01, expected magic byte 0x00 for confluent schema registry wire format. The message may not be encoded with the schema registry serializer."
             ))
         )
     }
@@ -734,7 +732,7 @@ mod tests {
         assert_eq!(
             result,
             Err(SRCError::non_retryable_without_cause(
-                "Invalid bytes [0, 0, 0, 0]"
+                "Invalid bytes: payload too short (4 bytes), expected at least 5 bytes for confluent schema registry wire format"
             ))
         )
     }

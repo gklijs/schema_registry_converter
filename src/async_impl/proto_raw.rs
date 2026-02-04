@@ -7,7 +7,8 @@ use crate::proto_raw_common::{
 };
 use crate::proto_resolver::{resolve_name, to_index_and_data, IndexResolver};
 use crate::schema_registry_common::{
-    get_bytes_result, BytesResult, RegisteredSchema, SchemaType, SubjectNameStrategy,
+    get_bytes_result, invalid_bytes_error, BytesResult, RegisteredSchema, SchemaType,
+    SubjectNameStrategy,
 };
 use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
@@ -158,10 +159,9 @@ impl<'a> ProtoRawDecoder<'a> {
         match get_bytes_result(bytes) {
             BytesResult::Null => Ok(None),
             BytesResult::Valid(id, bytes) => Ok(Some(self.deserialize(id, &bytes).await?)),
-            BytesResult::Invalid(i) => Err(SRCError::non_retryable_without_cause(&format!(
-                "Invalid bytes {:?}",
-                i
-            ))),
+            BytesResult::Invalid(i) => Err(SRCError::non_retryable_without_cause(
+                &invalid_bytes_error(&i),
+            )),
         }
     }
     /// The actual deserialization trying to get the id from the bytes to retrieve the schema, and
