@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 /// A decoder used to transform bytes to a [RawDecodeResult], its much like [ProtoRawDecoder] but wrapped with an arc to make it easier.
 /// You can use the bytes from the result to create a proto object.
+#[derive(Clone, Debug)]
 pub struct EasyProtoRawDecoder {
     decoder: Arc<ProtoRawDecoder<'static>>,
 }
@@ -23,6 +24,7 @@ impl EasyProtoRawDecoder {
 /// An encoder used to transform the proto bytes to bytes compatible with confluent schema registry, its much like [ProtoRawEncoder] but wrapped with an arc to make it easier.
 /// This wil just add the magic byte, schema reference, and message reference. The bytes should already be valid proto bytes for the schema used.
 /// When a schema with multiple messages is used the full_name needs to be supplied to properly encode the message reference.
+#[derive(Clone, Debug)]
 pub struct EasyProtoRawEncoder {
     encoder: Arc<ProtoRawEncoder<'static>>,
 }
