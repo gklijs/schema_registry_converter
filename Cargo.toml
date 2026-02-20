@@ -17,7 +17,7 @@ resolver = "2"
 
 [features]
 native_tls = ["reqwest/native-tls"]
-rustls_tls = ["reqwest/rustls-tls"]
+rustls_tls = ["reqwest/rustls"]
 
 avro = ["apache-avro"]
 blocking = ["reqwest/blocking"]
@@ -35,7 +35,7 @@ version = "^1.5"
 version = "^6.1"
 
 [dependencies.reqwest]
-version = "^0.12"
+version = "^0.13"
 default-features = false
 features = ["json"]
 
@@ -85,7 +85,7 @@ optional = true
 
 [dev-dependencies]
 mockito = "^1.7.0"
-rdkafka = { version = "^0.38.0", features = ["cmake-build"] }
+rdkafka = { version = "^0.39.0", features = ["cmake-build", "curl-static"] }
 rand = "^0.9.1"
 test_utils = { path = "test_utils" }
 tokio = { version = "^1.46.1", features = ["macros"] }
