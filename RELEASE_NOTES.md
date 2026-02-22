@@ -1,5 +1,12 @@
 ## Release notes
 
+### 4.8.0
+
+Some dependency updates.
+Better handling for comments in proto massages.
+Improved error response from schema registry, using the response from schema registry.
+Adding clone/debug to encoders and decoders.
+
 ### 4.7.0
 
 Update avro dependency and add properties inside the metadata of the schema registry response.
@@ -134,9 +141,11 @@ instead of the `encode` function on the encoder.
 - [@benmanns](https://github.com/benmanns)
 - [@cbzehner](https://github.com/cbzehner)
 - [@icdevin](https://github.com/icdevin)
-- [@johnhalbert](https://github.com/johnhalbert)  
+- [@johnhalbert](https://github.com/johnhalbert)
+- [@gab-txt](https://github.com/gab-txt)
 - [@kitsuneninetails](https://github.com/kitsuneninetails)
 - [@kujeger](https://github.com/kujeger)
+- [@lahabana](https://github.com/lahabana)
 - [@Licenser](https://github.com/Licenser)
 - [@lukecampbell](https://github.com/lukecampbell)
 - [@MariellHoversholm-Paf](https://github.com/MariellHoversholm-Paf)
@@ -147,3 +156,4 @@ instead of the `encode` function on the encoder.
 - [@saiharshavellanki](https://github.com/saiharshavellanki)
 - [@SergeStrashko](https://github.com/SergeStrashko)
 - [@sfsf9797](https://github.com/sfsf9797)
+- [@vpikulik](https://github.com/vpikulik)
