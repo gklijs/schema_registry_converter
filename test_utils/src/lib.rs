@@ -99,18 +99,13 @@ pub struct Heartbeat {
     pub beat: i64,
 }
 
-#[derive(Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Clone, Deserialize, Serialize)]
+#[derive(Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Clone, Deserialize, Serialize)]
 pub enum Atype {
     #[serde(rename = "AUTO")]
+    #[default]
     Auto,
     #[serde(rename = "MANUAL")]
     Manual,
-}
-
-impl Default for Atype {
-    fn default() -> Self {
-        Atype::Auto
-    }
 }
 
 pub type Uuid = [u8; 16];

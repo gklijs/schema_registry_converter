@@ -31,18 +31,20 @@ pub fn consume_proto(
     let decoder = ProtoDecoder::new(sr_settings);
     let consumer = get_consumer(brokers, group_id, topics, auto_commit);
 
-    for message in consumer.iter() {
-        match message {
-            Err(e) => {
-                panic!("Got error producing message: {}", e);
+    match consumer.iter().next() {
+        Some(r) => {
+            match r {
+                Err(e) => {
+                    panic!("Got error producing message: {}", e);
+                }
+                Ok(m) => {
+                    let des_r = get_deserialized_proto_record(&m, &decoder);
+                    test(des_r);
+                }
             }
-            Ok(m) => {
-                let des_r = get_deserialized_proto_record(&m, &decoder);
-                test(des_r);
-                return;
-            }
-        };
-    }
+        }
+        None => panic!("No next record for proto consumer")
+    };
 }
 
 fn get_deserialized_proto_record<'a>(
