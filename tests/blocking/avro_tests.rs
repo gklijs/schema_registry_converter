@@ -3,7 +3,7 @@ extern crate schema_registry_converter;
 use crate::blocking::avro_consumer::{consume_avro, DeserializedAvroRecord};
 use crate::blocking::kafka_producer::get_producer;
 use apache_avro::types::Value;
-use rand::Rng;
+use rand::prelude::*;
 use schema_registry_converter::schema_registry_common::{
     SchemaType, SubjectNameStrategy, SuppliedSchema,
 };
@@ -180,7 +180,7 @@ fn test4_test_avro_from_java_test_app() {
             (_id, Value::Array(v)) => v,
             _ => panic!("Not an array value for results while that was expected"),
         };
-        let result = match results.get(0).expect("one item to be present") {
+        let result = match results.first().expect("one item to be present") {
             Value::Record(v) => v,
             _ => panic!("Not record for first of results while that was expected"),
         };

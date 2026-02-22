@@ -86,7 +86,7 @@ optional = true
 [dev-dependencies]
 mockito = "^1.7.0"
 rdkafka = { version = "^0.39.0", features = ["cmake-build", "curl-static"] }
-rand = "^0.9.1"
+rand = "^0.10.0"
 test_utils = { path = "test_utils" }
 tokio = { version = "^1.46.1", features = ["macros"] }
 

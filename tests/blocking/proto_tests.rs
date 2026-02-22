@@ -63,6 +63,19 @@ fn test1_test_proto_from_java_test_app() {
             input_value,
             "Optional string is string"
         );
+        assert_eq!(
+            rec.topic,
+            topic,
+            "Topic in record should match the actual topic"
+        );
+        assert!(
+            rec.partition >= 0,
+            "Partition in record should be a positive number"
+        );
+        assert!(
+            rec.offset >= 0,
+            "Offset in record should be a positive number"
+        );
     });
     consume_proto(
         get_brokers(),
