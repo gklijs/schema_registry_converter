@@ -66,6 +66,12 @@ pub struct ResolverHelper {
 
 #[derive(Logos, Debug, PartialEq)]
 enum Token {
+    #[regex(r"/\*[^/]+\*/", logos::skip, priority = 20)]
+    BlockComment,
+
+    #[regex(r"//[\w\s]+\n", logos::skip, priority = 20)]
+    LineComment,
+
     #[regex(r"package\s+[a-zA-z0-9\\.\\_]+;", priority = 10)]
     Package,
 
@@ -125,7 +131,10 @@ impl ResolverHelper {
                 Ok(Token::Close) => {
                     index.pop();
                 }
-                Err(_) | Ok(Token::Ignorable) => (),
+                Err(_)
+                | Ok(Token::Ignorable)
+                | Ok(Token::BlockComment)
+                | Ok(Token::LineComment) => (),
             };
             next = lex.next()
         }
@@ -260,6 +269,29 @@ message EventSource {
   optional string reason = 4; // reason for change to the order
 }"#
     }
+    fn get_with_comment_line() -> &'static str {
+        r#"// Main message
+message Receipts {
+  string company_id = 1;
+  string created = 2;
+  string key = 3;
+  string partition = 4;
+  string updated = 5;
+}"#
+    }
+    fn get_with_two_block_comments() -> &'static str {
+        r#"/* some
+        block
+        comment */
+message Receipts {
+  string company_id = 1;
+  string created = 2;
+  string key = 3;
+  string partition = 4;
+/* some other block comment */
+  string updated = 5;
+}"#
+    }
 
     #[test]
     fn test_simple_schema_message_resolver() {
@@ -349,5 +381,27 @@ message EventSource {
             resolver.find_index("org.schema_registry_test_app.proto.ProtoTest"),
             Some(Arc::new(vec![3]))
         );
+    }
+
+    #[test]
+    fn test_schema_with_comment_line() {
+        let resolver = MessageResolver::new(get_with_comment_line());
+        assert_eq!(
+            resolver.find_name(&[0]),
+            Some(Arc::new(String::from("Receipts")))
+        );
+        assert_eq!(resolver.find_name(&[1]), None);
+        assert_eq!(resolver.imports.len(), 0)
+    }
+
+    #[test]
+    fn test_schema_with_two_block_comments() {
+        let resolver = MessageResolver::new(get_with_two_block_comments());
+        assert_eq!(
+            resolver.find_name(&[0]),
+            Some(Arc::new(String::from("Receipts")))
+        );
+        assert_eq!(resolver.find_name(&[1]), None);
+        assert_eq!(resolver.imports.len(), 0)
     }
 }
