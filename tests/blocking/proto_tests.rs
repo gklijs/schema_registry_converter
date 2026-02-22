@@ -64,8 +64,7 @@ fn test1_test_proto_from_java_test_app() {
             "Optional string is string"
         );
         assert_eq!(
-            rec.topic,
-            topic,
+            rec.topic, topic,
             "Topic in record should match the actual topic"
         );
         assert!(

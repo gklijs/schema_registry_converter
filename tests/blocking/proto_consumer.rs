@@ -32,18 +32,16 @@ pub fn consume_proto(
     let consumer = get_consumer(brokers, group_id, topics, auto_commit);
 
     match consumer.iter().next() {
-        Some(r) => {
-            match r {
-                Err(e) => {
-                    panic!("Got error producing message: {}", e);
-                }
-                Ok(m) => {
-                    let des_r = get_deserialized_proto_record(&m, &decoder);
-                    test(des_r);
-                }
+        Some(r) => match r {
+            Err(e) => {
+                panic!("Got error producing message: {}", e);
             }
-        }
-        None => panic!("No next record for proto consumer")
+            Ok(m) => {
+                let des_r = get_deserialized_proto_record(&m, &decoder);
+                test(des_r);
+            }
+        },
+        None => panic!("No next record for proto consumer"),
     };
 }
 

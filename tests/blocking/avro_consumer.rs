@@ -30,18 +30,16 @@ pub fn consume_avro(
     let consumer = get_consumer(brokers, group_id, topics, auto_commit);
 
     match consumer.iter().next() {
-        Some(r) => {
-            match r {
-                Err(e) => {
-                    panic!("Got error consuming message: {}", e);
-                }
-                Ok(m) => {
-                    let des_r = get_deserialized_avro_record(&m, &decoder);
-                    test(des_r);
-                }
+        Some(r) => match r {
+            Err(e) => {
+                panic!("Got error consuming message: {}", e);
             }
-        }
-        None => panic!("No record received in avro consumer, while that was expected")
+            Ok(m) => {
+                let des_r = get_deserialized_avro_record(&m, &decoder);
+                test(des_r);
+            }
+        },
+        None => panic!("No record received in avro consumer, while that was expected"),
     };
 }
 
