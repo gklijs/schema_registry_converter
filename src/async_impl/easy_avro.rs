@@ -19,6 +19,7 @@ use std::sync::Arc;
 
 /// A decoder used to transform bytes to a [DecodeResult], its much like
 /// [AvroDecoder] but wrapped with an [`Arc`] to make it easier.
+#[derive(Clone, Debug)]
 pub struct EasyAvroDecoder {
     decoder: Arc<AvroDecoder<'static>>,
 }
@@ -41,6 +42,7 @@ impl EasyAvroDecoder {
 
 /// An encoder used to transform a [Value] to bytes, its much like [AvroEncoder]
 /// but wrapped with an [`Arc`] to make it easier.
+#[derive(Clone, Debug)]
 pub struct EasyAvroEncoder {
     encoder: Arc<AvroEncoder<'static>>,
 }
