@@ -13,6 +13,7 @@ use serde_json::Value;
 use std::sync::Arc;
 
 /// A decoder used to transform bytes to a [DecodeResult], its much like [JsonDecoder] but wrapped with an arc to make it easier.
+#[derive(Clone, Debug)]
 pub struct EasyJsonDecoder {
     decoder: Arc<JsonDecoder<'static>>,
 }
@@ -28,6 +29,7 @@ impl EasyJsonDecoder {
 }
 
 /// An encoder used to transform a [Value] to bytes, its much like [JsonEncoder] but wrapped with an arc to make it easier.
+#[derive(Clone, Debug)]
 pub struct EasyJsonEncoder {
     encoder: Arc<JsonEncoder<'static>>,
 }
