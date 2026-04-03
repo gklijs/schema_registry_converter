@@ -7,6 +7,7 @@ use dashmap::DashMap;
 use reqwest::blocking::{Client, ClientBuilder, RequestBuilder, Response};
 use reqwest::header;
 use reqwest::header::{HeaderName, ACCEPT, CONTENT_TYPE};
+use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
 use crate::error::SRCError;
@@ -549,6 +550,109 @@ fn perform_single_versions_call(
             "could not parse to list of versions, the http call failed, cause will give more information",
         )
     })
+}
+
+#[derive(Debug, Deserialize)]
+struct CompatibilityResponse {
+    is_compatible: bool,
+}
+
+fn perform_single_compatibility_call(
+    base_url: &str,
+    client: &Client,
+    authentication: &SrAuthorization,
+    subject: &String,
+    body: &String,
+) -> Result<CompatibilityResponse, SRCError> {
+    let url = format!("{}/compatibility/subjects/{}/versions", base_url, subject);
+    let builder = client
+        .post(url)
+        .body(String::from(body))
+        .header(CONTENT_TYPE, "application/vnd.schemaregistry.v1+json")
+        .header(ACCEPT, "application/vnd.schemaregistry.v1+json");
+    let successful_response = send_with_auth(builder, authentication)?;
+    successful_response.json().map_err(|e| {
+        SRCError::non_retryable_with_cause(e, "could not parse compatibility response")
+    })
+}
+
+fn perform_compatibility_call(
+    sr_settings: &SrSettings,
+    subject: &String,
+    body: &String,
+) -> Result<CompatibilityResponse, SRCError> {
+    let url_count = sr_settings.urls.len();
+    let mut n = 0;
+    loop {
+        let result = perform_single_compatibility_call(
+            &sr_settings.urls[n],
+            &sr_settings.client,
+            &sr_settings.authorization,
+            subject,
+            body,
+        );
+        if result.is_ok() || n + 1 == url_count {
+            break result;
+        }
+        n += 1
+    }
+}
+
+fn is_compatible_reference(
+    sr_settings: &SrSettings,
+    schema_type: &str,
+    reference: SuppliedReference,
+) -> Result<Option<RegisteredReference>, SRCError> {
+    let mut references = Vec::new();
+    for r in reference.references {
+        match is_compatible_reference(sr_settings, schema_type, r)? {
+            Some(v) => references.push(v),
+            None => return Ok(None),
+        }
+    }
+    let body = get_body(schema_type, &reference.schema, &references);
+    if !perform_compatibility_call(sr_settings, &reference.subject, &body)?.is_compatible {
+        return Ok(None);
+    }
+    let version = call_and_get_version(
+        sr_settings,
+        SrCall::PostForVersion(&reference.subject, &body),
+    )?;
+    Ok(Some(RegisteredReference {
+        name: reference.name,
+        subject: reference.subject,
+        version,
+        properties: reference.properties,
+        tags: reference.tags,
+    }))
+}
+
+/// Checks if the supplied schema, including all its references, is compatible with one or more
+/// versions in the subjects based on the configured compatibility level of the subject.
+///
+/// For example, if compatibility on the subject is set to BACKWARD, FORWARD, or FULL, the
+/// compatibility check is against the latest version. If compatibility is set to one of the
+/// TRANSITIVE types, the check is against all previous versions.
+pub fn is_compatible_schema(
+    sr_settings: &SrSettings,
+    subject: String,
+    schema: SuppliedSchema,
+) -> Result<bool, SRCError> {
+    let schema_type = match &schema.schema_type {
+        SchemaType::Avro => String::from("AVRO"),
+        SchemaType::Protobuf => String::from("PROTOBUF"),
+        SchemaType::Json => String::from("JSON"),
+        SchemaType::Other(v) => v.clone(),
+    };
+    let mut references = Vec::new();
+    for reference in schema.references {
+        match is_compatible_reference(sr_settings, &schema_type, reference)? {
+            Some(v) => references.push(v),
+            None => return Ok(false),
+        }
+    }
+    let body = get_body(&schema_type, &schema.schema, &references);
+    Ok(perform_compatibility_call(sr_settings, &subject, &body)?.is_compatible)
 }
 
 #[cfg(test)]
