@@ -553,6 +553,8 @@ fn to_avro_schema(
             id: registered_schema.id,
             raw: registered_schema.schema,
             parsed,
+            subject: registered_schema.subject,
+            version: registered_schema.version,
         })),
         Err(e) => Err(SRCError::non_retryable_with_cause(
             e,
@@ -1464,6 +1466,8 @@ mod tests {
             references: vec![],
             properties: None,
             tags: None,
+            subject: None,
+            version: None,
         };
         let sr_settings = SrSettings::new_builder(String::from("http://127.0.0.1:1234"))
             .no_proxy()
@@ -1487,6 +1491,8 @@ mod tests {
             references: vec![],
             properties: None,
             tags: None,
+            subject: None,
+            version: None,
         };
         let sr_settings = SrSettings::new_builder(String::from("http://127.0.0.1:1234"))
             .no_proxy()
@@ -1500,6 +1506,29 @@ mod tests {
             result,
             SRCError::new("type Protobuf, is not supported", None, false)
         )
+    }
+
+    #[test]
+    fn to_avro_schema_propagates_subject_and_version() {
+        let registered_schema = RegisteredSchema {
+            id: 7,
+            schema_type: SchemaType::Avro,
+            schema: String::from(r#"{"type":"record","name":"X","fields":[]}"#),
+            references: vec![],
+            properties: None,
+            tags: None,
+            subject: Some("orders-value".to_string()),
+            version: Some(3),
+        };
+        let sr_settings = SrSettings::new_builder(String::from("http://127.0.0.1:1234"))
+            .no_proxy()
+            .build()
+            .unwrap();
+        let avro = to_avro_schema(&sr_settings, registered_schema)
+            .expect("conversion succeeds for empty references");
+        assert_eq!(avro.id, 7);
+        assert_eq!(avro.subject.as_deref(), Some("orders-value"));
+        assert_eq!(avro.version, Some(3));
     }
 
     #[test]
