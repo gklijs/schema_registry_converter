@@ -85,6 +85,11 @@ pub struct RegisteredReference {
 
 /// Schema as retrieved from the schema registry. It's close to the json received and doesn't do
 /// type specific transformations.
+///
+/// `subject` and `version` are populated from the registry response when available. The Confluent
+/// Schema Registry includes them in `GET /schemas/ids/{id}` responses; an id can be registered
+/// against multiple subjects, so the value here is "the subject the registry returned" rather than
+/// an authoritative single answer. Use `GET /schemas/ids/{id}/subjects` if you need the full set.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct RegisteredSchema {
     pub id: u32,
@@ -93,6 +98,8 @@ pub struct RegisteredSchema {
     pub references: Vec<RegisteredReference>,
     pub properties: Option<HashMap<String, String>>,
     pub tags: Option<HashMap<String, Vec<String>>>,
+    pub subject: Option<String>,
+    pub version: Option<u32>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -349,6 +356,8 @@ mod test {
             references: vec![],
             properties: None,
             tags: None,
+            subject: None,
+            version: None,
         };
         assert_eq!(0, registered_schema.id);
         assert_eq!(SchemaType::Avro, registered_schema.schema_type);
@@ -356,8 +365,10 @@ mod test {
         assert!(registered_schema.references.is_empty());
         assert!(registered_schema.properties.is_none());
         assert!(registered_schema.tags.is_none());
+        assert!(registered_schema.subject.is_none());
+        assert!(registered_schema.version.is_none());
         assert_eq!(
-            r#"RegisteredSchema { id: 0, schema_type: Avro, schema: "some schema", references: [], properties: None, tags: None }"#,
+            r#"RegisteredSchema { id: 0, schema_type: Avro, schema: "some schema", references: [], properties: None, tags: None, subject: None, version: None }"#,
             format!("{:?}", registered_schema)
         )
     }

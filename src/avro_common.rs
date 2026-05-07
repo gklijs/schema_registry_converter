@@ -13,11 +13,17 @@ use crate::schema_registry_common::{get_payload, SchemaType, SuppliedSchema};
 
 /// Because we need both the resulting schema, as have a way of posting the schema as json, we use
 /// this struct so we keep them both together.
+///
+/// `subject` and `version` are populated when the registry response includes them. See
+/// [`crate::schema_registry_common::RegisteredSchema`] for the caveats — a schema id can be
+/// registered against multiple subjects.
 #[derive(Debug, PartialEq)]
 pub struct AvroSchema {
     pub id: u32,
     pub raw: String,
     pub parsed: Schema,
+    pub subject: Option<String>,
+    pub version: Option<u32>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -200,6 +206,8 @@ mod tests {
             id: 5,
             raw: "".to_string(),
             parsed: Schema::Boolean,
+            subject: None,
+            version: None,
         };
         let result = values_to_bytes(&schema, vec![("beat", Value::Long(3))]);
         assert_eq!(
@@ -218,6 +226,8 @@ mod tests {
             id: 5,
             raw: String::from(r#"{"type":"record","name":"Name","namespace":"nl.openweb.data","fields":[{"name":"name","type":"string","avro.java.string":"String"}]}"#),
             parsed: Schema::parse_str(r#"{"type":"record","name":"Name","namespace":"nl.openweb.data","fields":[{"name":"name","type":"string","avro.java.string":"String"}]}"#).unwrap(),
+            subject: None,
+            version: None,
         };
         let err = values_to_bytes(&schema, vec![("beat", Value::Long(3))]).unwrap_err();
         assert_eq!(err.error, "Could not get Avro bytes")
@@ -233,6 +243,8 @@ mod tests {
             parsed: Schema::parse_str(
                 r#"{"type":"record","name":"Name","namespace":"nl.openweb.data","fields":[{"name":"name","type":"string","avro.java.string":"String"}]}"#,
             ).unwrap(),
+            subject: None,
+            version: None,
         };
         let err = crate::avro_common::item_to_bytes(&schema, Heartbeat { beat: 3 }).unwrap_err();
         assert_eq!(err.error, "Failed to resolve")
@@ -248,6 +260,8 @@ mod tests {
             parsed: Schema::parse_str(
                 r#"{"type":"record","name":"ConfirmAccountCreation","namespace":"nl.openweb.data","fields":[{"name":"id","type":{"type":"fixed","name":"Uuid","size":16}},{"name":"a_type","type":{"type":"enum","name":"Atype","symbols":["AUTO","MANUAL"]}}]}"#,
             ).unwrap(),
+            subject: None,
+            version: None,
         };
         let item = ConfirmAccountCreation {
             id: [

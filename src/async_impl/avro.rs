@@ -619,6 +619,8 @@ async fn to_avro_schema(
             id: registered_schema.id,
             raw: registered_schema.schema,
             parsed,
+            subject: registered_schema.subject,
+            version: registered_schema.version,
         })),
         Err(e) => Err(SRCError::non_retryable_with_cause(
             e,
@@ -1570,6 +1572,8 @@ mod tests {
             references: vec![],
             properties: None,
             tags: None,
+            subject: None,
+            version: None,
         };
         let sr_settings = SrSettings::new(String::from("http://127.0.0.1:1234"));
         let result = to_avro_schema(&sr_settings, registered_schema)
@@ -1592,6 +1596,8 @@ mod tests {
             references: vec![],
             properties: None,
             tags: None,
+            subject: None,
+            version: None,
         };
         let sr_settings = SrSettings::new(String::from("http://127.0.0.1:1234"));
         let err = to_avro_schema(&sr_settings, registered_schema)
@@ -1601,6 +1607,27 @@ mod tests {
             err,
             SRCError::new("type Protobuf, is not supported", None, false)
         )
+    }
+
+    #[tokio::test]
+    async fn to_avro_schema_propagates_subject_and_version() {
+        let registered_schema = RegisteredSchema {
+            id: 7,
+            schema_type: SchemaType::Avro,
+            schema: String::from(r#"{"type":"record","name":"X","fields":[]}"#),
+            references: vec![],
+            properties: None,
+            tags: None,
+            subject: Some("orders-value".to_string()),
+            version: Some(3),
+        };
+        let sr_settings = SrSettings::new(String::from("http://127.0.0.1:1234"));
+        let avro = to_avro_schema(&sr_settings, registered_schema)
+            .await
+            .expect("conversion succeeds for empty references");
+        assert_eq!(avro.id, 7);
+        assert_eq!(avro.subject.as_deref(), Some("orders-value"));
+        assert_eq!(avro.version, Some(3));
     }
 
     #[tokio::test]

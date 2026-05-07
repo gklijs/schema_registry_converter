@@ -297,6 +297,8 @@ async fn raw_to_registered_schema(
         references,
         properties,
         tags,
+        subject: raw_schema.subject,
+        version: raw_schema.version,
     })
 }
 
@@ -346,6 +348,8 @@ pub async fn post_schema(
         references,
         properties: schema.properties,
         tags: schema.tags,
+        subject: Some(subject),
+        version: None,
     })
 }
 
@@ -961,6 +965,8 @@ mod tests {
                 );
                 tags
             }),
+            subject: Some("ietf-telemetry-message".to_string()),
+            version: Some(1),
         };
 
         let parsed: RawRegisteredSchema = serde_json::from_str(json_str).expect("parse json");

@@ -135,12 +135,18 @@ pub fn validate(schema: JsonSchema, value: &Value) -> Result<(), SRCError> {
 
 /// Schema as retrieved from the schema registry. It's close to the json received and doesn't do
 /// type specific transformations.
+///
+/// `subject` and `version` are populated when the registry response includes them. See
+/// [`crate::schema_registry_common::RegisteredSchema`] for the caveats — a schema id can be
+/// registered against multiple subjects.
 #[derive(Clone, Debug)]
 pub struct JsonSchema {
     pub id: u32,
     pub url: Url,
     pub schema: Value,
     pub references: Vec<JsonSchema>,
+    pub subject: Option<String>,
+    pub version: Option<u32>,
 }
 
 #[derive(Debug)]
@@ -277,6 +283,8 @@ fn to_json_schema(
             url,
             schema,
             references,
+            subject: registered_schema.subject,
+            version: registered_schema.version,
         })
     }
     .boxed()
@@ -297,14 +305,37 @@ mod tests {
 
     use serde_json::Value;
 
-    use crate::async_impl::json::{validate, JsonDecoder, JsonEncoder};
+    use crate::async_impl::json::{to_json_schema, validate, JsonDecoder, JsonEncoder};
     use crate::async_impl::schema_registry::SrSettings;
-    use crate::schema_registry_common::{get_payload, SubjectNameStrategy};
+    use crate::schema_registry_common::{
+        get_payload, RegisteredSchema, SchemaType, SubjectNameStrategy,
+    };
     use test_utils::{
         get_json_body, get_json_body_with_reference, json_get_result_references,
         json_incorrect_bytes, json_result_java_bytes, json_result_schema,
         json_result_schema_with_id, json_test_ref_schema,
     };
+
+    #[tokio::test]
+    async fn to_json_schema_propagates_subject_and_version() {
+        let registered_schema = RegisteredSchema {
+            id: 7,
+            schema_type: SchemaType::Json,
+            schema: r#"{"type":"object"}"#.to_string(),
+            references: vec![],
+            properties: None,
+            tags: None,
+            subject: Some("orders-value".to_string()),
+            version: Some(3),
+        };
+        let sr_settings = SrSettings::new(String::from("http://127.0.0.1:1234"));
+        let json_schema = to_json_schema(&sr_settings, None, registered_schema)
+            .await
+            .expect("conversion succeeds for empty references");
+        assert_eq!(json_schema.id, 7);
+        assert_eq!(json_schema.subject.as_deref(), Some("orders-value"));
+        assert_eq!(json_schema.version, Some(3));
+    }
 
     #[tokio::test]
     async fn test_encode_java_compatibility() {
