@@ -1,5 +1,11 @@
 ## Release notes
 
+### 4.9.0
+
+Support schema compatibility checking.
+Expose subject and version in schema's.
+Add clone/debug to all easy encoders/decoders.
+
 ### 4.8.0
 
 Some dependency updates.
@@ -141,6 +147,7 @@ instead of the `encode` function on the encoder.
 - [@benmanns](https://github.com/benmanns)
 - [@cbzehner](https://github.com/cbzehner)
 - [@icdevin](https://github.com/icdevin)
+- [@jschmid1](https://github.com/jschmid1)
 - [@johnhalbert](https://github.com/johnhalbert)
 - [@gab-txt](https://github.com/gab-txt)
 - [@kitsuneninetails](https://github.com/kitsuneninetails)
@@ -152,6 +159,7 @@ instead of the `encode` function on the encoder.
 - [@mdroogh](https://github.com/mdroogh)
 - [@marioloko](https://github.com/marioloko)
 - [@naamancurtis](https://github.com/naamancurtis)
+- [@PookieBuns](https://github.com/PookieBuns)
 - [@rodonile](https://github.com/rodonile)
 - [@saiharshavellanki](https://github.com/saiharshavellanki)
 - [@SergeStrashko](https://github.com/SergeStrashko)
