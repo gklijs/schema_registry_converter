@@ -6,6 +6,7 @@ use apache_avro::{to_avro_datum, to_value};
 use dashmap::DashMap;
 use serde::ser::Serialize;
 use serde_json::{value, Map};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::error::SRCError;
@@ -17,6 +18,10 @@ use crate::schema_registry_common::{get_payload, SchemaType, SuppliedSchema};
 /// `subject` and `version` are populated when the registry response includes them. See
 /// [`crate::schema_registry_common::RegisteredSchema`] for the caveats — a schema id can be
 /// registered against multiple subjects.
+///
+/// `properties` and `tags` carry the Confluent `metadata` block verbatim as returned by the
+/// registry: `tags` is keyed by schema path (e.g. `io.confluent.field.<name>`) with the list of
+/// tags on that path. Each is populated when the registry response includes it.
 #[derive(Debug, PartialEq)]
 pub struct AvroSchema {
     pub id: u32,
@@ -24,6 +29,8 @@ pub struct AvroSchema {
     pub parsed: Schema,
     pub subject: Option<String>,
     pub version: Option<u32>,
+    pub properties: Option<HashMap<String, String>>,
+    pub tags: Option<HashMap<String, Vec<String>>>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -208,6 +215,8 @@ mod tests {
             parsed: Schema::Boolean,
             subject: None,
             version: None,
+            properties: None,
+            tags: None,
         };
         let result = values_to_bytes(&schema, vec![("beat", Value::Long(3))]);
         assert_eq!(
@@ -228,6 +237,8 @@ mod tests {
             parsed: Schema::parse_str(r#"{"type":"record","name":"Name","namespace":"nl.openweb.data","fields":[{"name":"name","type":"string","avro.java.string":"String"}]}"#).unwrap(),
             subject: None,
             version: None,
+            properties: None,
+            tags: None,
         };
         let err = values_to_bytes(&schema, vec![("beat", Value::Long(3))]).unwrap_err();
         assert_eq!(err.error, "Could not get Avro bytes")
@@ -245,6 +256,8 @@ mod tests {
             ).unwrap(),
             subject: None,
             version: None,
+            properties: None,
+            tags: None,
         };
         let err = crate::avro_common::item_to_bytes(&schema, Heartbeat { beat: 3 }).unwrap_err();
         assert_eq!(err.error, "Failed to resolve")
@@ -262,6 +275,8 @@ mod tests {
             ).unwrap(),
             subject: None,
             version: None,
+            properties: None,
+            tags: None,
         };
         let item = ConfirmAccountCreation {
             id: [
