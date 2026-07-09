@@ -555,6 +555,8 @@ fn to_avro_schema(
             parsed,
             subject: registered_schema.subject,
             version: registered_schema.version,
+            properties: registered_schema.properties,
+            tags: registered_schema.tags,
         })),
         Err(e) => Err(SRCError::non_retryable_with_cause(
             e,

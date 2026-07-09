@@ -1,6 +1,7 @@
 //! Implementations for JSON based Schemas.
 //!
 //! **NOTE**: Requires the `json` feature
+use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -139,6 +140,10 @@ pub fn validate(schema: JsonSchema, value: &Value) -> Result<(), SRCError> {
 /// `subject` and `version` are populated when the registry response includes them. See
 /// [`crate::schema_registry_common::RegisteredSchema`] for the caveats — a schema id can be
 /// registered against multiple subjects.
+///
+/// `properties` and `tags` carry the Confluent `metadata` block verbatim as returned by the
+/// registry: `tags` is keyed by schema path (e.g. `io.confluent.field.<name>`) with the list of
+/// tags on that path. Each is populated when the registry response includes it.
 #[derive(Clone, Debug)]
 pub struct JsonSchema {
     pub id: u32,
@@ -147,6 +152,8 @@ pub struct JsonSchema {
     pub references: Vec<JsonSchema>,
     pub subject: Option<String>,
     pub version: Option<u32>,
+    pub properties: Option<HashMap<String, String>>,
+    pub tags: Option<HashMap<String, Vec<String>>>,
 }
 
 #[derive(Debug)]
@@ -285,6 +292,8 @@ fn to_json_schema(
             references,
             subject: registered_schema.subject,
             version: registered_schema.version,
+            properties: registered_schema.properties,
+            tags: registered_schema.tags,
         })
     }
     .boxed()
@@ -335,6 +344,42 @@ mod tests {
         assert_eq!(json_schema.id, 7);
         assert_eq!(json_schema.subject.as_deref(), Some("orders-value"));
         assert_eq!(json_schema.version, Some(3));
+    }
+
+    #[tokio::test]
+    async fn decode_exposes_registry_metadata() {
+        let mut server = Server::new_async().await;
+        let _m = server
+            .mock("GET", "/schemas/ids/1?deleted=true")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(
+                r#"{"schemaType":"JSON","schema":"{\"$id\":\"https://example.com/customer.json\",\"type\":\"object\",\"properties\":{\"ssn\":{\"type\":\"string\"}}}","metadata":{"properties":{"owner":"identity-team"},"tags":{"io.confluent.field.ssn":["PII"]}}}"#,
+            )
+            .create();
+
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
+        let decoder = JsonDecoder::new(sr_settings);
+        // wire bytes: magic 0, schema id 1, JSON value payload
+        let payload = get_payload(1, br#"{"ssn":"123-45-6789"}"#.to_vec());
+        let schema = decoder
+            .decode(Some(&*payload))
+            .await
+            .unwrap()
+            .unwrap()
+            .schema;
+
+        assert_eq!(
+            schema.properties.as_ref().unwrap()["owner"],
+            "identity-team"
+        );
+        assert_eq!(
+            schema.tags.as_ref().unwrap()["io.confluent.field.ssn"],
+            vec!["PII".to_string()]
+        );
     }
 
     #[tokio::test]

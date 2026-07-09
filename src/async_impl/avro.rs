@@ -621,6 +621,8 @@ async fn to_avro_schema(
             parsed,
             subject: registered_schema.subject,
             version: registered_schema.version,
+            properties: registered_schema.properties,
+            tags: registered_schema.tags,
         })),
         Err(e) => Err(SRCError::non_retryable_with_cause(
             e,
@@ -1628,6 +1630,41 @@ mod tests {
         assert_eq!(avro.id, 7);
         assert_eq!(avro.subject.as_deref(), Some("orders-value"));
         assert_eq!(avro.version, Some(3));
+    }
+
+    #[tokio::test]
+    async fn decode_with_schema_exposes_registry_metadata() {
+        let mut server = Server::new_async().await;
+        let _m = server
+            .mock("GET", "/schemas/ids/1?deleted=true")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(
+                r#"{"schema":"{\"type\":\"record\",\"name\":\"Customer\",\"namespace\":\"com.example\",\"fields\":[{\"name\":\"ssn\",\"type\":\"string\"}]}","metadata":{"properties":{"owner":"identity-team"},"tags":{"io.confluent.field.ssn":["PII"]}}}"#,
+            )
+            .create();
+
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
+        let decoder = AvroDecoder::new(sr_settings);
+        // wire bytes: magic 0, schema id 1, avro string "x" (len 1)
+        let schema = decoder
+            .decode_with_schema(Some(&[0, 0, 0, 0, 1, 2, b'x']))
+            .await
+            .unwrap()
+            .unwrap()
+            .schema;
+
+        assert_eq!(
+            schema.properties.as_ref().unwrap()["owner"],
+            "identity-team"
+        );
+        assert_eq!(
+            schema.tags.as_ref().unwrap()["io.confluent.field.ssn"],
+            vec!["PII".to_string()]
+        );
     }
 
     #[tokio::test]
