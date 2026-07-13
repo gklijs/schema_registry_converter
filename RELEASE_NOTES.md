@@ -1,5 +1,10 @@
 ## Release notes
 
+### 4.10.0
+
+Propagate properties and tags.
+Minor code improvements.
+
 ### 4.9.0
 
 Support schema compatibility checking.

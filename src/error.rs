@@ -35,7 +35,7 @@ impl fmt::Display for SRCError {
             Some(cause) => write!(
                 f,
                 "Error: {}, was cause by {}, it's retriable: {}, it's cached: {}",
-                self.error, &cause, self.retriable, self.cached
+                self.error, cause, self.retriable, self.cached
             ),
             None => write!(
                 f,

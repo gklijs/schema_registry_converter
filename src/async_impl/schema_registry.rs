@@ -181,8 +181,8 @@ impl SrSettingsBuilder {
             }
             builder = builder.default_headers(header_map);
         }
-        if self.proxy.is_some() {
-            match reqwest::Proxy::all(self.proxy.as_ref().unwrap()) {
+        if let Some(p) = &self.proxy {
+            match reqwest::Proxy::all(p) {
                 Ok(v) => builder = builder.proxy(v),
                 Err(e) => return Err(SRCError::non_retryable_with_cause(e, "invalid proxy value")),
             };
