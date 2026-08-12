@@ -1,0 +1,1141 @@
+-- allium: 3
+--
+-- Scope: schema_registry_converter, a Rust client library for the Confluent Schema
+-- Registry, covering schema resolution/registration, the wire-format contract, caching,
+-- encode/decode across Avro, JSON Schema and Protobuf, and the sync-vs-async invocation
+-- choice.
+--
+-- Includes: Schema (supplied -> registered lifecycle, with recursive references),
+-- subject-name resolution strategies, the Confluent wire envelope (magic byte + 4-byte
+-- schema id), per-format encode/decode rules, schema/error caching semantics,
+-- concurrent-request deduplication, multi-URL failover, compatibility checking, registry
+-- introspection (list subjects/versions), and sync vs async as two invocation surfaces
+-- over identical logic.
+--
+-- Excludes:
+--   * The Easy*Decoder / Easy*Encoder wrappers (src/async_impl/easy_*.rs) -- pure Arc
+--     wrapping ergonomics, byte-for-byte identical behaviour to the type they wrap.
+--   * HTTP client internals (reqwest configuration, headers, TLS, proxy, timeout
+--     durations) -- implementation detail of SrSettings / SrSettingsBuilder.
+--   * The Avro / JSON Schema / Protobuf serialisation mechanics themselves -- black
+--     boxes; this library only orchestrates around apache_avro, valico and protofish.
+--   * Test utilities (test_utils/), UML diagrams (uml/) and the crate's test suite.
+--
+-- Terminology: the code's four-way split (SuppliedSchema, SuppliedReference,
+-- RegisteredSchema, RegisteredReference) is deliberately collapsed into one entity
+-- Schema. A reference is structurally identical to a top-level schema; it is only
+-- tracked as a child of another schema.
+
+------------------------------------------------------------
+-- External Entities
+------------------------------------------------------------
+
+-- The Confluent Schema Registry deployment. One logical registry may be reachable
+-- through several URLs; see the MultiUrlFailover obligation on RegistryAccess.
+external entity SchemaRegistry {
+    urls: List<String>
+}
+
+-- The program embedding this library. It picks one invocation style and does not mix
+-- instances of the two.
+external entity Application {
+    invocation_style: InvocationStyle
+}
+
+------------------------------------------------------------
+-- Value Types
+------------------------------------------------------------
+
+-- Every failed operation carries this. Callers branch on it: `retriable` says whether
+-- the same call might succeed on a plain retry, `cached` says whether the failure is now
+-- sitting in the codec's schema cache and so will not self-heal without an explicit
+-- ClearCachedErrors.
+value Error {
+    message: String
+    cause: String?
+    retriable: Boolean
+    cached: Boolean
+}
+
+-- Arbitrary key/value metadata registered alongside a schema.
+value SchemaProperty {
+    key: String
+    value: String
+}
+
+-- Tags keyed by a path within the schema (e.g. a field name), each carrying a set of
+-- tag labels. Part of the registry's metadata block.
+value SchemaTag {
+    path: String
+    labels: Set<String>
+}
+
+-- A pointer to a reference the registry reports: enough to fetch it, not its content.
+value SchemaReferencePointer {
+    name: String
+    subject: String
+    version: Integer
+}
+
+-- The schema as it travels to or from the registry. `id` is absent for a schema the
+-- caller supplies and present for one the registry reports.
+value SchemaData {
+    id: Integer?
+
+    -- The registry does not always report a schema type. A caller always states one, but
+    -- a lookup response that omits it is read as Avro -- a load-bearing default that most
+    -- of the registry's own responses rely on.
+    reported_format: SchemaFormat?
+    format: reported_format ?? avro
+
+    format_label: String?
+    content: String
+    name: String?
+    subject: String?
+    version: Integer?
+    properties: Set<SchemaProperty>?
+    tags: Set<SchemaTag>?
+
+    -- Empty when the registry reports no references.
+    reference_pointers: Set<SchemaReferencePointer>
+}
+
+-- An opaque byte sequence. This spec inspects only what the Confluent wire envelope
+-- requires: how long it is and what its first byte is. Everything else about the bytes
+-- is the concern of the format codec.
+value Bytes {
+    length: Integer
+    first_byte: Integer?
+
+    is_framed: length >= config.envelope_header_size and first_byte = config.magic_byte
+}
+
+-- How a subject name is chosen, and whether the schema is supplied by the caller or
+-- fetched from the registry. The two dimensions are orthogonal.
+value SubjectStrategy {
+    name_source: SubjectNameSource
+    topic: String?
+    is_key: Boolean?
+    record_name: String?
+
+    -- Present when the caller supplies the schema to register rather than fetching the
+    -- subject's latest registered schema.
+    supplied_schema: Schema?
+
+    needs_record_name: name_source in {by_record_name, by_topic_and_record_name}
+
+    -- A supplied schema's own name stands in when the strategy carries no explicit one.
+    effective_record_name: record_name ?? supplied_schema?.name
+
+    -- Registering under a record-name strategy with a schema that has no name is a
+    -- precondition failure: "name is mandatory".
+    is_resolvable: not needs_record_name or effective_record_name != null
+
+    -- topic_subject(topic, is_key) is topic + "-key" when is_key, otherwise
+    -- topic + "-value". qualified_subject(topic, name) is topic + "-" + name.
+    resolved_subject:
+        if name_source = by_topic_name: topic_subject(topic, is_key)
+        else if name_source = by_record_name: effective_record_name
+        else: qualified_subject(topic, effective_record_name)
+}
+
+------------------------------------------------------------
+-- Contracts
+------------------------------------------------------------
+
+contract RegistryAccess {
+    fetch_by_id: (id: Integer) -> SchemaData
+    fetch_latest_for_subject: (subject: String) -> SchemaData
+    fetch_by_subject_and_version: (subject: String, version: Integer) -> SchemaData
+    register: (subject: String, schema: SchemaData) -> Integer
+    check_compatibility: (subject: String, schema: SchemaData) -> Boolean
+    list_subjects: () -> Set<String>
+    list_versions: (subject: String) -> Set<Integer>
+
+    @invariant MultiUrlFailover
+        -- When more than one registry URL is configured, every registry call tries each
+        -- URL in the configured order and stops at the first success. Only when every
+        -- URL has failed is a failure surfaced, and it is the failure from the last URL
+        -- tried.
+
+    @invariant IdempotentRegistration
+        -- Registering a schema the registry already holds under that subject returns the
+        -- existing id rather than creating a duplicate. This is a property of the
+        -- registry, not logic this library implements.
+
+    @invariant CompatibilityRuleIsRegistryConfiguration
+        -- The compatibility rule in force (BACKWARD, FORWARD, FULL, any TRANSITIVE
+        -- variant) is entirely the registry's own configuration. This library never
+        -- inspects or enforces it; it only asks and reports the verdict.
+
+    @invariant CompatibilityCheckIsReadOnly
+        -- A compatibility check registers nothing. Looking up an already-registered
+        -- reference's version number, which the check needs for its request body, is a
+        -- lookup, not a write.
+}
+
+contract WireEnvelope {
+    frame: (schema_id: Integer, payload: Bytes) -> Bytes
+    classify: (bytes: Bytes?) -> Bytes
+
+    @invariant EnvelopeShape
+        -- Every encoded message is one magic byte (0x00), followed by the schema id as
+        -- four big-endian bytes, followed by the format-specific payload bytes.
+
+    @invariant ClassificationIsTotal
+        -- Bytes handed to a decoder are exactly one of: absent (a Kafka tombstone or
+        -- null key/value); framed (present, at least five bytes, first byte is the magic
+        -- byte, yielding a schema id and a payload); or invalid (present but empty, too
+        -- short, or carrying the wrong magic byte).
+}
+
+contract SubjectNaming {
+    subject_for: (strategy: SubjectStrategy) -> String
+
+    @invariant JavaClientCompatibleSubjects
+        -- Subject names are constructed so that they match what the Confluent Java
+        -- client produces for the equivalent strategy: the record name on its own, the
+        -- topic with a "-key" or "-value" suffix, or the topic and record name joined.
+
+    @invariant RecordNameIsMandatory
+        -- A record-name or topic-record-name strategy must be able to find a record
+        -- name, either on the strategy itself or on the supplied schema. When it cannot,
+        -- the operation fails before any registry call is made.
+}
+
+contract FormatCodec {
+    serialize: (schema: Schema, value: Any) -> Bytes
+    deserialize: (schema: Schema, payload: Bytes) -> Any
+
+    @invariant SerialisationIsOpaque
+        -- How apache_avro, valico or protofish turn a value into bytes given a parsed
+        -- schema is outside this specification. This library only orchestrates around
+        -- them.
+
+    @invariant NoStructuredProtobufEncoding
+        -- There is no protobuf counterpart to serialize. A protobuf caller encodes the
+        -- value itself with its own generated types and hands over finished bytes; the
+        -- library adds the envelope and the message-index path. This asymmetry is
+        -- current scope, not an omission to be normalised away.
+}
+
+------------------------------------------------------------
+-- Enumerations
+------------------------------------------------------------
+
+-- The registry documents support for arbitrary schema types beyond the three built-in
+-- ones; `other` carries the registry's own label in Schema.format_label.
+-- Settled: this mirrors how `content` and the other opaque strings are already treated
+-- here -- a closed set with one deliberately-open escape hatch is the established idiom
+-- in this spec, not a gap.
+enum SchemaFormat { avro | protobuf | json | other }
+
+enum InvocationStyle { async | blocking }
+
+enum CodecRole { encoder | decoder }
+
+-- `structured` codecs take and return a value model. `raw` codecs take and return bytes
+-- the caller has already encoded with its own generated types.
+enum PayloadModel { structured | raw }
+
+enum SubjectNameSource { by_record_name | by_topic_name | by_topic_and_record_name }
+
+-- Two decoders offer a second entry point that also hands back what the payload was
+-- resolved against: Avro's returns the schema, generic Protobuf's returns the parse
+-- context. Both behave differently from the primary entry point on absent and invalid
+-- bytes, so the entry point is part of the decoding contract, not a convenience overload.
+enum DecodeEntryPoint { primary | extended }
+
+------------------------------------------------------------
+-- Entities and Variants
+------------------------------------------------------------
+
+entity Schema {
+    format: SchemaFormat
+
+    -- Only meaningful when format = other: the registry's own name for the type.
+    format_label: String?
+
+    -- The raw schema text. Opaque here; never structurally parsed by this spec.
+    content: String
+
+    -- Optional only for a top-level schema, where it is required when the subject-name
+    -- strategy has to draw a record name from it. A reference is always named.
+    name: String?
+
+    -- Genuinely optional only for a top-level schema (parent = null): an id can be
+    -- associated with several subjects, so what a lookup by id returns is the subject the
+    -- registry happened to report for this call, not an authoritative single answer, and
+    -- it may report none at all. A reference (parent != null) always carries both by
+    -- construction: its subject is the one the caller supplied, and its version comes
+    -- from the dedicated lookup performed when the reference is registered. See
+    -- ReferencesCarryTheirOwnSubject and ReferencesCarryTheirOwnVersion below.
+    subject: String?
+    version: Integer?
+
+    properties: Set<SchemaProperty>?
+    tags: Set<SchemaTag>?
+
+    -- A reference is a sub-schema registered under its own subject.
+    parent: Schema?
+    references: Schema with parent = this
+    unregistered_references: references where status = supplied
+
+    -- supplied: client-only, the registry has assigned nothing yet.
+    -- registered: the registry has assigned an id.
+    status: supplied | registered
+    id: Integer when status = registered
+
+    transitions status {
+        supplied -> registered
+        terminal: registered
+    }
+
+    all_references_registered: references.all(r => r.status = registered)
+
+    invariant ReferencesRegisteredBeforeParent {
+        status = registered implies all_references_registered
+    }
+
+    invariant OtherFormatCarriesLabel {
+        (format = other implies format_label != null)
+            and (format != other implies format_label = null)
+    }
+
+    invariant ReferencesCarryTheirOwnSubject {
+        parent != null implies subject != null
+    }
+
+    -- A reference has no version until it is registered; registering one performs a
+    -- dedicated version lookup, so from that point the version is always known. Only a
+    -- top-level schema can be registered without one.
+    invariant ReferencesCarryTheirOwnVersion {
+        parent != null and status = registered implies version != null
+    }
+
+    -- A reference has no format of its own. It is registered, and read back, under the
+    -- format of the schema that references it.
+    invariant ReferencesShareParentFormat {
+        parent != null implies format = parent.format
+    }
+
+    invariant ReferencesAlwaysNamed {
+        parent != null implies name != null
+    }
+}
+
+-- A configured way of reaching the registry in one invocation style. The caller picks a
+-- style by which family of constructors it uses.
+entity RegistryClient {
+    registry: SchemaRegistry
+    style: InvocationStyle
+}
+
+-- One encoder or decoder instance. Caches are per instance.
+entity Codec {
+    client: RegistryClient
+    format: SchemaFormat
+    role: CodecRole
+    payload_model: PayloadModel
+
+    -- Which decode entry point this instance is being used through. Absent for encoders.
+    entry_point: DecodeEntryPoint?
+
+    entries: CacheEntry with codec = this
+    failed_entries: entries where status = failed
+
+    style: client.style
+
+    -- Whether resolving a schema verifies that the registry's reported format matches
+    -- this codec's. Every decoder does. On encode only Avro does: the JSON and raw
+    -- protobuf encoders will happily encode against a subject whose registered schema is
+    -- of a different format. That is an inconsistency between the three encoders rather
+    -- than a considered decision.
+    verifies_schema_format: role = decoder or format = avro
+
+    -- Whether resolving a schema also pulls in the schemas it references. Avro, JSON
+    -- Schema and generic protobuf all do, on both the encode and the decode path. Raw
+    -- protobuf is the exception: it resolves no references at all, because it only needs
+    -- the message index of the schema itself.
+    resolves_references: payload_model = structured
+
+    invariant DecodersHaveAnEntryPoint {
+        (role = decoder implies entry_point != null)
+            and (role = encoder implies entry_point = null)
+    }
+
+    -- Only Avro and generic protobuf offer a second entry point.
+    invariant ExtendedEntryPointIsAvroOrStructuredProtobuf {
+        entry_point = extended
+            implies (format = avro or (format = protobuf and payload_model = structured))
+    }
+
+    invariant CodecFormatsAreBuiltIn {
+        format in {avro, json, protobuf}
+    }
+
+    invariant RawPayloadModelIsProtobufOnly {
+        payload_model = raw implies format = protobuf
+    }
+
+    -- The asymmetry stated plainly: there is no protobuf encoder over a value model.
+    invariant NoStructuredProtobufEncoder {
+        format = protobuf and role = encoder implies payload_model = raw
+    }
+}
+
+-- One resolution attempt held by a codec, keyed by schema id on the decode path and by
+-- resolved subject on the encode path. Failures are cached alongside successes.
+entity CacheEntry {
+    codec: Codec
+    schema_id: Integer?
+    subject: String?
+
+    status: in_flight | resolved | failed
+    schema: Schema when status = resolved
+    error: Error when status = failed
+
+    transitions status {
+        in_flight -> resolved
+        in_flight -> failed
+        terminal: resolved, failed
+    }
+
+    invariant KeyedByIdOrSubject {
+        (schema_id != null and subject = null)
+            or (schema_id = null and subject != null)
+    }
+
+    invariant CacheKeyMatchesRole {
+        (codec.role = decoder implies schema_id != null)
+            and (codec.role = encoder implies subject != null)
+    }
+
+    invariant ResolvedSchemasAreRegistered {
+        status = resolved implies schema.status = registered
+    }
+}
+
+------------------------------------------------------------
+-- Config
+------------------------------------------------------------
+
+config {
+    magic_byte: Integer = 0
+    schema_id_byte_width: Integer = 4
+    envelope_header_size: Integer = schema_id_byte_width + 1
+}
+
+------------------------------------------------------------
+-- Rules
+------------------------------------------------------------
+
+-- --- Supplying and registering schemas -------------------------------------
+
+rule SupplySchema {
+    when: SupplySchema(data, parent?)
+    requires: data.id = null
+
+    -- A caller always states the schema type. Only a registry response may omit it.
+    requires: data.reported_format != null
+
+    ensures: Schema.created(
+        format: data.format,
+        format_label: data.format_label,
+        content: data.content,
+        name: data.name,
+        subject: data.subject,
+        version: data.version,
+        properties: data.properties,
+        tags: data.tags,
+        parent: parent,
+        status: supplied
+    )
+}
+
+-- A schema's own registration call happens only after every reference is registered.
+rule RegisterReferencesFirst {
+    when: RegisterSchema(schema, subject, entry?)
+    requires: schema.status = supplied
+    requires: not schema.all_references_registered
+    ensures:
+        for reference in schema.unregistered_references:
+            RegisterSchema(schema: reference, subject: reference.subject)
+}
+
+rule RegisterSchemaWithRegistry {
+    when: RegisterSchema(schema, subject, entry?)
+    requires: schema.status = supplied
+    requires: schema.all_references_registered
+    ensures: RegistryRegistrationRequested(schema: schema, subject: subject, entry: entry)
+
+    @guidance
+        -- The request body carries the now-registered references. Registering a schema
+        -- the registry already holds is idempotent: the existing id comes back.
+}
+
+rule RecordRegisteredSchema {
+    when: RegistryAssignedSchemaId(schema, subject, assigned_id, assigned_version?, entry?)
+    requires: schema.status = supplied
+
+    -- Registering a reference also looks up the version it landed on, because the parent
+    -- has to name it by version. A top-level registration reports no version.
+    requires: schema.parent = null or assigned_version != null
+
+    ensures:
+        schema.status = registered
+        schema.id = assigned_id
+        schema.subject = subject
+        schema.version = assigned_version
+}
+
+-- Registration that was started to satisfy an encode also settles that encoder's cache
+-- entry. Registration of a reference, or a standalone registration, has no entry.
+rule NotifyCacheEntryOfRegistration {
+    when: RegistryAssignedSchemaId(schema, subject, assigned_id, assigned_version?, entry?)
+    requires: schema.status = supplied
+    requires: entry != null
+    ensures: SchemaRegisteredForEntry(entry: entry, schema: schema)
+}
+
+-- --- Schema resolution and caching -----------------------------------------
+
+rule ResolveEntryFromRegistration {
+    when: SchemaRegisteredForEntry(entry, schema)
+    requires: entry.status = in_flight
+    requires: schema.status = registered
+    ensures:
+        entry.status = resolved
+        entry.schema = schema
+
+    @guidance
+        -- A reference-resolving codec re-fetches the references by subject and version
+        -- here too, exactly as it does after a plain lookup. No rule models that: the
+        -- caller supplied those references, so their content is already known here and
+        -- the round trip is redundant work rather than a source of new information.
+}
+
+rule RecordFetchedSchema {
+    when: RegistrySchemaFetched(entry, data)
+    requires: entry.status = in_flight
+    requires: data.id != null
+    requires: entry.codec.verifies_schema_format implies data.format = entry.codec.format
+    ensures:
+        let schema = Schema.created(
+            format: data.format,
+            format_label: data.format_label,
+            content: data.content,
+            name: data.name,
+            subject: data.subject,
+            version: data.version,
+            properties: data.properties,
+            tags: data.tags,
+            status: registered,
+            id: data.id
+        )
+        if entry.codec.resolves_references and data.reference_pointers.count > 0:
+            for pointer in data.reference_pointers:
+                RegistryReferenceSchemaRequested(
+                    entry: entry,
+                    parent: schema,
+                    pointer: pointer
+                )
+        else:
+            entry.status = resolved
+            entry.schema = schema
+
+    @guidance
+        -- A response that reports no schema type is read as Avro, so a codec of any other
+        -- format resolving such a response fails the format check.
+}
+
+-- Every decoder verifies the format. On encode only Avro does; see
+-- Codec.verifies_schema_format for why that is a wart rather than a design.
+rule RejectSchemaOfWrongFormat {
+    when: RegistrySchemaFetched(entry, data)
+    requires: entry.status = in_flight
+    requires: entry.codec.verifies_schema_format
+    requires: data.format != entry.codec.format
+    ensures:
+        entry.status = failed
+        entry.error = format_mismatch_error(data.format, entry.codec.format)
+}
+
+-- Referenced schemas are fetched by subject and version, depth first, and each one may
+-- name further references. None of this is cached: only the top-level resolution lands
+-- in the codec's cache, so the whole tree is walked again on every cold resolution.
+rule RecordFetchedReferenceSchema {
+    when: RegistryReferenceSchemaFetched(entry, parent, data)
+    requires: entry.status = in_flight
+    requires: data.id != null
+    requires: data.name != null
+    requires: data.subject != null
+    requires: data.version != null
+    ensures:
+        let reference = Schema.created(
+            format: parent.format,
+            format_label: parent.format_label,
+            content: data.content,
+            name: data.name,
+            subject: data.subject,
+            version: data.version,
+            properties: data.properties,
+            tags: data.tags,
+            parent: parent,
+            status: registered,
+            id: data.id
+        )
+        for pointer in data.reference_pointers:
+            RegistryReferenceSchemaRequested(
+                entry: entry,
+                parent: reference,
+                pointer: pointer
+            )
+}
+
+rule ResolveEntryOnceReferencesFetched {
+    when: RegistrySchemaReferencesResolved(entry, schema)
+    requires: entry.status = in_flight
+    requires: schema.status = registered
+    ensures:
+        entry.status = resolved
+        entry.schema = schema
+}
+
+-- A reference that cannot be fetched fails the entire resolution, and that failure is
+-- what gets cached against the top-level key.
+rule ReferenceFetchFailsResolution {
+    when: RegistryReferenceFetchFailed(entry, pointer, error)
+    requires: entry.status = in_flight
+    ensures:
+        entry.status = failed
+        entry.error = as_cached(error)
+}
+
+rule RecordFailedResolution {
+    when: RegistryCallFailed(entry, error)
+    requires: entry.status = in_flight
+    ensures:
+        entry.status = failed
+        entry.error = as_cached(error)
+
+    @guidance
+        -- as_cached marks the error as cached. A cached failure is never retried on its
+        -- own: the caller must clear cached errors before the same key will reach the
+        -- registry again.
+}
+
+rule ClearCachedErrors {
+    when: ClearCachedErrors(codec)
+    ensures:
+        for entry in codec.failed_entries:
+            not exists entry
+
+    @guidance
+        -- Successful cache entries are left untouched.
+}
+
+-- --- Encoding --------------------------------------------------------------
+
+rule EncodeRejectsUnresolvableSubject {
+    when: EncodeMessage(codec, strategy, value, message_name?)
+    requires: codec.role = encoder
+    requires: not strategy.is_resolvable
+    ensures: EncodeFailed(codec: codec, error: missing_name_error(strategy))
+}
+
+rule EncodeWithCachedSchema {
+    when: EncodeMessage(codec, strategy, value, message_name?)
+    requires: codec.role = encoder
+    requires: strategy.is_resolvable
+    let entry = CacheEntry{codec: codec, subject: strategy.resolved_subject}
+    requires: exists entry
+    requires: entry.status = resolved
+    requires: entry.schema.status = registered
+    ensures:
+        if codec.payload_model = raw:
+            MessageEncoded(
+                codec: codec,
+                schema: entry.schema,
+                bytes: framed(
+                    entry.schema.id,
+                    with_message_index(entry.schema, message_name, value)
+                )
+            )
+        else:
+            MessageEncoded(
+                codec: codec,
+                schema: entry.schema,
+                bytes: framed(entry.schema.id, serialize(entry.schema, value))
+            )
+
+    @guidance
+        -- For a raw (protobuf) codec, `value` is bytes the caller has already encoded
+        -- with its own generated types. with_message_index prepends the index path that
+        -- identifies which message of a multi-message schema this is, so a decoder can
+        -- find it again; a schema declaring a single message needs no path.
+}
+
+rule EncodeFailsOnCachedError {
+    when: EncodeMessage(codec, strategy, value, message_name?)
+    requires: codec.role = encoder
+    requires: strategy.is_resolvable
+    let entry = CacheEntry{codec: codec, subject: strategy.resolved_subject}
+    requires: exists entry
+    requires: entry.status = failed
+    ensures: EncodeFailed(codec: codec, error: entry.error)
+}
+
+rule EncodeAwaitsSharedResolution {
+    when: EncodeMessage(codec, strategy, value, message_name?)
+    requires: codec.role = encoder
+    requires: strategy.is_resolvable
+    let entry = CacheEntry{codec: codec, subject: strategy.resolved_subject}
+    requires: exists entry
+    requires: entry.status = in_flight
+    ensures: EncodeAwaitsSchema(codec: codec, subject: strategy.resolved_subject)
+
+    @guidance
+        -- A concurrent caller for the same not-yet-cached key joins the resolution
+        -- already running. It issues no second registry call and completes when that
+        -- resolution completes.
+}
+
+rule EncodeStartsSchemaResolution {
+    when: EncodeMessage(codec, strategy, value, message_name?)
+    requires: codec.role = encoder
+    requires: strategy.is_resolvable
+    requires: not exists CacheEntry{codec: codec, subject: strategy.resolved_subject}
+    ensures: SchemaResolutionStarted(codec: codec, strategy: strategy)
+}
+
+rule ResolveByRegisteringSuppliedSchema {
+    when: SchemaResolutionStarted(codec, strategy)
+    requires: strategy.supplied_schema != null
+    ensures:
+        let entry = CacheEntry.created(
+            codec: codec,
+            subject: strategy.resolved_subject,
+            status: in_flight
+        )
+        RegisterSchema(
+            schema: strategy.supplied_schema,
+            subject: strategy.resolved_subject,
+            entry: entry
+        )
+}
+
+rule ResolveByFetchingLatest {
+    when: SchemaResolutionStarted(codec, strategy)
+    requires: strategy.supplied_schema = null
+    ensures:
+        let entry = CacheEntry.created(
+            codec: codec,
+            subject: strategy.resolved_subject,
+            status: in_flight
+        )
+        RegistryLatestSchemaRequested(entry: entry, subject: strategy.resolved_subject)
+
+    @guidance
+        -- The subject's latest registered schema must already exist. Fetching never
+        -- auto-registers.
+}
+
+-- --- Decoding --------------------------------------------------------------
+
+rule DecodeAbsentBytes {
+    when: DecodeMessage(codec, bytes?)
+    requires: codec.role = decoder
+    requires: bytes = null
+    ensures:
+        if codec.entry_point = extended:
+            NoDecodeResult(codec: codec)
+        else if codec.format = avro:
+            DecodedAsNullValue(codec: codec)
+        else if codec.format = protobuf and codec.payload_model = structured:
+            DecodedAsEmptyBytes(codec: codec)
+        else:
+            NoDecodeResult(codec: codec)
+
+    @guidance
+        -- All of these are "succeeded, nothing to decode", shaped differently per format
+        -- and per entry point. Through the primary entry point: Avro yields a null value,
+        -- generic protobuf yields an empty-bytes value, JSON Schema and raw protobuf yield
+        -- no result. Through either extended entry point (Avro's decode-with-schema,
+        -- generic protobuf's decode-with-context) the answer is uniformly no result --
+        -- notably Avro's extended entry point does not yield the null value its primary
+        -- one does. The divergence is the current real contract, not an accident to be
+        -- unified away.
+}
+
+rule DecodeInvalidBytes {
+    when: DecodeMessage(codec, bytes?)
+    requires: codec.role = decoder
+    requires: bytes != null
+    requires: not bytes?.is_framed
+    ensures:
+        if codec.format = protobuf and codec.payload_model = structured:
+            if codec.entry_point = primary:
+                BytesReturnedUndecoded(codec: codec, bytes: bytes)
+            else:
+                DecodeFailed(codec: codec, error: not_protobuf_bytes_error(codec))
+        else:
+            DecodeFailed(codec: codec, error: invalid_bytes_error(bytes))
+
+    @guidance
+        -- invalid_bytes_error names why the bytes are invalid: empty, too short, or wrong
+        -- magic byte. The generic protobuf decoder diverges twice over. Through its
+        -- primary entry point it does not fail at all: it succeeds and hands back the raw
+        -- bytes unchanged as an opaque byte value. Through its extended entry point it
+        -- does fail, but with a fixed "no protobuf compatible bytes" message that says
+        -- nothing about which of the three conditions was hit.
+}
+
+rule DecodeFramedBytes {
+    when: DecodeMessage(codec, bytes?)
+    requires: codec.role = decoder
+    requires: bytes != null
+    requires: bytes?.is_framed
+    ensures: SchemaNeededForDecode(
+        codec: codec,
+        schema_id: framed_schema_id(bytes),
+        payload: framed_payload(bytes)
+    )
+}
+
+rule DecodeWithCachedSchema {
+    when: SchemaNeededForDecode(codec, schema_id, payload)
+    let entry = CacheEntry{codec: codec, schema_id: schema_id}
+    requires: exists entry
+    requires: entry.status = resolved
+    ensures:
+        if codec.payload_model = raw:
+            RawMessageDecoded(
+                codec: codec,
+                schema: entry.schema,
+                message_name: message_name_at_index(entry.schema, payload),
+                payload: message_payload(payload)
+            )
+        else:
+            MessageDecoded(
+                codec: codec,
+                schema: entry.schema,
+                value: deserialize(entry.schema, payload)
+            )
+
+    @guidance
+        -- A raw protobuf decode resolves only which message the payload is, by its index
+        -- path, and hands back the message's full name, the resolved schema and the raw
+        -- payload bytes; the caller decodes them with its own generated types. A
+        -- structured protobuf decode instead parses the message fully using the schema's
+        -- descriptor. By this point the schema's references have already been fetched as
+        -- part of resolution -- that applies to Avro and JSON Schema just as much as to
+        -- generic protobuf, and on the encode path just as much as here. Raw protobuf is
+        -- the only codec that resolves no references.
+}
+
+rule DecodeFailsOnCachedError {
+    when: SchemaNeededForDecode(codec, schema_id, payload)
+    let entry = CacheEntry{codec: codec, schema_id: schema_id}
+    requires: exists entry
+    requires: entry.status = failed
+    ensures: DecodeFailed(codec: codec, error: entry.error)
+}
+
+rule DecodeAwaitsSharedResolution {
+    when: SchemaNeededForDecode(codec, schema_id, payload)
+    let entry = CacheEntry{codec: codec, schema_id: schema_id}
+    requires: exists entry
+    requires: entry.status = in_flight
+    ensures: DecodeAwaitsSchema(codec: codec, schema_id: schema_id)
+}
+
+rule DecodeStartsSchemaResolution {
+    when: SchemaNeededForDecode(codec, schema_id, payload)
+    requires: not exists CacheEntry{codec: codec, schema_id: schema_id}
+    ensures:
+        CacheEntry.created(
+            codec: codec,
+            schema_id: schema_id,
+            status: in_flight
+        )
+        RegistrySchemaByIdRequested(
+            entry: CacheEntry{codec: codec, schema_id: schema_id},
+            schema_id: schema_id
+        )
+}
+
+-- --- Compatibility ---------------------------------------------------------
+
+-- A check carries the schema and subject it is about, plus the root of the check when it
+-- is one of the root's references. Every verdict, at whatever depth, is a verdict about
+-- the root.
+rule CompatibilityChecksReferencesFirst {
+    when: CheckCompatibility(client, schema, subject, root?, root_subject?)
+    ensures:
+        for reference in schema.references:
+            CheckCompatibility(
+                client: client,
+                schema: reference,
+                subject: reference.subject,
+                root: root ?? schema,
+                root_subject: root_subject ?? subject
+            )
+
+    @guidance
+        -- References are walked depth first and each is asked about under its own
+        -- subject. A reference is presented to the compatibility API as a schema the
+        -- caller supplies, exactly as the root is; being already registered is not a
+        -- precondition for asking, and callers routinely reconstruct an
+        -- already-registered reference in order to get a verdict on it.
+}
+
+rule CompatibilityAskedOfRegistry {
+    when: CheckCompatibility(client, schema, subject, root?, root_subject?)
+    ensures: RegistryCompatibilityRequested(
+        client: client,
+        schema: schema,
+        subject: subject,
+        root: root ?? schema,
+        root_subject: root_subject ?? subject
+    )
+
+    @guidance
+        -- The verdict is the registry's alone. Nothing here registers anything: the
+        -- version lookup that follows a compatible reference is a read.
+        -- Ordering that the rules cannot express: the root is only asked about once every
+        -- reference has come back compatible and its version has been found. The first
+        -- reference that fails short-circuits the whole check.
+}
+
+rule RecordCompatibilityVerdict {
+    when: RegistryCompatibilityAnswered(schema, subject, compatible, root?, root_subject?)
+    requires: root = null
+    ensures: CompatibilityDetermined(
+        schema: schema,
+        subject: subject,
+        compatible: compatible
+    )
+}
+
+-- A reference the registry judges incompatible settles the whole check, at any depth.
+rule IncompatibleReferenceFailsWholeCheck {
+    when: RegistryCompatibilityAnswered(schema, subject, compatible, root?, root_subject?)
+    requires: root != null
+    requires: not compatible
+    ensures: CompatibilityDetermined(schema: root, subject: root_subject, compatible: false)
+}
+
+-- Having been judged compatible, a reference must then be located by version, because the
+-- parent's request body names it by version.
+rule CompatibleReferenceNeedsItsVersion {
+    when: RegistryCompatibilityAnswered(schema, subject, compatible, root?, root_subject?)
+    requires: root != null
+    requires: compatible
+    ensures: RegistryReferenceVersionRequested(
+        schema: schema,
+        subject: subject,
+        root: root,
+        root_subject: root_subject
+    )
+}
+
+-- The version lookup is where an unregistered reference actually surfaces, and it
+-- surfaces as an error from the whole check rather than as a "not compatible" verdict.
+rule UnregisteredReferenceFailsCompatibilityCheck {
+    when: RegistryReferenceVersionUnavailable(schema, subject, root, root_subject)
+    ensures: CompatibilityCheckFailed(
+        schema: root,
+        subject: root_subject,
+        error: missing_reference_version_error(schema, subject)
+    )
+}
+
+-- --- Registry introspection ------------------------------------------------
+
+rule ListSubjects {
+    when: ListSubjects(client)
+    ensures: SubjectsListed(client: client, subjects: all_subjects(client.registry))
+}
+
+rule ListVersions {
+    when: ListVersions(client, subject)
+    ensures: VersionsListed(
+        client: client,
+        subject: subject,
+        versions: all_versions(client.registry, subject)
+    )
+}
+
+------------------------------------------------------------
+-- Invariants
+------------------------------------------------------------
+
+-- One entry per codec and key is what makes concurrent callers share a single in-flight
+-- registry call rather than each issuing their own.
+invariant AtMostOneEntryPerSchemaId {
+    for a in CacheEntries:
+        for b in CacheEntries:
+            a != b and a.codec = b.codec and a.schema_id != null
+                implies a.schema_id != b.schema_id
+}
+
+invariant AtMostOneEntryPerSubject {
+    for a in CacheEntries:
+        for b in CacheEntries:
+            a != b and a.codec = b.codec and a.subject != null
+                implies a.subject != b.subject
+}
+
+-- A codec only ever caches schemas of its own format on the decode path.
+invariant DecodersCacheTheirOwnFormat {
+    for entry in CacheEntries:
+        entry.codec.role = decoder and entry.status = resolved
+            implies entry.schema.format = entry.codec.format
+}
+
+------------------------------------------------------------
+-- Actor Declarations
+------------------------------------------------------------
+
+actor AsyncCaller {
+    identified_by: Application where invocation_style = async
+}
+
+actor BlockingCaller {
+    identified_by: Application where invocation_style = blocking
+}
+
+actor Registry {
+    identified_by: SchemaRegistry where urls.count > 0
+}
+
+------------------------------------------------------------
+-- Surfaces
+------------------------------------------------------------
+
+surface AsyncCodecOperations {
+    facing _: AsyncCaller
+    context codec: Codec where style = async
+
+    exposes:
+        codec.format
+        codec.role
+        codec.payload_model
+
+    provides:
+        EncodeMessage(codec, strategy, value, message_name?) when codec.role = encoder
+        DecodeMessage(codec, bytes?) when codec.role = decoder
+        ClearCachedErrors(codec)
+
+    contracts:
+        fulfils WireEnvelope
+        fulfils SubjectNaming
+        demands FormatCodec
+
+    @guarantee CachedFailuresRequireExplicitClear
+        -- A resolution failure is cached exactly like a success. The same key will not
+        -- reach the registry again until the caller clears cached errors, which leaves
+        -- successful entries in place.
+
+    @guarantee SharedInFlightResolution
+        -- Concurrent callers asking for the same not-yet-cached key produce one registry
+        -- call between them, not one each.
+
+    @guarantee IdenticalToBlockingSurface
+        -- Resolution, caching, wire format and error behaviour are identical to
+        -- BlockingCodecOperations. Only how the caller waits for the result differs.
+}
+
+surface BlockingCodecOperations {
+    facing _: BlockingCaller
+    context codec: Codec where style = blocking
+
+    exposes:
+        codec.format
+        codec.role
+        codec.payload_model
+
+    provides:
+        EncodeMessage(codec, strategy, value, message_name?) when codec.role = encoder
+        DecodeMessage(codec, bytes?) when codec.role = decoder
+        ClearCachedErrors(codec)
+
+    contracts:
+        fulfils WireEnvelope
+        fulfils SubjectNaming
+        demands FormatCodec
+
+    @guarantee CachedFailuresRequireExplicitClear
+        -- A resolution failure is cached exactly like a success. The same key will not
+        -- reach the registry again until the caller clears cached errors, which leaves
+        -- successful entries in place.
+
+    @guarantee SharedInFlightResolution
+        -- Concurrent callers asking for the same not-yet-cached key produce one registry
+        -- call between them, not one each.
+
+    @guarantee BlocksTheCallingThread
+        -- The call returns only once the underlying operation has completed. Instances of
+        -- this style are never mixed with async ones.
+}
+
+surface AsyncRegistryOperations {
+    facing _: AsyncCaller
+    context client: RegistryClient where style = async
+
+    exposes:
+        client.registry.urls
+
+    provides:
+        SupplySchema(data, parent?)
+        RegisterSchema(schema, subject)
+        CheckCompatibility(client, schema, subject)
+        ListSubjects(client)
+        ListVersions(client, subject)
+
+    contracts:
+        demands RegistryAccess
+}
+
+surface BlockingRegistryOperations {
+    facing _: BlockingCaller
+    context client: RegistryClient where style = blocking
+
+    exposes:
+        client.registry.urls
+
+    provides:
+        SupplySchema(data, parent?)
+        RegisterSchema(schema, subject)
+        CheckCompatibility(client, schema, subject)
+        ListSubjects(client)
+        ListVersions(client, subject)
+
+    contracts:
+        demands RegistryAccess
+}
+
+surface RegistryBoundary {
+    facing registry: Registry
+
+    exposes:
+        registry.urls
+
+    provides:
+        RegistrySchemaFetched(entry, data)
+        RegistryReferenceSchemaFetched(entry, parent, data)
+        RegistrySchemaReferencesResolved(entry, schema)
+        RegistryReferenceFetchFailed(entry, pointer, error)
+        RegistryAssignedSchemaId(schema, subject, assigned_id, assigned_version?)
+        RegistryCompatibilityAnswered(schema, subject, compatible, root?, root_subject?)
+        RegistryReferenceVersionUnavailable(schema, subject, root, root_subject)
+        RegistryCallFailed(entry, error)
+
+    contracts:
+        demands RegistryAccess
+
+    @guarantee FailureIsFromTheLastUrlTried
+        -- With several URLs configured, a failure only reaches this boundary once every
+        -- URL has failed, and it is the last URL's failure that is reported.
+}

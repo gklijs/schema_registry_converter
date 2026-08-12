@@ -1,0 +1,78 @@
+name: Allium spec
+
+# Validates the Allium spec's own structural integrity (syntax, unreachable
+# rules, dangling references, invariant violations). This does NOT check
+# that the spec still matches the Rust implementation — that needs a `weed`
+# pass (an LLM comparing spec against code), which isn't something a CI
+# step can do. This job only catches regressions in the .allium file itself.
+on:
+  push:
+    paths:
+      - "**.allium"
+      - ".github/workflows/allium.yml"
+  pull_request:
+    paths:
+      - "**.allium"
+      - ".github/workflows/allium.yml"
+
+env:
+  # Bump deliberately when upgrading; keeps CI reproducible in between.
+  ALLIUM_CLI_VERSION: 3.5.3
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache allium-cli
+        id: cache-allium
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/allium
+          key: allium-cli-${{ env.ALLIUM_CLI_VERSION }}-${{ runner.os }}
+
+      - name: Install allium-cli
+        if: steps.cache-allium.outputs.cache-hit != 'true'
+        run: cargo install allium-cli --version "${ALLIUM_CLI_VERSION}" --locked
+
+      # `allium check` exits 1 on ANY diagnostic, including warnings/info —
+      # this repo's spec has expected ones (external entities with no local
+      # governing spec to import, a checker false-positive on a
+      # surface-only field reference), so we gate on severity ourselves
+      # instead of trusting the raw exit code.
+      - name: allium check
+        run: |
+          allium check . > /tmp/allium-check.json || true
+          cat /tmp/allium-check.json
+          {
+            echo "## \`allium check\`"
+            echo
+            jq -r '.diagnostics[]? | "- **\(.severity)** \(.location.file):\(.location.line) \(.code) — \(.message)"' /tmp/allium-check.json
+          } >> "$GITHUB_STEP_SUMMARY"
+          error_count=$(jq '[.diagnostics[]? | select(.severity == "error")] | length' /tmp/allium-check.json)
+          echo "structural errors: $error_count"
+          if [ "$error_count" -gt 0 ]; then
+            echo "::error::allium check found $error_count structural error(s) in the spec — see the job summary"
+            exit 1
+          fi
+
+      # `allium analyse` re-runs check's structural diagnostics plus
+      # process-level analysis (data flow, reachability, conflicts) and its
+      # exit code is findings-only, so it's safe to trust directly — but we
+      # still capture JSON for a readable summary.
+      - name: allium analyse
+        run: |
+          allium analyse . > /tmp/allium-analyse.json || true
+          cat /tmp/allium-analyse.json
+          {
+            echo "## \`allium analyse\`"
+            echo
+            jq -r '.findings[]? | "- **\(.type)**: \(.summary)"' /tmp/allium-analyse.json
+          } >> "$GITHUB_STEP_SUMMARY"
+          finding_count=$(jq '.findings | length' /tmp/allium-analyse.json)
+          echo "findings: $finding_count"
+          if [ "$finding_count" -gt 0 ]; then
+            echo "::error::allium analyse found $finding_count process-level finding(s) in the spec — see the job summary"
+            exit 1
+          fi
