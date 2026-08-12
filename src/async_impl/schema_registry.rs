@@ -1126,7 +1126,8 @@ mod tests {
         use reqwest::{Request, Response};
         use reqwest_middleware::{Middleware, Next, Result as MwResult};
 
-        use crate::async_impl::schema_registry::{get_schema_by_id, SrSettings};
+        use crate::async_impl::schema_registry::{get_schema_by_id, post_schema, SrSettings};
+        use crate::schema_registry_common::{SchemaType, SuppliedSchema};
 
         /// Stand-in for a token refresh middleware (e.g. GCP workload identity): fetches a
         /// "fresh" token on every call and sets it as the bearer token, instead of the caller
@@ -1149,6 +1150,30 @@ mod tests {
                 req.headers_mut().insert(
                     reqwest::header::AUTHORIZATION,
                     format!("Bearer {}", token).parse().unwrap(),
+                );
+                next.run(req, extensions).await
+            }
+        }
+
+        /// A transparent middleware that only stamps a marker header, leaving any
+        /// `Authorization` header (set by `SrAuthorization`) untouched. Used to prove
+        /// middleware and the crate's own token/basic auth compose correctly, and that
+        /// multiple middlewares run in the order they were added.
+        struct MarkerMiddleware {
+            header_name: &'static str,
+        }
+
+        #[async_trait]
+        impl Middleware for MarkerMiddleware {
+            async fn handle(
+                &self,
+                mut req: Request,
+                extensions: &mut Extensions,
+                next: Next<'_>,
+            ) -> MwResult<Response> {
+                req.headers_mut().insert(
+                    reqwest::header::HeaderName::from_static(self.header_name),
+                    reqwest::header::HeaderValue::from_static("yes"),
                 );
                 next.run(req, extensions).await
             }
@@ -1177,6 +1202,140 @@ mod tests {
 
             assert!(result.is_ok(), "{:?}", result.err());
             assert_eq!(calls.load(Ordering::SeqCst), 1);
+        }
+
+        #[tokio::test]
+        async fn with_middleware_debug_does_not_panic() {
+            let plain = SrSettings::new(String::from("http://localhost:8081"));
+            assert!(format!("{:?}", plain).contains("SrSettings"));
+
+            let with_middleware = SrSettings::new_builder(String::from("http://localhost:8081"))
+                .with_middleware(MarkerMiddleware {
+                    header_name: "x-marker",
+                })
+                .build()
+                .unwrap();
+            assert!(format!("{:?}", with_middleware).contains("ClientWithMiddleware"));
+        }
+
+        #[tokio::test]
+        async fn with_middleware_supports_post_calls() {
+            let mut server = Server::new_async().await;
+            let _m = server
+                .mock("POST", "/subjects/test-value/versions")
+                .match_header("authorization", "Bearer refreshed-token-0")
+                .with_status(200)
+                .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+                .with_body(r#"{"id":1}"#)
+                .create();
+
+            let calls = Arc::new(AtomicUsize::new(0));
+            let sr_settings = SrSettings::new_builder(server.url())
+                .with_middleware(RefreshingTokenMiddleware {
+                    calls: calls.clone(),
+                })
+                .no_proxy()
+                .build()
+                .unwrap();
+
+            let result = post_schema(
+                &sr_settings,
+                String::from("test-value"),
+                SuppliedSchema {
+                    name: None,
+                    schema_type: SchemaType::Avro,
+                    schema: String::from(
+                        r#"{"type":"record","name":"Heartbeat","fields":[{"name":"beat","type":"long"}]}"#,
+                    ),
+                    references: vec![],
+                    properties: None,
+                    tags: None,
+                },
+            )
+            .await;
+
+            assert!(result.is_ok(), "{:?}", result.err());
+            assert_eq!(calls.load(Ordering::SeqCst), 1);
+        }
+
+        #[tokio::test]
+        async fn with_middleware_and_static_bearer_token() {
+            let mut server = Server::new_async().await;
+            let _m = server
+                .mock("GET", "/schemas/ids/1?deleted=true")
+                .match_header("authorization", "Bearer some_static_token")
+                .match_header("x-marker", "yes")
+                .with_status(200)
+                .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+                .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
+                .create();
+
+            let sr_settings = SrSettings::new_builder(server.url())
+                .set_token_authorization("some_static_token")
+                .with_middleware(MarkerMiddleware {
+                    header_name: "x-marker",
+                })
+                .no_proxy()
+                .build()
+                .unwrap();
+
+            let result = get_schema_by_id(1, &sr_settings).await;
+
+            assert!(result.is_ok(), "{:?}", result.err());
+        }
+
+        #[tokio::test]
+        async fn with_middleware_and_basic_auth() {
+            let mut server = Server::new_async().await;
+            let _m = server
+                .mock("GET", "/schemas/ids/1?deleted=true")
+                .match_header("authorization", "Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==")
+                .match_header("x-marker", "yes")
+                .with_status(200)
+                .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+                .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
+                .create();
+
+            let sr_settings = SrSettings::new_builder(server.url())
+                .set_basic_authorization("Aladdin", Some("open sesame"))
+                .with_middleware(MarkerMiddleware {
+                    header_name: "x-marker",
+                })
+                .no_proxy()
+                .build()
+                .unwrap();
+
+            let result = get_schema_by_id(1, &sr_settings).await;
+
+            assert!(result.is_ok(), "{:?}", result.err());
+        }
+
+        #[tokio::test]
+        async fn with_multiple_middlewares_runs_all_of_them() {
+            let mut server = Server::new_async().await;
+            let _m = server
+                .mock("GET", "/schemas/ids/1?deleted=true")
+                .match_header("x-marker-1", "yes")
+                .match_header("x-marker-2", "yes")
+                .with_status(200)
+                .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+                .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
+                .create();
+
+            let sr_settings = SrSettings::new_builder(server.url())
+                .with_middleware(MarkerMiddleware {
+                    header_name: "x-marker-1",
+                })
+                .with_middleware(MarkerMiddleware {
+                    header_name: "x-marker-2",
+                })
+                .no_proxy()
+                .build()
+                .unwrap();
+
+            let result = get_schema_by_id(1, &sr_settings).await;
+
+            assert!(result.is_ok(), "{:?}", result.err());
         }
     }
 }
