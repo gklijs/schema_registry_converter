@@ -22,6 +22,7 @@ rustls_tls = ["reqwest/rustls"]
 avro = ["apache-avro"]
 blocking = ["reqwest/blocking"]
 json = ["url", "valico"]
+middleware = ["dep:reqwest-middleware"]
 proto_decoder = ["bytes", "integer-encoding", "logos", "protofish"]
 proto_raw = ["integer-encoding", "logos"]
 easy = ["tokio"]
@@ -38,6 +39,11 @@ version = "^6.1"
 version = "^0.13"
 default-features = false
 features = ["json"]
+
+[dependencies.reqwest-middleware]
+version = "^0.5"
+default-features = false
+optional = true
 
 [dependencies.serde]
 version = "^1.0"
@@ -84,6 +90,8 @@ version = "^4.0"
 optional = true
 
 [dev-dependencies]
+async-trait = "^0.1"
+http = "^1.0"
 mockito = "^1.7.0"
 rdkafka = { version = "^0.39.0", features = ["cmake-build", "curl-static"] }
 rand = "^0.10.0"

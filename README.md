@@ -209,6 +209,54 @@ subject, or the raw schema with a subject and version. For these see the
 either [async](tests/async_impl/schema_registry_calls.rs) or [blocking](tests/blocking/schema_registry_calls.rs) version
 of the integration tests.
 
+## Authentication middleware / token refresh
+
+`SrSettingsBuilder` supports a static token (`set_token_authorization`) or basic auth
+(`set_basic_authorization`) out of the box. For short-lived tokens that need to be refreshed
+periodically (for example GCP workload identity federation), enable the `middleware` feature to
+plug in your own [`reqwest_middleware::Middleware`](https://docs.rs/reqwest-middleware). This
+lets you fetch/cache/refresh a token yourself and attach it to every outgoing request, without
+recreating `SrSettings` (and losing the schema cache) whenever the token expires. This is only
+available for the async client; there is no middleware equivalent for the blocking client.
+
+```toml
+[dependencies]
+schema_registry_converter = { version = "4.10.0", features = ["avro", "middleware"] }
+```
+
+```rust
+use async_trait::async_trait;
+use http::Extensions;
+use reqwest::{Request, Response};
+use reqwest_middleware::{Middleware, Next, Result};
+use schema_registry_converter::async_impl::schema_registry::SrSettings;
+
+struct RefreshingTokenMiddleware;
+
+#[async_trait]
+impl Middleware for RefreshingTokenMiddleware {
+    async fn handle(
+        &self,
+        mut req: Request,
+        extensions: &mut Extensions,
+        next: Next<'_>,
+    ) -> Result<Response> {
+        // fetch or refresh your token here, e.g. from a cache with a TTL
+        let token = fetch_or_refresh_token().await;
+        req.headers_mut().insert(
+            reqwest::header::AUTHORIZATION,
+            format!("Bearer {}", token).parse().unwrap(),
+        );
+        next.run(req, extensions).await
+    }
+}
+
+let sr_settings = SrSettings::new_builder(String::from("http://localhost:8081"))
+    .with_middleware(RefreshingTokenMiddleware)
+    .build()
+    .unwrap();
+```
+
 ## Example using to post schema to schema registry
 
 ```rust
