@@ -1,6 +1,7 @@
 //! This module contains the code specific for the schema registry.
 
 use std::collections::HashMap;
+use std::fmt;
 use std::str;
 use std::time::Duration;
 
@@ -10,6 +11,8 @@ use futures::stream::{self, StreamExt};
 use reqwest::header::{HeaderName, ACCEPT, CONTENT_TYPE};
 use reqwest::{header, RequestBuilder, Response};
 use reqwest::{Client, ClientBuilder};
+#[cfg(feature = "middleware")]
+use reqwest_middleware::{ClientWithMiddleware, Middleware};
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
@@ -19,13 +22,113 @@ use crate::schema_registry_common::{
     SrAuthorization, SrCall, SubjectNameStrategy, SuppliedReference, SuppliedSchema,
 };
 
+/// The http client used to perform the calls, either a plain reqwest client, or, when the
+/// `middleware` feature is used and one or more middlewares were added, a
+/// `reqwest_middleware::ClientWithMiddleware` running those middlewares on every request. The
+/// latter is how token refresh (or any other cross-cutting request concern) can be plugged in
+/// without this crate having to know about it, see `SrSettingsBuilder::with_middleware`.
+#[derive(Clone)]
+enum HttpClient {
+    Plain(Client),
+    #[cfg(feature = "middleware")]
+    WithMiddleware(ClientWithMiddleware),
+}
+
+impl fmt::Debug for HttpClient {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            HttpClient::Plain(c) => fmt::Debug::fmt(c, f),
+            #[cfg(feature = "middleware")]
+            HttpClient::WithMiddleware(_) => write!(f, "ClientWithMiddleware"),
+        }
+    }
+}
+
+impl HttpClient {
+    fn get<U: reqwest::IntoUrl>(&self, url: U) -> SrRequestBuilder {
+        match self {
+            HttpClient::Plain(c) => SrRequestBuilder::Plain(c.get(url)),
+            #[cfg(feature = "middleware")]
+            HttpClient::WithMiddleware(c) => SrRequestBuilder::WithMiddleware(c.get(url)),
+        }
+    }
+
+    fn post<U: reqwest::IntoUrl>(&self, url: U) -> SrRequestBuilder {
+        match self {
+            HttpClient::Plain(c) => SrRequestBuilder::Plain(c.post(url)),
+            #[cfg(feature = "middleware")]
+            HttpClient::WithMiddleware(c) => SrRequestBuilder::WithMiddleware(c.post(url)),
+        }
+    }
+}
+
+/// Thin wrapper making `reqwest::RequestBuilder` and `reqwest_middleware::RequestBuilder`
+/// interchangeable for the small subset of the API this crate needs.
+enum SrRequestBuilder {
+    Plain(RequestBuilder),
+    #[cfg(feature = "middleware")]
+    WithMiddleware(reqwest_middleware::RequestBuilder),
+}
+
+impl SrRequestBuilder {
+    fn header(self, key: HeaderName, value: &str) -> Self {
+        match self {
+            SrRequestBuilder::Plain(b) => SrRequestBuilder::Plain(b.header(key, value)),
+            #[cfg(feature = "middleware")]
+            SrRequestBuilder::WithMiddleware(b) => {
+                SrRequestBuilder::WithMiddleware(b.header(key, value))
+            }
+        }
+    }
+
+    fn body(self, body: String) -> Self {
+        match self {
+            SrRequestBuilder::Plain(b) => SrRequestBuilder::Plain(b.body(body)),
+            #[cfg(feature = "middleware")]
+            SrRequestBuilder::WithMiddleware(b) => SrRequestBuilder::WithMiddleware(b.body(body)),
+        }
+    }
+
+    fn bearer_auth(self, token: &str) -> Self {
+        match self {
+            SrRequestBuilder::Plain(b) => SrRequestBuilder::Plain(b.bearer_auth(token)),
+            #[cfg(feature = "middleware")]
+            SrRequestBuilder::WithMiddleware(b) => {
+                SrRequestBuilder::WithMiddleware(b.bearer_auth(token))
+            }
+        }
+    }
+
+    fn basic_auth(self, username: &str, password: Option<&str>) -> Self {
+        match self {
+            SrRequestBuilder::Plain(b) => SrRequestBuilder::Plain(b.basic_auth(username, password)),
+            #[cfg(feature = "middleware")]
+            SrRequestBuilder::WithMiddleware(b) => {
+                SrRequestBuilder::WithMiddleware(b.basic_auth(username, password))
+            }
+        }
+    }
+
+    async fn send(self) -> Result<Response, SRCError> {
+        match self {
+            SrRequestBuilder::Plain(b) => b.send().await.map_err(|e| {
+                SRCError::retryable_with_cause(e, "http call to schema registry failed")
+            }),
+            #[cfg(feature = "middleware")]
+            SrRequestBuilder::WithMiddleware(b) => b.send().await.map_err(|e| {
+                SRCError::retryable_with_cause(e, "http call to schema registry failed")
+            }),
+        }
+    }
+}
+
 /// Settings used to do the calls to schema registry. For simple cases you can use `SrSettings::new`
 /// or the `SrSettingsBuilder`. But you can also use it directly so you can all the available
 /// settings from reqwest.
 #[derive(Debug, Clone)]
 pub struct SrSettings {
     urls: Vec<String>,
-    client: Client,
+    client: HttpClient,
     authorization: SrAuthorization,
 }
 
@@ -38,6 +141,8 @@ pub struct SrSettingsBuilder {
     proxy: Option<String>,
     no_proxy: bool,
     timeout: Duration,
+    #[cfg(feature = "middleware")]
+    middlewares: Vec<std::sync::Arc<dyn Middleware>>,
 }
 
 /// Creates a new SrSettings struct that is needed to make calls to the schema registry
@@ -51,7 +156,7 @@ impl SrSettings {
     pub fn new(url: String) -> SrSettings {
         SrSettings {
             urls: vec![url],
-            client: Client::new(),
+            client: HttpClient::Plain(Client::new()),
             authorization: SrAuthorization::None,
         }
     }
@@ -66,6 +171,8 @@ impl SrSettings {
             proxy: None,
             no_proxy: false,
             timeout: Duration::from_secs(30),
+            #[cfg(feature = "middleware")]
+            middlewares: Vec::new(),
         }
     }
 
@@ -114,6 +221,23 @@ impl SrSettingsBuilder {
         self
     }
 
+    /// Adds a middleware that will run on every call, in the order added. Requires the
+    /// `middleware` feature, and uses `reqwest_middleware` under the hood. This is the
+    /// recommended way to do things like refreshing a short-lived token: implement
+    /// `reqwest_middleware::Middleware`, fetch/refresh the token in `handle`, set it as the
+    /// `Authorization` header on the request, and call `next.run(req, extensions)`.
+    ///
+    /// Note this only applies to the async client; there is no middleware equivalent for the
+    /// blocking client.
+    #[cfg(feature = "middleware")]
+    pub fn with_middleware(
+        &mut self,
+        middleware: impl Middleware + 'static,
+    ) -> &mut SrSettingsBuilder {
+        self.middlewares.push(std::sync::Arc::new(middleware));
+        self
+    }
+
     /// Adds a custom header that will be added to every call.
     pub fn add_header(&mut self, key: &str, value: &str) -> &mut SrSettingsBuilder {
         self.headers.insert(String::from(key), String::from(value));
@@ -150,11 +274,26 @@ impl SrSettingsBuilder {
         let client = self.build_client(builder)?;
         let urls = self.urls.clone();
         let authorization = self.authorization.clone();
+        let client = self.wrap_client(client);
         Ok(SrSettings {
             urls,
             client,
             authorization,
         })
+    }
+
+    /// Wraps the built reqwest client in a `ClientWithMiddleware` when middlewares were added,
+    /// otherwise keeps using the plain client.
+    fn wrap_client(&self, client: Client) -> HttpClient {
+        #[cfg(feature = "middleware")]
+        if !self.middlewares.is_empty() {
+            let mut mw_builder = reqwest_middleware::ClientBuilder::new(client);
+            for middleware in &self.middlewares {
+                mw_builder = mw_builder.with_arc(middleware.clone());
+            }
+            return HttpClient::WithMiddleware(mw_builder.build());
+        }
+        HttpClient::Plain(client)
     }
 
     /// Build the settings.
@@ -486,21 +625,18 @@ pub async fn perform_sr_call(
 }
 
 async fn send_with_auth(
-    builder: RequestBuilder,
+    builder: SrRequestBuilder,
     authentication: &SrAuthorization,
 ) -> Result<Response, SRCError> {
-    let res = match authentication {
-        SrAuthorization::None => builder.send().await,
-        SrAuthorization::Token(token) => builder.bearer_auth(token).send().await,
+    let builder = match authentication {
+        SrAuthorization::None => builder,
+        SrAuthorization::Token(token) => builder.bearer_auth(token),
         SrAuthorization::Basic(username, password) => {
-            let p = match password {
-                None => None,
-                Some(v) => Some(v),
-            };
-            builder.basic_auth(username, p).send().await
+            let p = password.as_deref();
+            builder.basic_auth(username, p)
         }
-    }
-    .map_err(|e| SRCError::retryable_with_cause(e, "http call to schema registry failed"))?;
+    };
+    let res = builder.send().await?;
     let st = res.status();
     if st.is_success() {
         return Ok(res);
@@ -526,7 +662,7 @@ async fn send_with_auth(
 
 async fn perform_single_sr_call(
     base_url: &str,
-    client: &Client,
+    client: &HttpClient,
     authentication: &SrAuthorization,
     sr_call: SrCall<'_>,
 ) -> Result<RawRegisteredSchema, SRCError> {
@@ -569,7 +705,7 @@ pub async fn get_all_subjects(sr_settings: &SrSettings) -> Result<Vec<String>, S
 
 async fn perform_single_subjects_call(
     base_url: &str,
-    client: &Client,
+    client: &HttpClient,
     authentication: &SrAuthorization,
 ) -> Result<Vec<String>, SRCError> {
     let url = format!("{}/subjects", base_url);
@@ -604,7 +740,7 @@ pub async fn get_all_versions(
 
 async fn perform_single_versions_call(
     base_url: &str,
-    client: &Client,
+    client: &HttpClient,
     authentication: &SrAuthorization,
     subject: &String,
 ) -> Result<Vec<u32>, SRCError> {
@@ -624,7 +760,7 @@ struct CompatibilityResponse {
 
 async fn perform_single_compatibility_call(
     base_url: &str,
-    client: &Client,
+    client: &HttpClient,
     authentication: &SrAuthorization,
     subject: &String,
     body: &String,
@@ -977,5 +1113,70 @@ mod tests {
                 .await
                 .expect("convert to registered");
         assert_eq!(reg, expected_registered_schema);
+    }
+
+    #[cfg(feature = "middleware")]
+    mod middleware_tests {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        use async_trait::async_trait;
+        use http::Extensions;
+        use mockito::Server;
+        use reqwest::{Request, Response};
+        use reqwest_middleware::{Middleware, Next, Result as MwResult};
+
+        use crate::async_impl::schema_registry::{get_schema_by_id, SrSettings};
+
+        /// Stand-in for a token refresh middleware (e.g. GCP workload identity): fetches a
+        /// "fresh" token on every call and sets it as the bearer token, instead of the caller
+        /// having to recreate `SrSettings` (and lose the schema cache) whenever a short-lived
+        /// token expires.
+        struct RefreshingTokenMiddleware {
+            calls: Arc<AtomicUsize>,
+        }
+
+        #[async_trait]
+        impl Middleware for RefreshingTokenMiddleware {
+            async fn handle(
+                &self,
+                mut req: Request,
+                extensions: &mut Extensions,
+                next: Next<'_>,
+            ) -> MwResult<Response> {
+                let call = self.calls.fetch_add(1, Ordering::SeqCst);
+                let token = format!("refreshed-token-{}", call);
+                req.headers_mut().insert(
+                    reqwest::header::AUTHORIZATION,
+                    format!("Bearer {}", token).parse().unwrap(),
+                );
+                next.run(req, extensions).await
+            }
+        }
+
+        #[tokio::test]
+        async fn with_middleware_sets_header_from_middleware() {
+            let mut server = Server::new_async().await;
+            let _m = server.mock("GET", "/schemas/ids/1?deleted=true")
+                .match_header("authorization", "Bearer refreshed-token-0")
+                .with_status(200)
+                .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+                .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
+                .create();
+
+            let calls = Arc::new(AtomicUsize::new(0));
+            let sr_settings = SrSettings::new_builder(server.url())
+                .with_middleware(RefreshingTokenMiddleware {
+                    calls: calls.clone(),
+                })
+                .no_proxy()
+                .build()
+                .unwrap();
+
+            let result = get_schema_by_id(1, &sr_settings).await;
+
+            assert!(result.is_ok(), "{:?}", result.err());
+            assert_eq!(calls.load(Ordering::SeqCst), 1);
+        }
     }
 }
