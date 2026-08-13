@@ -136,13 +136,13 @@ pub struct DecodeResultWithContext {
 fn add_files(
     sr_settings: &SrSettings,
     registered_schema: RegisteredSchema,
-    files: &mut HashSet<String>,
+    files: &mut Vec<String>,
 ) -> Result<(), SRCError> {
     for r in registered_schema.references {
         let child_schema = get_referenced_schema(sr_settings, &r)?;
         add_files(sr_settings, child_schema, files)?;
     }
-    files.insert(registered_schema.schema);
+    files.push(registered_schema.schema);
     Ok(())
 }
 
@@ -157,10 +157,20 @@ fn to_resolve_context(
     sr_settings: &SrSettings,
     registered_schema: RegisteredSchema,
 ) -> Result<Arc<DecodeContext>, SRCError> {
-    let resolver = MessageResolver::new(&registered_schema.schema);
-    let mut files = HashSet::new();
+    let mut vec_of_schemas = Vec::new();
+    add_files(sr_settings, registered_schema.clone(), &mut vec_of_schemas)?;
+    // The root schema is always pushed last by add_files, so pop it off rather than
+    // re-parsing it below with the other, dependent schemas.
+    let root_schema = vec_of_schemas.pop().unwrap();
+    let resolver = MessageResolver::new(&root_schema);
+    let mut files: HashSet<String> = HashSet::new();
     add_common_files(resolver.imports(), &mut files);
-    add_files(sr_settings, registered_schema.clone(), &mut files)?;
+    for s in vec_of_schemas {
+        let dependent_resolver = MessageResolver::new(&s);
+        add_common_files(dependent_resolver.imports(), &mut files);
+        files.insert(s);
+    }
+    files.insert(root_schema);
     match Context::parse(&files) {
         Ok(context) => Ok(Arc::new(DecodeContext {
             resolver,
@@ -182,7 +192,7 @@ mod tests {
     use test_utils::{
         get_proto_body, get_proto_body_with_reference, get_proto_complex,
         get_proto_complex_proto_test_message, get_proto_complex_references, get_proto_hb_101,
-        get_proto_hb_schema, get_proto_result,
+        get_proto_hb_schema, get_proto_money_result, get_proto_result,
     };
 
     #[test]
@@ -292,6 +302,45 @@ mod tests {
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(get_proto_body(get_proto_result(), 1))
+            .create();
+
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
+        let decoder = ProtoDecoder::new(sr_settings);
+        let proto_test = decoder.decode(Some(get_proto_complex_proto_test_message()));
+
+        let message = match proto_test {
+            Ok(Value::Message(x)) => *x,
+            Err(e) => panic!("Error: {:?}, while none expected", e),
+            Ok(v) => panic!("Other value: {:?} than expected Message", v),
+        };
+        assert_eq!(message.fields[1].value, Value::Int64(1))
+    }
+
+    #[test]
+    fn test_decoder_complex_with_common_type_import_on_reference() {
+        // Regression test for https://github.com/gklijs/schema_registry_converter/issues/178:
+        // the *referenced* schema (not the top-level one) imports a well-known/common type.
+        let mut server = mockito::Server::new();
+
+        let _m1 = server
+            .mock("GET", "/schemas/ids/6?deleted=true")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(get_proto_body_with_reference(
+                get_proto_complex(),
+                2,
+                get_proto_complex_references(),
+            ))
+            .create();
+
+        let _m2 = server
+            .mock("GET", "/subjects/result.proto/versions/1")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(get_proto_body(get_proto_money_result(), 1))
             .create();
 
         let sr_settings = SrSettings::new_builder(server.url())

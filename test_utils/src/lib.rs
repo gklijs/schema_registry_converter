@@ -22,6 +22,13 @@ pub fn get_proto_result() -> &'static str {
     r#"syntax = \"proto3\"; package org.schema_registry_test_app.proto; message Result { string up = 1; string down = 2; } "#
 }
 
+/// Like `get_proto_result`, but imports a well-known/common `.proto` type (`google/type/money.proto`)
+/// itself. Used to reproduce https://github.com/gklijs/schema_registry_converter/issues/178: a
+/// reference (rather than the top-level schema) importing a common type.
+pub fn get_proto_money_result() -> &'static str {
+    r#"syntax = \"proto3\"; import \"google/type/money.proto\"; package org.schema_registry_test_app.proto; message Result { string up = 1; string down = 2; google.type.Money price = 3; } "#
+}
+
 pub fn get_proto_complex() -> &'static str {
     r#"syntax = \"proto3\"; import \"result.proto\"; message A {bytes id = 1;} message B {bytes id = 1;} message C {bytes id = 1; D d = 2; message D {int64 counter = 1;}} package org.schema_registry_test_app.proto; message ProtoTest {bytes id = 1; enum Language {Java = 0;Rust = 1;} Language by = 2;int64 counter = 3;string input = 4;repeated A results = 5;}"#
 }

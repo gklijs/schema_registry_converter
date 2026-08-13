@@ -180,14 +180,19 @@ pub struct DecodeContext {
     pub context: Context,
 }
 
-fn into_decode_context(vec_of_schemas: Vec<String>) -> Result<DecodeContext, SRCError> {
-    let resolver = MessageResolver::new(vec_of_schemas.last().unwrap());
+fn into_decode_context(mut vec_of_schemas: Vec<String>) -> Result<DecodeContext, SRCError> {
+    // The root schema is always pushed last by add_files, so pop it off rather than
+    // re-parsing it below with the other, dependent schemas.
+    let root_schema = vec_of_schemas.pop().unwrap();
+    let resolver = MessageResolver::new(&root_schema);
     let mut files: HashSet<String> = HashSet::new();
+    add_common_files(resolver.imports(), &mut files);
     for s in vec_of_schemas {
         let dependent_resolver = MessageResolver::new(&s);
         add_common_files(dependent_resolver.imports(), &mut files);
         files.insert(s);
     }
+    files.insert(root_schema);
     match Context::parse(files) {
         Ok(context) => Ok(DecodeContext { resolver, context }),
         Err(e) => Err(SRCError::non_retryable_with_cause(
@@ -214,7 +219,7 @@ mod tests {
     use protofish::prelude::Value;
     use test_utils::{
         get_proto_complex, get_proto_complex_proto_test_message, get_proto_complex_references,
-        get_proto_hb_101, get_proto_hb_schema, get_proto_result,
+        get_proto_hb_101, get_proto_hb_schema, get_proto_money_result, get_proto_result,
     };
 
     fn get_proto_body(schema: &str, id: u32) -> String {
@@ -335,6 +340,48 @@ mod tests {
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(get_proto_body(get_proto_result(), 1))
+            .create();
+
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
+        let decoder = ProtoDecoder::new(sr_settings);
+        let proto_test = decoder
+            .decode(Some(get_proto_complex_proto_test_message()))
+            .await
+            .unwrap();
+
+        let message = match proto_test {
+            Value::Message(x) => *x,
+            v => panic!("Other value: {:?} than expected Message", v),
+        };
+        assert_eq!(message.fields[1].value, Value::Int64(1))
+    }
+
+    #[tokio::test]
+    async fn test_decoder_complex_with_common_type_import_on_reference() {
+        // Mirrors the blocking regression test for
+        // https://github.com/gklijs/schema_registry_converter/issues/178: the *referenced*
+        // schema (not the top-level one) imports a well-known/common type. The async decoder
+        // already handled this correctly; kept here so both implementations stay covered.
+        let mut server = Server::new_async().await;
+        let _m = server
+            .mock("GET", "/schemas/ids/6?deleted=true")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(get_proto_body_with_reference(
+                get_proto_complex(),
+                2,
+                get_proto_complex_references(),
+            ))
+            .create();
+
+        let _m = server
+            .mock("GET", "/subjects/result.proto/versions/1")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(get_proto_body(get_proto_money_result(), 1))
             .create();
 
         let sr_settings = SrSettings::new_builder(server.url())
