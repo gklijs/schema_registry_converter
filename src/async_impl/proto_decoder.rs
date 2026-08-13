@@ -28,9 +28,11 @@ pub struct ProtoDecoder<'a> {
 impl<'a> ProtoDecoder<'a> {
     /// Creates a new decoder which will use the supplied url used in creating the sr settings to
     /// fetch the schema's since the schema needed is encoded in the binary, independent of the
-    /// SubjectNameStrategy we don't need any additional data. It's possible for recoverable errors
-    /// to stay in the cache, when a result comes back as an error you can use
-    /// remove_errors_from_cache to clean the cache, keeping the correctly fetched schema's
+    /// SubjectNameStrategy we don't need any additional data. Retriable errors (e.g. a transient
+    /// network/HTTP failure) are never cached, so those are simply retried on the next call.
+    /// Non-retriable errors (e.g. a schema that doesn't exist or can't be parsed) are cached to
+    /// avoid repeatedly retrying a lookup that isn't going to succeed; if the underlying problem
+    /// gets fixed you can use remove_errors_from_cache to clean those out.
     pub fn new(sr_settings: SrSettings) -> ProtoDecoder<'a> {
         ProtoDecoder {
             sr_settings,
@@ -38,9 +40,10 @@ impl<'a> ProtoDecoder<'a> {
             cache: DashMap::new(),
         }
     }
-    /// Remove all the errors from the cache, you might need to/want to run this when a recoverable
-    /// error is met. Errors are also cashed to prevent trying to get schema's that either don't
-    /// exist or can't be parsed.
+    /// Removes all non-retriable errors from the cache. You might need/want to run this when the
+    /// underlying problem has been fixed (e.g. a schema was missing and has since been
+    /// registered) and want the next call to try again immediately. Retriable errors aren't
+    /// stored in the cache in the first place, so there's nothing to remove for those.
     pub fn remove_errors_from_cache(&self) {
         self.cache.retain(|_, v| match v.peek() {
             Some(r) => r.is_ok(),
@@ -119,11 +122,23 @@ impl<'a> ProtoDecoder<'a> {
         match self.direct_cache.get(&id) {
             None => {
                 let result = self.get_vec_of_schemas_by_shared_future(id).await;
-                if result.is_ok() && !self.direct_cache.contains_key(&id) {
-                    self.direct_cache.insert(id, result.clone().unwrap());
-                    self.cache.remove(&id);
-                };
-                result
+                match result {
+                    Ok(v) => {
+                        if !self.direct_cache.contains_key(&id) {
+                            self.direct_cache.insert(id, v.clone());
+                            self.cache.remove(&id);
+                        }
+                        Ok(v)
+                    }
+                    // Retriable errors (transient network/HTTP issues) don't make sense to
+                    // cache, so the entry is dropped and the next call issues a fresh request
+                    // rather than replaying a stale failure.
+                    Err(e) if e.retriable => {
+                        self.cache.remove(&id);
+                        Err(e)
+                    }
+                    Err(e) => Err(e.into_cache()),
+                }
             }
             Some(result) => Ok(result.value().clone()),
         }
@@ -139,7 +154,7 @@ impl<'a> ProtoDecoder<'a> {
                 let v = async move {
                     match get_schema_by_id_and_type(id, &sr_settings, SchemaType::Protobuf).await {
                         Ok(v) => to_vec_of_schemas(&sr_settings, v).await,
-                        Err(e) => Err(e.into_cache()),
+                        Err(e) => Err(e),
                     }
                 }
                 .boxed()
@@ -180,6 +195,15 @@ pub struct DecodeContext {
     pub context: Context,
 }
 
+/// Parses the schema texts into a `DecodeContext`. Deliberately *not* cached: unlike the
+/// blocking decoder (which caches the parsed `Arc<DecodeContext>` and so also caches a parse
+/// failure), this runs again on every `deserialize`/`deserialize_with_context` call, re-parsing
+/// on each decode rather than storing the parsed `Context`/`MessageResolver` in the schema-id
+/// cache alongside the raw schema texts. That's an intentional trade-off to avoid caching
+/// non-trivial parsed state, not an oversight — see
+/// https://github.com/gklijs/schema_registry_converter/issues/175 for the discussion. One
+/// consequence: a parse failure here is never cached, so `error.cached` is always `false` for
+/// it and it's retried on every call, unlike the equivalent blocking-decoder failure.
 fn into_decode_context(mut vec_of_schemas: Vec<String>) -> Result<DecodeContext, SRCError> {
     // The root schema is always pushed last by add_files, so pop it off rather than
     // re-parsing it below with the other, dependent schemas.

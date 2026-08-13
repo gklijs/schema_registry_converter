@@ -558,7 +558,12 @@ rule RejectSchemaOfWrongFormat {
     requires: data.format != entry.codec.format
     ensures:
         entry.status = failed
-        entry.error = format_mismatch_error(data.format, entry.codec.format)
+        entry.error = as_cached(format_mismatch_error(data.format, entry.codec.format))
+
+    @guidance
+        -- A format mismatch can never be fixed by retrying the same call, so unlike a
+        -- retriable resolution failure it is always cached, the same as
+        -- RecordFailedResolution's non-retriable branch.
 }
 
 -- Referenced schemas are fetched by subject and version, depth first, and each one may
@@ -602,27 +607,37 @@ rule ResolveEntryOnceReferencesFetched {
         entry.schema = schema
 }
 
--- A reference that cannot be fetched fails the entire resolution, and that failure is
--- what gets cached against the top-level key.
+-- A reference that cannot be fetched fails the entire resolution. If the failure is
+-- retriable, nothing is cached; otherwise that failure is what gets cached against the
+-- top-level key.
 rule ReferenceFetchFailsResolution {
     when: RegistryReferenceFetchFailed(entry, pointer, error)
     requires: entry.status = in_flight
     ensures:
-        entry.status = failed
-        entry.error = as_cached(error)
+        if error.retriable:
+            not exists entry
+        else:
+            entry.status = failed
+            entry.error = as_cached(error)
 }
 
 rule RecordFailedResolution {
     when: RegistryCallFailed(entry, error)
     requires: entry.status = in_flight
     ensures:
-        entry.status = failed
-        entry.error = as_cached(error)
+        if error.retriable:
+            not exists entry
+        else:
+            entry.status = failed
+            entry.error = as_cached(error)
 
     @guidance
         -- as_cached marks the error as cached. A cached failure is never retried on its
         -- own: the caller must clear cached errors before the same key will reach the
-        -- registry again.
+        -- registry again. A retriable failure is the opposite: nothing about it is worth
+        -- remembering, so the entry is discarded outright rather than settling into
+        -- failed, and the very next call for the same key starts a completely fresh
+        -- resolution attempt with no explicit clear required.
 }
 
 rule ClearCachedErrors {
@@ -632,7 +647,9 @@ rule ClearCachedErrors {
             not exists entry
 
     @guidance
-        -- Successful cache entries are left untouched.
+        -- Successful cache entries are left untouched. failed_entries only ever holds
+        -- non-retriable failures: a retriable one never settles into failed in the first
+        -- place, so there is nothing here for this call to find and clear on its behalf.
 }
 
 -- --- Encoding --------------------------------------------------------------
@@ -1034,9 +1051,11 @@ surface AsyncCodecOperations {
         demands FormatCodec
 
     @guarantee CachedFailuresRequireExplicitClear
-        -- A resolution failure is cached exactly like a success. The same key will not
-        -- reach the registry again until the caller clears cached errors, which leaves
-        -- successful entries in place.
+        -- A non-retriable resolution failure is cached exactly like a success: the same
+        -- key will not reach the registry again until the caller clears cached errors,
+        -- which leaves successful entries in place. A retriable failure is not cached at
+        -- all -- nothing persists, so the very next call for the same key starts a fresh
+        -- resolution attempt automatically, with no explicit clear required.
 
     @guarantee SharedInFlightResolution
         -- Concurrent callers asking for the same not-yet-cached key produce one registry
@@ -1067,9 +1086,11 @@ surface BlockingCodecOperations {
         demands FormatCodec
 
     @guarantee CachedFailuresRequireExplicitClear
-        -- A resolution failure is cached exactly like a success. The same key will not
-        -- reach the registry again until the caller clears cached errors, which leaves
-        -- successful entries in place.
+        -- A non-retriable resolution failure is cached exactly like a success: the same
+        -- key will not reach the registry again until the caller clears cached errors,
+        -- which leaves successful entries in place. A retriable failure is not cached at
+        -- all -- nothing persists, so the very next call for the same key starts a fresh
+        -- resolution attempt automatically, with no explicit clear required.
 
     @guarantee SharedInFlightResolution
         -- Concurrent callers asking for the same not-yet-cached key produce one registry
