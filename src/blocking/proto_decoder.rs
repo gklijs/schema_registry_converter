@@ -23,18 +23,21 @@ pub struct ProtoDecoder {
 impl ProtoDecoder {
     /// Creates a new decoder which will use the supplied url used in creating the sr settings to
     /// fetch the schema's since the schema needed is encoded in the binary, independent of the
-    /// SubjectNameStrategy we don't need any additional data. It's possible for recoverable errors
-    /// to stay in the cache, when a result comes back as an error you can use
-    /// remove_errors_from_cache to clean the cache, keeping the correctly fetched schema's
+    /// SubjectNameStrategy we don't need any additional data. Retriable errors (e.g. a transient
+    /// network/HTTP failure) are never cached, so those are simply retried on the next call.
+    /// Non-retriable errors (e.g. a schema that doesn't exist or can't be parsed) are cached to
+    /// avoid repeatedly retrying a lookup that isn't going to succeed; if the underlying problem
+    /// gets fixed you can use remove_errors_from_cache to clean those out.
     pub fn new(sr_settings: SrSettings) -> ProtoDecoder {
         ProtoDecoder {
             sr_settings,
             cache: DashMap::new(),
         }
     }
-    /// Remove al the errors from the cache, you might need to/want to run this when a recoverable
-    /// error is met. Errors are also cashed to prevent trying to get schema's that either don't
-    /// exist or can't be parsed.
+    /// Removes all non-retriable errors from the cache. You might need/want to run this when the
+    /// underlying problem has been fixed (e.g. a schema was missing and has since been
+    /// registered) and want the next call to try again immediately. Retriable errors aren't
+    /// stored in the cache in the first place, so there's nothing to remove for those.
     pub fn remove_errors_from_cache(&self) {
         self.cache.retain(|_, v| v.is_ok());
     }
@@ -112,14 +115,26 @@ impl ProtoDecoder {
     /// it into the cache.
     fn context(&self, id: u32) -> Result<Arc<DecodeContext>, SRCError> {
         match self.cache.entry(id) {
-            Entry::Occupied(e) => e.get().clone(),
-            Entry::Vacant(e) => {
-                let v = match get_schema_by_id_and_type(id, &self.sr_settings, SchemaType::Protobuf)
-                {
-                    Ok(v) => to_resolve_context(&self.sr_settings, v),
-                    Err(e) => Err(e.into_cache()),
-                };
-                e.insert(v).value().clone()
+            Entry::Occupied(entry) => entry.get().clone(),
+            Entry::Vacant(entry) => {
+                let result =
+                    match get_schema_by_id_and_type(id, &self.sr_settings, SchemaType::Protobuf) {
+                        Ok(v) => to_resolve_context(&self.sr_settings, v),
+                        Err(e) => Err(e),
+                    };
+                match result {
+                    // Retriable errors (transient network/HTTP issues) don't make sense to
+                    // cache, so the entry is left vacant and the next call issues a fresh
+                    // request rather than replaying a stale failure. Non-retriable errors,
+                    // e.g. a parse failure, are cached permanently. Unlike the async decoder,
+                    // this caches the fully-parsed Context rather than re-parsing on every
+                    // decode call — see https://github.com/gklijs/schema_registry_converter/issues/175.
+                    Err(e) if e.retriable => Err(e),
+                    result => entry
+                        .insert(result.map_err(SRCError::into_cache))
+                        .value()
+                        .clone(),
+                }
             }
         }
     }

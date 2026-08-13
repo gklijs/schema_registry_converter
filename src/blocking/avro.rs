@@ -87,18 +87,21 @@ pub struct AvroDecoder {
 impl AvroDecoder {
     /// Creates a new decoder which will use the supplied url to fetch the schema's since the schema
     /// needed is encoded in the binary, independent of the SubjectNameStrategy we don't need any
-    /// additional data. It's possible for recoverable errors to stay in the cash, when a result
-    /// comes back as an error you can use remove_errors_from_cache to clean the cache, keeping the
-    /// correctly fetched schema's
+    /// additional data. Retriable errors (e.g. a transient network/HTTP failure) are never cached,
+    /// so those are simply retried on the next call. Non-retriable errors (e.g. a schema that
+    /// doesn't exist or can't be parsed) are cached to avoid repeatedly retrying a lookup that
+    /// isn't going to succeed; if the underlying problem gets fixed you can use
+    /// remove_errors_from_cache to clean those out.
     pub fn new(sr_settings: SrSettings) -> AvroDecoder {
         AvroDecoder {
             sr_settings,
             cache: DashMap::new(),
         }
     }
-    /// Remove al the errors from the cache, you might need to/want to run this when a recoverable
-    /// error is met. Errors are also cashed to prevent trying to get schema's that either don't
-    /// exist or can't be parsed.
+    /// Removes all non-retriable errors from the cache. You might need/want to run this when the
+    /// underlying problem has been fixed (e.g. a schema was missing and has since been
+    /// registered) and want the next call to try again immediately. Retriable errors aren't
+    /// stored in the cache in the first place, so there's nothing to remove for those.
     ///
     /// ```
     /// use apache_avro::types::Value;
@@ -236,13 +239,22 @@ impl AvroDecoder {
     fn schema(&self, id: u32) -> Result<Arc<AvroSchema>, SRCError> {
         let sr_settings = &self.sr_settings;
         match self.cache.entry(id) {
-            Entry::Occupied(e) => e.get().clone(),
-            Entry::Vacant(e) => {
-                let v = match get_schema_by_id_and_type(id, sr_settings, SchemaType::Avro) {
+            Entry::Occupied(entry) => entry.get().clone(),
+            Entry::Vacant(entry) => {
+                let result = match get_schema_by_id_and_type(id, sr_settings, SchemaType::Avro) {
                     Ok(registered_schema) => to_avro_schema(sr_settings, registered_schema),
-                    Err(e) => Err(e.into_cache()),
+                    Err(e) => Err(e),
                 };
-                e.insert(v).value().clone()
+                match result {
+                    // Retriable errors (transient network/HTTP issues) don't make sense to
+                    // cache, so the entry is left vacant and the next call issues a fresh
+                    // request rather than replaying a stale failure.
+                    Err(e) if e.retriable => Err(e),
+                    result => entry
+                        .insert(result.map_err(SRCError::into_cache))
+                        .value()
+                        .clone(),
+                }
             }
         }
     }
@@ -339,9 +351,10 @@ impl AvroEncoder {
             cache: DashMap::new(),
         }
     }
-    /// Remove al the errors from the cache, you might need to/want to run this when a recoverable
-    /// error is met. Errors are also cashed to prevent trying to get schema's that either don't
-    /// exist or can't be parsed.
+    /// Removes all non-retriable errors from the cache. You might need/want to run this when the
+    /// underlying problem has been fixed (e.g. a schema was missing and has since been
+    /// registered) and want the next call to try again immediately. Retriable errors aren't
+    /// stored in the cache in the first place, so there's nothing to remove for those.
     ///
     /// ```
     /// use apache_avro::types::Value;
@@ -483,13 +496,22 @@ impl AvroEncoder {
     ) -> Result<Arc<AvroSchema>, SRCError> {
         let sr_settings = &self.sr_settings;
         match self.cache.entry(key) {
-            Entry::Occupied(e) => e.get().clone(),
-            Entry::Vacant(e) => {
-                let v = match get_schema_by_subject(sr_settings, subject_name_strategy) {
+            Entry::Occupied(entry) => entry.get().clone(),
+            Entry::Vacant(entry) => {
+                let result = match get_schema_by_subject(sr_settings, subject_name_strategy) {
                     Ok(registered_schema) => to_avro_schema(sr_settings, registered_schema),
-                    Err(e) => Err(e.into_cache()),
+                    Err(e) => Err(e),
                 };
-                e.insert(v).value().clone()
+                match result {
+                    // Retriable errors (transient network/HTTP issues) don't make sense to
+                    // cache, so the entry is left vacant and the next call issues a fresh
+                    // request rather than replaying a stale failure.
+                    Err(e) if e.retriable => Err(e),
+                    result => entry
+                        .insert(result.map_err(SRCError::into_cache))
+                        .value()
+                        .clone(),
+                }
             }
         }
     }
@@ -972,6 +994,50 @@ mod tests {
     }
 
     #[test]
+    fn test_decoder_retriable_error_is_not_cached() {
+        // Regression test for https://github.com/gklijs/schema_registry_converter/issues/171:
+        // a retriable error (e.g. a transient 503) must not stick around in the cache, so the
+        // very next call succeeds without needing remove_errors_from_cache().
+        let mut server = mockito::Server::new();
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
+        let decoder = AvroDecoder::new(sr_settings);
+        let bytes = [0, 0, 0, 0, 9, 6];
+
+        let _m = server
+            .mock("GET", "/schemas/ids/9?deleted=true")
+            .with_status(503)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(r#"{"error_code":50302,"message":"Leader not known"}"#)
+            .create();
+
+        let err = decoder.decode(Some(&bytes)).unwrap_err();
+        assert!(err.retriable, "expected a retriable error, got {:?}", err);
+        assert!(
+            !err.cached,
+            "retriable error should not be cached, got {:?}",
+            err
+        );
+
+        let _m = server
+            .mock("GET", "/schemas/ids/9?deleted=true")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
+            .create();
+
+        // No remove_errors_from_cache() call: this must succeed purely because the retriable
+        // error above was never cached in the first place.
+        let heartbeat = decoder.decode(Some(&bytes)).unwrap().value;
+        assert_eq!(
+            heartbeat,
+            Value::Record(vec![("beat".to_string(), Value::Long(3))])
+        )
+    }
+
+    #[test]
     fn display_encoder() {
         let sr_settings = SrSettings::new_builder(String::from("http://127.0.0.1:1234"))
             .no_proxy()
@@ -1148,14 +1214,14 @@ mod tests {
         );
         let result = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
 
+        // Retriable errors (transient network/HTTP issues) aren't cached — see issue #171.
         assert_eq!(
             result,
             Err(SRCError::new(
                 "http call to schema registry failed",
                 Some(String::from("builder error for url (hxxx://bogus/subjects/heartbeat-nl.openweb.data.Balance/versions/latest)")),
                 true,
-            )
-                .into_cache())
+            ))
         )
     }
 
@@ -1434,6 +1500,7 @@ mod tests {
         let error = encoder
             .encode(vec![("beat", Value::Long(3))], &strategy)
             .unwrap_err();
+        // Retriable errors (transient network/HTTP issues) aren't cached — see issue #171.
         assert_eq!(
             error,
             SRCError::new(
@@ -1443,7 +1510,6 @@ mod tests {
                 )),
                 true,
             )
-            .into_cache()
         )
     }
 

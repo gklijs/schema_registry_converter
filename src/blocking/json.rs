@@ -37,7 +37,8 @@ impl JsonEncoder {
             scope: Scope::new(),
         }
     }
-    /// Removes errors from the cache, can be useful to retry failed encodings.
+    /// Removes all non-retriable errors from the cache, useful to retry failed encodings once
+    /// the underlying problem has been fixed. Retriable errors aren't cached in the first place.
     pub fn remove_errors_from_cache(&mut self) {
         self.cache.retain(|_, v| v.is_ok());
     }
@@ -62,9 +63,9 @@ impl JsonEncoder {
         value: &Value,
     ) -> Result<(ValidationState, u32), SRCError> {
         let cached_context = match self.cache.entry(key) {
-            Entry::Occupied(e) => e.into_mut().as_ref(),
-            Entry::Vacant(e) => {
-                let v = match get_schema_by_subject(&self.sr_settings, subject_name_strategy) {
+            Entry::Occupied(entry) => entry.into_mut().as_ref(),
+            Entry::Vacant(entry) => {
+                let result = match get_schema_by_subject(&self.sr_settings, subject_name_strategy) {
                     Ok(registered_schema) => match set_scoped_schema(
                         &mut self.scope,
                         &self.sr_settings,
@@ -74,11 +75,17 @@ impl JsonEncoder {
                             id: registered_schema.id,
                             url,
                         }),
-                        Err(e) => Err(e.into_cache()),
+                        Err(e) => Err(e),
                     },
-                    Err(e) => Err(e.into_cache()),
+                    Err(e) => Err(e),
                 };
-                e.insert(v).as_ref()
+                match result {
+                    // Retriable errors (transient network/HTTP issues) don't make sense to
+                    // cache, so the entry is left vacant and the next call issues a fresh
+                    // request rather than replaying a stale failure.
+                    Err(e) if e.retriable => return Err(e),
+                    result => entry.insert(result.map_err(SRCError::into_cache)).as_ref(),
+                }
             }
         };
         match cached_context {
@@ -109,9 +116,11 @@ pub struct JsonDecoder {
 impl JsonDecoder {
     /// Creates a new decoder which will use the supplied url to fetch the schema's since the schema
     /// needed is encoded in the binary, independent of the SubjectNameStrategy we don't need any
-    /// additional data. It's possible for recoverable errors to stay in the cache, when a result
-    /// comes back as an error you can use remove_errors_from_cache to clean the cache, keeping the
-    /// correctly fetched schema's
+    /// additional data. Retriable errors (e.g. a transient network/HTTP failure) are never cached,
+    /// so those are simply retried on the next call. Non-retriable errors (e.g. a schema that
+    /// doesn't exist or can't be parsed) are cached to avoid repeatedly retrying a lookup that
+    /// isn't going to succeed; if the underlying problem gets fixed you can use
+    /// remove_errors_from_cache to clean those out.
     pub fn new(sr_settings: SrSettings) -> JsonDecoder {
         JsonDecoder {
             sr_settings,
@@ -119,9 +128,10 @@ impl JsonDecoder {
             scope: Scope::new(),
         }
     }
-    /// Remove al the errors from the cache, you might need to/want to run this when a recoverable
-    /// error is met. Errors are also cashed to prevent trying to get schema's that either don't
-    /// exist or can't be parsed.
+    /// Removes all non-retriable errors from the cache. You might need/want to run this when the
+    /// underlying problem has been fixed (e.g. a schema was missing and has since been
+    /// registered) and want the next call to try again immediately. Retriable errors aren't
+    /// stored in the cache in the first place, so there's nothing to remove for those.
     pub fn remove_errors_from_cache(&mut self) {
         self.cache.retain(|_, v| v.is_ok());
     }
@@ -151,16 +161,23 @@ impl JsonDecoder {
     /// it into the cache.
     fn schema(&mut self, id: u32) -> Result<ScopedSchema, SRCError> {
         let url = match self.cache.entry(id) {
-            Entry::Occupied(e) => &*e.into_mut(),
-            Entry::Vacant(e) => {
-                let v = match get_schema_by_id_and_type(id, &self.sr_settings, SchemaType::Json) {
-                    Ok(r) => match set_scoped_schema(&mut self.scope, &self.sr_settings, &r) {
-                        Ok(schema) => Ok(schema),
-                        Err(e) => Err(e.into_cache()),
-                    },
-                    Err(e) => Err(e.into_cache()),
-                };
-                &*e.insert(v)
+            Entry::Occupied(entry) => &*entry.into_mut(),
+            Entry::Vacant(entry) => {
+                let result =
+                    match get_schema_by_id_and_type(id, &self.sr_settings, SchemaType::Json) {
+                        Ok(r) => match set_scoped_schema(&mut self.scope, &self.sr_settings, &r) {
+                            Ok(schema) => Ok(schema),
+                            Err(e) => Err(e),
+                        },
+                        Err(e) => Err(e),
+                    };
+                match result {
+                    // Retriable errors (transient network/HTTP issues) don't make sense to
+                    // cache, so the entry is left vacant and the next call issues a fresh
+                    // request rather than replaying a stale failure.
+                    Err(e) if e.retriable => return Err(e),
+                    result => &*entry.insert(result.map_err(SRCError::into_cache)),
+                }
             }
         };
         match url {
@@ -249,10 +266,10 @@ mod tests {
     use crate::json_common::handle_validation;
     use crate::schema_registry_common::{get_payload, SubjectNameStrategy};
     use test_utils::{
-        get_json_body, get_json_body_with_reference, json_extra_schema,
-        json_get_extra_references, json_get_result_references, json_incorrect_bytes,
-        json_result_java_bytes, json_result_schema, json_result_schema_with_id,
-        json_test_ref_schema, json_test_ref_schema_with_extra,
+        get_json_body, get_json_body_with_reference, json_extra_schema, json_get_extra_references,
+        json_get_result_references, json_incorrect_bytes, json_result_java_bytes,
+        json_result_schema, json_result_schema_with_id, json_test_ref_schema,
+        json_test_ref_schema_with_extra,
     };
 
     #[test]

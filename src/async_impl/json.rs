@@ -46,7 +46,8 @@ impl<'a> JsonEncoder<'a> {
             cache: DashMap::new(),
         }
     }
-    /// Removes errors from the cache, can be usefull to retry failed encodings.
+    /// Removes all non-retriable errors from the cache, useful to retry failed encodings once
+    /// the underlying problem has been fixed. Retriable errors aren't cached in the first place.
     pub fn remove_errors_from_cache(&self) {
         self.cache.retain(|_, v| match v.peek() {
             Some(r) => r.is_ok(),
@@ -77,12 +78,23 @@ impl<'a> JsonEncoder<'a> {
                 let result = self
                     .get_schema_by_shared_future(key.clone(), subject_name_strategy)
                     .await;
-                if result.is_ok() && !self.direct_cache.contains_key(&key) {
-                    self.direct_cache
-                        .insert(key.clone(), result.clone().unwrap());
-                    self.cache.remove(&key);
-                };
-                result
+                match result {
+                    Ok(v) => {
+                        if !self.direct_cache.contains_key(&key) {
+                            self.direct_cache.insert(key.clone(), v.clone());
+                            self.cache.remove(&key);
+                        }
+                        Ok(v)
+                    }
+                    // Retriable errors (transient network/HTTP issues) don't make sense to
+                    // cache, so the entry is dropped and the next call issues a fresh request
+                    // rather than replaying a stale failure.
+                    Err(e) if e.retriable => {
+                        self.cache.remove(&key);
+                        Err(e)
+                    }
+                    Err(e) => Err(e.into_cache()),
+                }
             }
             Some(result) => Ok(result.value().clone()),
         }
@@ -103,7 +115,7 @@ impl<'a> JsonEncoder<'a> {
                             Ok(s) => Ok(Arc::new(s)),
                             Err(e) => Err(e),
                         },
-                        Err(e) => Err(e.into_cache()),
+                        Err(e) => Err(e),
                     }
                 }
                 .boxed()
@@ -166,9 +178,11 @@ pub struct JsonDecoder<'a> {
 impl<'a> JsonDecoder<'a> {
     /// Creates a new decoder which will use the supplied url to fetch the schema's since the schema
     /// needed is encoded in the binary, independent of the SubjectNameStrategy we don't need any
-    /// additional data. It's possible for recoverable errors to stay in the cache, when a result
-    /// comes back as an error you can use remove_errors_from_cache to clean the cache, keeping the
-    /// correctly fetched schema's
+    /// additional data. Retriable errors (e.g. a transient network/HTTP failure) are never cached,
+    /// so those are simply retried on the next call. Non-retriable errors (e.g. a schema that
+    /// doesn't exist or can't be parsed) are cached to avoid repeatedly retrying a lookup that
+    /// isn't going to succeed; if the underlying problem gets fixed you can use
+    /// remove_errors_from_cache to clean those out.
     pub fn new(sr_settings: SrSettings) -> JsonDecoder<'a> {
         JsonDecoder {
             sr_settings,
@@ -176,9 +190,10 @@ impl<'a> JsonDecoder<'a> {
             cache: DashMap::new(),
         }
     }
-    /// Remove al the errors from the cache, you might need to/want to run this when a recoverable
-    /// error is met. Errors are also cashed to prevent trying to get schema's that either don't
-    /// exist or can't be parsed.
+    /// Removes all non-retriable errors from the cache. You might need/want to run this when the
+    /// underlying problem has been fixed (e.g. a schema was missing and has since been
+    /// registered) and want the next call to try again immediately. Retriable errors aren't
+    /// stored in the cache in the first place, so there's nothing to remove for those.
     pub fn remove_errors_from_cache(&self) {
         self.cache.retain(|_, v| match v.peek() {
             Some(r) => r.is_ok(),
@@ -215,11 +230,23 @@ impl<'a> JsonDecoder<'a> {
         match self.direct_cache.get(&id) {
             None => {
                 let result = self.get_schema_by_shared_future(id).await;
-                if result.is_ok() && !self.direct_cache.contains_key(&id) {
-                    self.direct_cache.insert(id, result.clone().unwrap());
-                    self.cache.remove(&id);
-                };
-                result
+                match result {
+                    Ok(v) => {
+                        if !self.direct_cache.contains_key(&id) {
+                            self.direct_cache.insert(id, v.clone());
+                            self.cache.remove(&id);
+                        }
+                        Ok(v)
+                    }
+                    // Retriable errors (transient network/HTTP issues) don't make sense to
+                    // cache, so the entry is dropped and the next call issues a fresh request
+                    // rather than replaying a stale failure.
+                    Err(e) if e.retriable => {
+                        self.cache.remove(&id);
+                        Err(e)
+                    }
+                    Err(e) => Err(e.into_cache()),
+                }
             }
             Some(result) => Ok(result.value().clone()),
         }
@@ -238,7 +265,7 @@ impl<'a> JsonDecoder<'a> {
                             Ok(v) => Ok(Arc::new(v)),
                             Err(e) => Err(e),
                         },
-                        Err(e) => Err(e.into_cache()),
+                        Err(e) => Err(e),
                     }
                 }
                 .boxed()
