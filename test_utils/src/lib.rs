@@ -87,6 +87,21 @@ pub fn json_get_result_references() -> &'static str {
     r#"{"name": "http://www.example.com/result.json", "subject": "result.json", "version": 1}"#
 }
 
+/// Like `json_test_ref_schema`, but with a second, required reference (`extra.json`) added after
+/// `result.json`. Used to reproduce https://github.com/gklijs/schema_registry_converter/issues/177:
+/// a reference listed after one that's already in scope.
+pub fn json_test_ref_schema_with_extra() -> &'static str {
+    r#"{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"title\":\"Json Test\",\"type\":\"object\",\"additionalProperties\":false,\"javaType\":\"org.schema_registry_test_app.json.JsonTest\",\"properties\":{\"id\":{\"type\":\"array\",\"items\":{\"type\":\"integer\"}},\"by\":{\"type\":\"string\",\"enum\":[\"Java\",\"Rust\",\"Js\",\"Python\",\"Go\",\"C\"]},\"counter\":{\"type\":\"integer\"},\"input\":{\"type\":\"string\"},\"results\":{\"type\":\"array\",\"items\":{\"$ref\":\"http://www.example.com/result.json\"}},\"extra\":{\"$ref\":\"http://www.example.com/extra.json\"}},\"required\":[\"id\",\"by\",\"counter\",\"results\",\"extra\"]}"#
+}
+
+pub fn json_extra_schema() -> &'static str {
+    r#"{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"title\":\"Json Extra\",\"type\":\"object\",\"additionalProperties\":false,\"javaType\":\"org.schema_registry_test_app.json.Extra\",\"properties\":{\"note\":{\"type\":\"string\"}},\"required\":[\"note\"]}"#
+}
+
+pub fn json_get_extra_references() -> &'static str {
+    r#"{"name": "http://www.example.com/extra.json", "subject": "extra.json", "version": 1}"#
+}
+
 pub fn json_result_java_bytes() -> &'static [u8] {
     &[
         0, 0, 0, 0, 10, 123, 34, 100, 111, 119, 110, 34, 58, 34, 115, 116, 114, 105, 110, 103, 34,
