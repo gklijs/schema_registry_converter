@@ -188,7 +188,7 @@ fn add_refs_to_scope(
         };
         // if it's already part of the scope, it's assumed any references are also already part of the scope.
         if scope.resolve(&id).is_some() {
-            return Ok(());
+            continue;
         }
         add_refs_to_scope(scope, sr_settings, &rs.references)?;
         let def: Value = to_value(&rs.schema)?;
@@ -246,11 +246,13 @@ mod tests {
 
     use crate::blocking::json::{JsonDecoder, JsonEncoder};
     use crate::blocking::schema_registry::SrSettings;
+    use crate::json_common::handle_validation;
     use crate::schema_registry_common::{get_payload, SubjectNameStrategy};
     use test_utils::{
-        get_json_body, get_json_body_with_reference, json_get_result_references,
-        json_incorrect_bytes, json_result_java_bytes, json_result_schema,
-        json_result_schema_with_id, json_test_ref_schema,
+        get_json_body, get_json_body_with_reference, json_extra_schema,
+        json_get_extra_references, json_get_result_references, json_incorrect_bytes,
+        json_result_java_bytes, json_result_schema, json_result_schema_with_id,
+        json_test_ref_schema, json_test_ref_schema_with_extra,
     };
 
     #[test]
@@ -692,6 +694,87 @@ mod tests {
             }
             _ => panic!("Not an Object that was expected"),
         }
+    }
+
+    #[test]
+    fn same_reference_then_new_reference_in_same_schema() {
+        // Regression test for https://github.com/gklijs/schema_registry_converter/issues/177:
+        // once one reference is already in the decoder's (persistent) scope, later references
+        // in the SAME schema's reference list must still be resolved, not silently skipped.
+        let mut server = mockito::Server::new();
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
+        let mut decoder = JsonDecoder::new(sr_settings);
+
+        let _m = server
+            .mock("GET", "/schemas/ids/5?deleted=true")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(get_json_body_with_reference(
+                json_test_ref_schema(),
+                5,
+                json_get_result_references(),
+            ))
+            .create();
+        let _m = server
+            .mock("GET", "/schemas/ids/8?deleted=true")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(get_json_body_with_reference(
+                json_test_ref_schema_with_extra(),
+                8,
+                &format!(
+                    "{}, {}",
+                    json_get_result_references(),
+                    json_get_extra_references()
+                ),
+            ))
+            .create();
+        let _m = server
+            .mock("GET", "/subjects/result.json/versions/1")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(get_json_body(json_result_schema(), 4))
+            .create();
+        let _m = server
+            .mock("GET", "/subjects/extra.json/versions/1")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(get_json_body(json_extra_schema(), 9))
+            .create();
+
+        // First decode populates the decoder's scope with `result.json`.
+        let bytes_id_5 = get_payload(
+            5,
+            serde_json::to_vec(&serde_json::json!({
+                "id": [1, 2, 3],
+                "by": "Java",
+                "counter": 1,
+                "input": "String",
+                "results": [{"up": "STRING", "down": "string"}]
+            }))
+            .unwrap(),
+        );
+        decoder.decode(Some(&bytes_id_5)).unwrap();
+
+        // Schema 8's references are [result.json, extra.json]: result.json is already scoped
+        // from the decode above, extra.json isn't. Before the fix, the early return on the
+        // already-scoped result.json skipped adding extra.json to scope entirely, so this
+        // fully valid payload would fail validation with a missing-reference error.
+        let payload = serde_json::json!({
+            "id": [1, 2, 3],
+            "by": "Java",
+            "counter": 1,
+            "input": "String",
+            "results": [{"up": "STRING", "down": "string"}],
+            "extra": {"note": "hi"}
+        });
+        let bytes_id_8 = get_payload(8, serde_json::to_vec(&payload).unwrap());
+        let result = decoder.decode(Some(&bytes_id_8)).unwrap().unwrap();
+        let validation = result.schema.validate(&payload);
+        handle_validation(validation, &payload).unwrap();
     }
 
     #[test]
