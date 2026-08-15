@@ -8,6 +8,12 @@ instead. As part of this, `proto_resolver::to_index_and_data` is now fallible: i
 `Result<(Vec<i32>, Vec<u8>), SRCError>` instead of `(Vec<i32>, Vec<u8>)`, a breaking change for
 any caller using that function directly. Fixes #176.
 
+Fix a follow-up issue in the same area: a brace character inside a string literal in a proto
+schema (e.g. a field/option default value) could desync `MessageResolver`/`IndexResolver`'s
+index bookkeeping from the real message nesting, since its lexer didn't previously recognize
+string literals and treated every `{`/`}` as message nesting. String literals are now skipped as
+a whole when scanning for braces.
+
 ### 4.10.0
 
 Propagate properties and tags.
