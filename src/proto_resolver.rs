@@ -184,17 +184,27 @@ fn same_vec(first: &[i32], second: &[i32]) -> bool {
     true
 }
 
-pub fn to_index_and_data(bytes: &[u8]) -> (Vec<i32>, Vec<u8>) {
+pub fn to_index_and_data(bytes: &[u8]) -> Result<(Vec<i32>, Vec<u8>), SRCError> {
+    if bytes.is_empty() {
+        return Err(SRCError::non_retryable_without_cause(
+            "Empty bytes given to decode the message index from",
+        ));
+    }
     if bytes[0] == 0 {
-        (vec![0], bytes[1..].to_vec())
+        Ok((vec![0], bytes[1..].to_vec()))
     } else {
         let mut reader = BufReader::with_capacity(bytes.len(), bytes);
-        let count: i32 = reader.read_varint().unwrap();
+        let count: i32 = reader.read_varint().map_err(|e| {
+            SRCError::non_retryable_with_cause(e, "Could not read the message index count")
+        })?;
         let mut index = Vec::new();
         for _ in 0..count {
-            index.push(reader.read_varint().unwrap())
+            let i = reader.read_varint().map_err(|e| {
+                SRCError::non_retryable_with_cause(e, "Could not read a message index value")
+            })?;
+            index.push(i)
         }
-        (index, reader.buffer().to_vec())
+        Ok((index, reader.buffer().to_vec()))
     }
 }
 
@@ -210,7 +220,7 @@ pub fn resolve_name(resolver: &MessageResolver, index: &[i32]) -> Result<Arc<Str
 
 #[cfg(test)]
 mod tests {
-    use crate::proto_resolver::{IndexResolver, MessageResolver};
+    use crate::proto_resolver::{to_index_and_data, IndexResolver, MessageResolver};
     use std::sync::Arc;
 
     fn get_proto_simple() -> &'static str {
@@ -403,5 +413,36 @@ message Receipts {
         );
         assert_eq!(resolver.find_name(&[1]), None);
         assert_eq!(resolver.imports.len(), 0)
+    }
+
+    #[test]
+    fn to_index_and_data_empty_bytes_gives_error() {
+        // this is what a 5-byte schema-registry-framed message (magic byte + 4-byte id +
+        // zero-length payload) turns into once get_bytes_result strips the header: an empty
+        // slice. This used to panic on `bytes[0]` instead of returning an error.
+        let result = to_index_and_data(&[]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn to_index_and_data_truncated_varint_count_gives_error() {
+        // a non-zero first byte signals a varint-encoded index count should follow, but there's
+        // nothing after it; 0x80 has its continuation bit set, so a byte must follow. This used
+        // to panic via `.unwrap()` on the `read_varint()` result.
+        let result = to_index_and_data(&[0x80]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn to_index_and_data_truncated_varint_index_gives_error() {
+        // count (zig-zag decoded) says two index values follow, but only one more byte remains.
+        let result = to_index_and_data(&[4, 5]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn to_index_and_data_single_index_with_data() {
+        let result = to_index_and_data(&[0, 42, 43]);
+        assert_eq!(result, Ok((vec![0], vec![42, 43])));
     }
 }

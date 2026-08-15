@@ -125,7 +125,7 @@ impl ProtoRawDecoder {
         match self.context(id) {
             Ok(s) => {
                 let schema = &s.schema;
-                let (index, data) = to_index_and_data(bytes);
+                let (index, data) = to_index_and_data(bytes)?;
                 let full_name = resolve_name(&s.resolver, &index)?;
                 Ok(RawDecodeResult {
                     schema: schema.clone(),
@@ -170,8 +170,8 @@ mod tests {
     use test_utils::{
         get_proto_body, get_proto_body_with_reference, get_proto_complex,
         get_proto_complex_only_data, get_proto_complex_proto_test_message,
-        get_proto_complex_references, get_proto_hb_101, get_proto_hb_101_only_data,
-        get_proto_hb_schema, get_proto_result,
+        get_proto_complex_references, get_proto_hb_101, get_proto_hb_101_empty_payload,
+        get_proto_hb_101_only_data, get_proto_hb_schema, get_proto_result,
     };
 
     #[test]
@@ -393,6 +393,26 @@ mod tests {
 
         assert_eq!(raw_result.bytes, get_proto_hb_101_only_data());
         assert_eq!(*raw_result.full_name, "nl.openweb.data.Heartbeat")
+    }
+
+    #[test]
+    fn test_decoder_five_byte_message_gives_error_instead_of_panic() {
+        let mut server = mockito::Server::new();
+        let _m = server
+            .mock("GET", "/schemas/ids/7?deleted=true")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(get_proto_body(get_proto_hb_schema(), 7))
+            .create();
+
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
+        let decoder = ProtoRawDecoder::new(sr_settings);
+        let result = decoder.decode(Some(get_proto_hb_101_empty_payload()));
+
+        assert!(result.is_err())
     }
 
     #[test]

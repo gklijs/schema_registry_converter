@@ -69,7 +69,7 @@ impl<'a> ProtoDecoder<'a> {
     async fn deserialize(&self, id: u32, bytes: &[u8]) -> Result<MessageValue, SRCError> {
         let vec_of_schemas = self.get_vec_of_schemas(id).await?;
         let context = into_decode_context(vec_of_schemas.to_vec())?;
-        let (index, data) = to_index_and_data(bytes);
+        let (index, data) = to_index_and_data(bytes)?;
         let full_name = resolve_name(&context.resolver, &index)?;
         let message_info = context.context.get_message(&full_name).unwrap();
         Ok(message_info.decode(&data, &context.context))
@@ -105,7 +105,7 @@ impl<'a> ProtoDecoder<'a> {
     ) -> Result<DecodeResultWithContext, SRCError> {
         let vec_of_schemas = self.get_vec_of_schemas(id).await?;
         let context = into_decode_context(vec_of_schemas.to_vec())?;
-        let (index, data_bytes) = to_index_and_data(bytes);
+        let (index, data_bytes) = to_index_and_data(bytes)?;
         let full_name = resolve_name(&context.resolver, &index)?;
         let message_info = context.context.get_message(&full_name).unwrap();
         let value = message_info.decode(&data_bytes, &context.context);
@@ -243,7 +243,8 @@ mod tests {
     use protofish::prelude::Value;
     use test_utils::{
         get_proto_complex, get_proto_complex_proto_test_message, get_proto_complex_references,
-        get_proto_hb_101, get_proto_hb_schema, get_proto_money_result, get_proto_result,
+        get_proto_hb_101, get_proto_hb_101_empty_payload, get_proto_hb_schema,
+        get_proto_money_result, get_proto_result,
     };
 
     fn get_proto_body(schema: &str, id: u32) -> String {
@@ -283,6 +284,26 @@ mod tests {
         };
 
         assert_eq!(Value::UInt64(101u64), message.fields[0].value)
+    }
+
+    #[tokio::test]
+    async fn test_decoder_five_byte_message_gives_error_instead_of_panic() {
+        let mut server = Server::new_async().await;
+        let _m = server
+            .mock("GET", "/schemas/ids/7?deleted=true")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(get_proto_body(get_proto_hb_schema(), 1))
+            .create();
+
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
+        let decoder = ProtoDecoder::new(sr_settings);
+        let result = decoder.decode(Some(get_proto_hb_101_empty_payload())).await;
+
+        assert!(result.is_err())
     }
 
     #[tokio::test]

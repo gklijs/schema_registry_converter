@@ -1,5 +1,13 @@
 ## Release notes
 
+### 4.11.0
+
+Fix a panic when decoding a 5-byte (or otherwise malformed/truncated) protobuf-framed payload
+with `ProtoDecoder`/`ProtoRawDecoder` (blocking and async); such payloads now yield an `SRCError`
+instead. As part of this, `proto_resolver::to_index_and_data` is now fallible: it returns
+`Result<(Vec<i32>, Vec<u8>), SRCError>` instead of `(Vec<i32>, Vec<u8>)`, a breaking change for
+any caller using that function directly. Fixes #176.
+
 ### 4.10.0
 
 Propagate properties and tags.
