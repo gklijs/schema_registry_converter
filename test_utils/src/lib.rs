@@ -41,6 +41,14 @@ pub fn get_proto_hb_101() -> &'static [u8] {
     &[0, 0, 0, 0, 7, 0, 8, 101]
 }
 
+/// A 5-byte schema-registry-framed message: magic byte + 4-byte schema id (7, matching
+/// [`get_proto_hb_schema`]) + zero-length payload. This is the minimum length classified as
+/// `Valid` framing, and used to be able to make the protobuf decoders panic instead of
+/// returning an `SRCError`. See https://github.com/gklijs/schema_registry_converter/issues/176.
+pub fn get_proto_hb_101_empty_payload() -> &'static [u8] {
+    &[0, 0, 0, 0, 7]
+}
+
 pub fn get_proto_complex_only_data() -> &'static [u8] {
     &get_proto_complex_proto_test_message()[7..]
 }
