@@ -72,13 +72,22 @@ enum Token {
     #[regex(r"//[\w\s]+\n", logos::skip, priority = 20)]
     LineComment,
 
-    #[regex(r"package\s+[a-zA-z0-9\\.\\_]+;", priority = 10)]
+    // Field/option string literals (e.g. a `[default = "{"]`) can contain brace characters.
+    // These need to be skipped as a whole, with higher priority than Open/Close below, so such
+    // braces aren't mistaken for message nesting and don't desync the index bookkeeping.
+    #[regex(r#""(\\.|[^"\\])*""#, logos::skip, priority = 20)]
+    DoubleQuotedString,
+
+    #[regex(r"'(\\.|[^'\\])*'", logos::skip, priority = 20)]
+    SingleQuotedString,
+
+    #[regex(r"package\s+[a-zA-Z0-9\\.\\_]+;", priority = 10)]
     Package,
 
-    #[regex(r"message\s+[a-zA-z0-9\\_]+", priority = 10)]
+    #[regex(r"message\s+[a-zA-Z0-9\\_]+", priority = 10)]
     Message,
 
-    #[regex(r#"import\s+"[a-zA-z0-9\\.\\_/]+";"#, priority = 10)]
+    #[regex(r#"import\s+"[a-zA-Z0-9\\.\\_/]+";"#, priority = 10)]
     Import,
 
     #[token("{", priority = 10)]
@@ -113,7 +122,7 @@ impl ResolverHelper {
                     let slice = lex.slice();
                     let message = String::from(slice[8..slice.len()].trim());
                     for i in &indexes {
-                        if same_vec(i, &index) {
+                        if *i == index {
                             *index.last_mut().unwrap() += 1;
                         }
                     }
@@ -134,7 +143,9 @@ impl ResolverHelper {
                 Err(_)
                 | Ok(Token::Ignorable)
                 | Ok(Token::BlockComment)
-                | Ok(Token::LineComment) => (),
+                | Ok(Token::LineComment)
+                | Ok(Token::DoubleQuotedString)
+                | Ok(Token::SingleQuotedString) => (),
             };
             next = lex.next()
         }
@@ -150,7 +161,7 @@ impl ResolverHelper {
 
 fn find_part<'a>(index: &'a [i32], helper: &'a ResolverHelper) -> &'a str {
     for i in 0..helper.indexes.len() {
-        if same_vec(index, &helper.indexes[i]) {
+        if index == helper.indexes[i] {
             return &helper.names[i];
         }
     }
@@ -170,18 +181,6 @@ fn find_name(index: &[i32], helper: &ResolverHelper) -> String {
         result.push_str(part)
     }
     result
-}
-
-fn same_vec(first: &[i32], second: &[i32]) -> bool {
-    if first.len() != second.len() {
-        return false;
-    };
-    for i in 0..first.len() {
-        if first[i] != second[i] {
-            return false;
-        }
-    }
-    true
 }
 
 pub fn to_index_and_data(bytes: &[u8]) -> Result<(Vec<i32>, Vec<u8>), SRCError> {
@@ -413,6 +412,53 @@ message Receipts {
         );
         assert_eq!(resolver.find_name(&[1]), None);
         assert_eq!(resolver.imports.len(), 0)
+    }
+
+    #[test]
+    fn test_schema_with_brace_in_string_default() {
+        // A brace character inside a string literal (e.g. a default/option value) used to be
+        // mistaken for message nesting, desyncing the index bookkeeping for anything declared
+        // after it.
+        let schema = r#"syntax = "proto3"; message Outer { string weird = 1 [default = "{"]; } message Inner { int32 x = 1; }"#;
+        let resolver = MessageResolver::new(schema);
+        assert_eq!(
+            resolver.find_name(&[0]),
+            Some(Arc::new(String::from("Outer")))
+        );
+        assert_eq!(
+            resolver.find_name(&[1]),
+            Some(Arc::new(String::from("Inner")))
+        );
+    }
+
+    #[test]
+    fn test_schema_with_brace_in_single_quoted_string() {
+        let schema = r#"syntax = "proto3"; message Outer { string weird = 1 [default = '}']; } message Inner { int32 x = 1; }"#;
+        let resolver = MessageResolver::new(schema);
+        assert_eq!(
+            resolver.find_name(&[0]),
+            Some(Arc::new(String::from("Outer")))
+        );
+        assert_eq!(
+            resolver.find_name(&[1]),
+            Some(Arc::new(String::from("Inner")))
+        );
+    }
+
+    #[test]
+    fn test_schema_with_escaped_quote_in_string() {
+        // an escaped quote inside the string shouldn't be mistaken for the closing quote, which
+        // would otherwise leave the rest of the literal (including its brace) unprotected.
+        let schema = r#"syntax = "proto3"; message Outer { string weird = 1 [default = "a\"{"]; } message Inner { int32 x = 1; }"#;
+        let resolver = MessageResolver::new(schema);
+        assert_eq!(
+            resolver.find_name(&[0]),
+            Some(Arc::new(String::from("Outer")))
+        );
+        assert_eq!(
+            resolver.find_name(&[1]),
+            Some(Arc::new(String::from("Inner")))
+        );
     }
 
     #[test]
