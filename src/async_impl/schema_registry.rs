@@ -889,11 +889,13 @@ mod tests {
     use std::time::Duration;
 
     use crate::async_impl::schema_registry::{
-        get_schema_by_id, get_schema_by_id_and_type, SrSettings,
+        get_schema_by_id, get_schema_by_id_and_type, post_schema, SrSettings,
     };
     use crate::schema_registry_common::{
         Metadata, RawRegisteredSchema, RegisteredReference, RegisteredSchema, SchemaType,
+        SuppliedSchema,
     };
+    use std::collections::HashMap;
 
     #[tokio::test]
     async fn put_correct_url_as_second_check_header_set() {
@@ -1113,6 +1115,57 @@ mod tests {
                 .await
                 .expect("convert to registered");
         assert_eq!(reg, expected_registered_schema);
+    }
+
+    #[tokio::test]
+    async fn post_schema_includes_properties_and_tags_in_request_body() {
+        let mut server = Server::new_async().await;
+
+        let expected_body = serde_json::json!({
+            "schema": "{\"type\":\"record\",\"name\":\"Heartbeat\",\"fields\":[]}",
+            "schemaType": "AVRO",
+            "metadata": {
+                "properties": {"owner": "identity-team"},
+                "tags": {"io.confluent.field.ssn": ["PII"]}
+            }
+        });
+
+        let _m = server
+            .mock("POST", "/subjects/heartbeat-value/versions")
+            .match_body(mockito::Matcher::Json(expected_body))
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(r#"{"id":1}"#)
+            .create();
+
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
+
+        let mut properties = HashMap::new();
+        properties.insert("owner".to_string(), "identity-team".to_string());
+        let mut tags = HashMap::new();
+        tags.insert(
+            "io.confluent.field.ssn".to_string(),
+            vec!["PII".to_string()],
+        );
+
+        let schema = SuppliedSchema {
+            name: None,
+            schema_type: SchemaType::Avro,
+            schema: r#"{"type":"record","name":"Heartbeat","fields":[]}"#.to_string(),
+            references: vec![],
+            properties: Some(properties),
+            tags: Some(tags),
+        };
+
+        let result = post_schema(&sr_settings, "heartbeat-value".to_string(), schema).await;
+
+        match result {
+            Ok(v) => assert_eq!(v.id, 1),
+            Err(e) => panic!("expected success, got error: {:?}", e),
+        }
     }
 
     #[cfg(feature = "middleware")]

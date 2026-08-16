@@ -1,5 +1,6 @@
 //! This module contains the code specific for the schema registry.
 
+use std::collections::HashMap;
 use std::str;
 use std::time::Duration;
 
@@ -324,7 +325,13 @@ pub fn post_schema(
             ));
         }
     };
-    let body = get_body(&schema_type, &schema.schema, &references);
+    let body = get_body(
+        &schema_type,
+        &schema.schema,
+        &references,
+        schema.properties.as_ref(),
+        schema.tags.as_ref(),
+    );
     let id = call_and_get_id(sr_settings, SrCall::PostNew(&subject, &body))?;
     Ok(RegisteredSchema {
         id,
@@ -338,7 +345,13 @@ pub fn post_schema(
     })
 }
 
-fn get_body(schema_type: &str, schema: &str, references: &[RegisteredReference]) -> String {
+fn get_body(
+    schema_type: &str,
+    schema: &str,
+    references: &[RegisteredReference],
+    properties: Option<&HashMap<String, String>>,
+    tags: Option<&HashMap<String, Vec<String>>>,
+) -> String {
     let mut root_element = Map::new();
     root_element.insert(String::from("schema"), Value::String(String::from(schema)));
     root_element.insert(
@@ -348,6 +361,25 @@ fn get_body(schema_type: &str, schema: &str, references: &[RegisteredReference])
     if !references.is_empty() {
         let values: Vec<Value> = references.iter().map(|x| json!(x)).collect();
         root_element.insert(String::from("references"), Value::Array(values));
+    }
+    if tags.is_some() || properties.is_some() {
+        let mut metadata = Map::new();
+        if let Some(properties) = properties {
+            let mut props = Map::new();
+            for (name, value) in properties {
+                props.insert(String::from(name), json! { value });
+            }
+            metadata.insert(String::from("properties"), Value::Object(props));
+        }
+        if let Some(tags) = tags {
+            let mut props = Map::new();
+            for (tag, values) in tags {
+                let tag_value = Value::Array(values.iter().map(|v| json!(v)).collect());
+                props.insert(String::from(tag), tag_value);
+            }
+            metadata.insert(String::from("tags"), Value::Object(props));
+        }
+        root_element.insert(String::from("metadata"), Value::Object(metadata));
     }
     let schema_element = Value::Object(root_element);
     schema_element.to_string()
@@ -394,7 +426,13 @@ fn post_reference(
             ));
         }
     };
-    let body = get_body(schema_type, &reference.schema, &references);
+    let body = get_body(
+        schema_type,
+        &reference.schema,
+        &references,
+        reference.properties.as_ref(),
+        reference.tags.as_ref(),
+    );
     perform_sr_call(sr_settings, SrCall::PostNew(&reference.subject, &body))?;
     let version = call_and_get_version(
         sr_settings,
@@ -614,7 +652,13 @@ fn is_compatible_reference(
             None => return Ok(None),
         }
     }
-    let body = get_body(schema_type, &reference.schema, &references);
+    let body = get_body(
+        schema_type,
+        &reference.schema,
+        &references,
+        reference.properties.as_ref(),
+        reference.tags.as_ref(),
+    );
     if !perform_compatibility_call(sr_settings, &reference.subject, &body)?.is_compatible {
         return Ok(None);
     }
@@ -655,7 +699,13 @@ pub fn is_compatible_schema(
             None => return Ok(false),
         }
     }
-    let body = get_body(&schema_type, &schema.schema, &references);
+    let body = get_body(
+        &schema_type,
+        &schema.schema,
+        &references,
+        schema.properties.as_ref(),
+        schema.tags.as_ref(),
+    );
     Ok(perform_compatibility_call(sr_settings, &subject, &body)?.is_compatible)
 }
 
@@ -663,9 +713,10 @@ pub fn is_compatible_schema(
 mod tests {
     use std::{collections::HashMap, time::Duration};
 
-    use crate::blocking::schema_registry::{get_schema_by_id, SrSettings};
+    use crate::blocking::schema_registry::{get_schema_by_id, post_schema, SrSettings};
     use crate::schema_registry_common::{
         Metadata, RawRegisteredSchema, RegisteredReference, RegisteredSchema, SchemaType,
+        SuppliedSchema,
     };
 
     #[test]
@@ -890,5 +941,56 @@ mod tests {
         let reg = crate::blocking::schema_registry::raw_to_registered_schema(parsed.clone(), None)
             .expect("convert to registered");
         assert_eq!(reg, expected_registered_schema);
+    }
+
+    #[test]
+    fn post_schema_includes_properties_and_tags_in_request_body() {
+        let mut server = mockito::Server::new();
+
+        let expected_body = serde_json::json!({
+            "schema": "{\"type\":\"record\",\"name\":\"Heartbeat\",\"fields\":[]}",
+            "schemaType": "AVRO",
+            "metadata": {
+                "properties": {"owner": "identity-team"},
+                "tags": {"io.confluent.field.ssn": ["PII"]}
+            }
+        });
+
+        let _m = server
+            .mock("POST", "/subjects/heartbeat-value/versions")
+            .match_body(mockito::Matcher::Json(expected_body))
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(r#"{"id":1}"#)
+            .create();
+
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
+
+        let mut properties = HashMap::new();
+        properties.insert("owner".to_string(), "identity-team".to_string());
+        let mut tags = HashMap::new();
+        tags.insert(
+            "io.confluent.field.ssn".to_string(),
+            vec!["PII".to_string()],
+        );
+
+        let schema = SuppliedSchema {
+            name: None,
+            schema_type: SchemaType::Avro,
+            schema: r#"{"type":"record","name":"Heartbeat","fields":[]}"#.to_string(),
+            references: vec![],
+            properties: Some(properties),
+            tags: Some(tags),
+        };
+
+        let result = post_schema(&sr_settings, "heartbeat-value".to_string(), schema);
+
+        match result {
+            Ok(v) => assert_eq!(v.id, 1),
+            Err(e) => panic!("expected success, got error: {:?}", e),
+        }
     }
 }
