@@ -33,6 +33,13 @@ jobs:
 
     steps:
       - uses: actions/checkout@v2
+      - uses: Swatinem/rust-cache@v2
+        # This job has never cached dependencies -- every push did a fully cold rebuild of the
+        # whole tree, including cargo-make's own ci-flow (build/clippy/test all over again) and
+        # the benchmarks step's dev-dependencies (criterion pulls in a dozen-plus extra crates:
+        # clap, plotters, rayon, ciborium, ...). See
+        # https://github.com/gklijs/schema_registry_converter/issues/118 for where the time was
+        # actually going (ci-flow ~58%, benchmarks ~21% of a ~23 minute run).
       - name: Install
         run: cargo install --debug cargo-make
       - name: Build
@@ -52,6 +59,8 @@ jobs:
       - name: benchmarks
         # See https://github.com/gklijs/schema_registry_converter/issues/118. Shared runners are
         # too noisy for reliable pass/fail thresholds, so this just prints timings to the job log
-        # for a human to eyeball across PRs rather than gating the build on them.
-        run: cargo bench --all-features
+        # for a human to eyeball across PRs rather than gating the build on them -- so it's fine
+        # to trim criterion's default sampling (100 samples / 3s+5s per benchmark) down to keep
+        # this step's cost reasonable; same values scripts/run_bench_pass.sh uses.
+        run: cargo bench --all-features -- --sample-size 60 --measurement-time 3 --warm-up-time 2
         continue-on-error: true
