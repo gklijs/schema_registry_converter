@@ -2,11 +2,28 @@ name: CI
 
 on: [push, pull_request]
 
+# A push and its PR both trigger this workflow, and every new push superseded an
+# already-running one anyway -- cancel it instead of letting both run to completion (or hang,
+# see CARGO_MAKE_SKIP_CODECOV below) in parallel.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
   RUSTFLAGS: "-C link-dead-code"
   CARGO_MAKE_RUN_CODECOV: true
+  # cargo-make's `codecov` task pipes `curl -s https://codecov.io/bash` straight into `bash` --
+  # Codecov's now-deprecated bash uploader. It was intermittently hanging CI builds for 30+
+  # minutes until manually cancelled (observed on PR #189, unrelated to that PR's own changes).
+  # Skip just that sub-task; the rest of ci-coverage-flow (installing kcov and generating an
+  # actual coverage report) still runs as before -- verified locally with
+  # `cargo make --makefile make.toml ci-coverage-flow -v` that execution reaches
+  # `coverage-kcov` but the `codecov` task itself is never invoked with this flag set. Restoring
+  # a working upload (e.g. the codecov GitHub Action instead of the bash uploader) is a
+  # separate, deliberate piece of work.
+  CARGO_MAKE_SKIP_CODECOV: true
   CODECOV_TOKEN: ee9fe20a-5285-4805-b1a9-5af664534997
 
 jobs:
