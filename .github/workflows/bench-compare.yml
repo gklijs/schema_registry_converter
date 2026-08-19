@@ -1,0 +1,108 @@
+name: Bench compare
+
+# Compares this PR's benchmarks (see https://github.com/gklijs/schema_registry_converter/issues/118)
+# against `main`, and posts/updates a single PR comment with the result. Deliberately separate
+# from ci.yml's own non-gating `benchmarks` step (which only prints numbers for the PR itself):
+# this job needs to check out and build *two* refs, and needs `pull-requests: write` to comment.
+#
+# Uses `pull_request`, not `pull_request_target`: fork PRs get a read-only GITHUB_TOKEN this way,
+# which is the safe choice given the job compiles and runs the PR's own (untrusted) code. The
+# trade-off is that the comment-posting step can't write on a fork PR and is allowed to fail
+# quietly there -- the numbers are still visible in this workflow's own log either way.
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: bench-compare-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  bench-compare:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: bench-compare
+
+      - name: Clear any cached criterion data
+        # Swatinem/rust-cache caches target/ (that's the point -- it's what makes the two
+        # full-feature builds below fast) and doesn't know to exclude target/criterion. Without
+        # this, a `main` baseline restored from a *previous* run's cache could still be sitting
+        # there before "Build & benchmark main" below ever runs. That's mostly harmless when
+        # that step succeeds (--save-baseline overwrites it with fresh data either way), but if
+        # it ever fails, the compare step would silently fall back to comparing against that
+        # stale leftover instead of correctly reporting "no baseline". Wiping it here guarantees
+        # every comparison is provably built by *this* run, never left over from a previous one.
+        run: rm -rf target/criterion
+
+      - name: Note PR commit
+        run: echo "PR_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Benchmark PR (plain)
+        # No --baseline here: this can't panic on a missing baseline (see run_bench_pass.sh),
+        # so it's the guaranteed-complete source of "current" timings for every benchmark,
+        # including ones this PR adds that main doesn't have yet.
+        run: |
+          mkdir -p bench-artifacts
+          bash scripts/run_bench_pass.sh plain > bench-artifacts/plain.txt 2>&1
+        continue-on-error: true
+
+      - name: Build & benchmark main
+        run: |
+          git fetch origin main:refs/remotes/origin/main --depth 1
+          git checkout --detach origin/main
+          bash scripts/run_bench_pass.sh save-baseline main > bench-artifacts/main_build.txt 2>&1
+        continue-on-error: true
+
+      - name: Back to PR code
+        run: git checkout --detach "$PR_SHA"
+
+      - name: Compare PR against main
+        run: bash scripts/run_bench_pass.sh compare main bench-artifacts
+        continue-on-error: true
+
+      - name: Render comparison
+        run: |
+          python3 scripts/bench_compare.py bench-artifacts/plain.txt bench-artifacts/compare_*.txt \
+            > bench-artifacts/comment.md || echo \
+            "_Benchmark comparison could not be generated -- see this workflow's log for details._" \
+            > bench-artifacts/comment.md
+
+      - name: Post/update PR comment
+        if: always()
+        continue-on-error: true # best-effort: fork PRs get a read-only token and can't comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('bench-artifacts/comment.md', 'utf8');
+            const marker = '<!-- schema-registry-converter-bench-compare -->';
+            const comment = `${marker}\n## 📊 Benchmark comparison vs \`main\`\n\n${body}`;
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find((c) => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body: comment,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: comment,
+              });
+            }
