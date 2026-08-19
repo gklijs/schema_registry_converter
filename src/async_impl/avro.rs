@@ -770,8 +770,8 @@ mod tests {
         let item = match heartbeat {
             Ok(r) => {
                 let name = r.name.unwrap();
-                assert_eq!(name.name.as_str(), "Heartbeat");
-                assert_eq!(name.namespace.unwrap().as_str(), "nl.openweb.data");
+                assert_eq!(name.name(), "Heartbeat");
+                assert_eq!(name.namespace().unwrap(), "nl.openweb.data");
                 from_value::<Heartbeat>(&r.value).unwrap()
             }
             _ => panic!(),

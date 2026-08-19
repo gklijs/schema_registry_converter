@@ -182,9 +182,9 @@ pub(crate) fn get_name(schema: &Schema) -> Option<Name> {
 pub fn get_supplied_schema(schema: &Schema) -> SuppliedSchema {
     let name = match get_name(schema) {
         None => None,
-        Some(n) => match n.namespace {
-            None => Some(n.name),
-            Some(ns) => Some(format!("{}.{}", ns, n.name)),
+        Some(n) => match n.namespace() {
+            None => Some(n.name().to_string()),
+            Some(ns) => Some(format!("{}.{}", ns, n.name())),
         },
     };
     SuppliedSchema {
