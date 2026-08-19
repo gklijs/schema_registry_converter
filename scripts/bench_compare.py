@@ -93,6 +93,11 @@ def parse(text: str) -> dict[str, Reading]:
 
 
 def classify(change_pct: float | None) -> tuple[str, str]:
+    # 5% deliberately matches the `noise_threshold` set on the `Criterion` config in each
+    # benches/*.rs file, not an independent guess -- see the comment there (and
+    # https://github.com/gklijs/schema_registry_converter/issues/190) for how that number was
+    # measured: a same-binary-vs-itself control run put common dev/CI-environment noise at
+    # 5-7%, well above criterion's own 1% default.
     if change_pct is None:
         return "🆕", "no baseline on `main` yet"
     if change_pct >= 5:

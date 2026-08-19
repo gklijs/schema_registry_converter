@@ -55,5 +55,17 @@ fn avro_benchmarks(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, avro_benchmarks);
+// Defaults (1% noise threshold, 5% significance level) are tuned for a quiet, dedicated
+// machine. Verified via a same-binary-vs-itself control run on a laptop CPU under WSL2 --
+// nothing unusual, just a common dev-machine setup -- that this environment's real run-to-run
+// noise floor is more like 5-7%, well above criterion's default 1% threshold; at the default,
+// completely unchanged code routinely got flagged "regressed"/"improved". Raising both here
+// doesn't make measurements less noisy, it stops criterion *reporting* noise as a real change.
+// See https://github.com/gklijs/schema_registry_converter/issues/190 and
+// scripts/bench_compare.py, which classifies at the same 5% threshold for consistency.
+criterion_group! {
+    name = benches;
+    config = Criterion::default().noise_threshold(0.05).significance_level(0.02);
+    targets = avro_benchmarks
+}
 criterion_main!(benches);
