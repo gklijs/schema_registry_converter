@@ -1,12 +1,16 @@
 //! Common structures and functions of the crate
 
-use apache_avro::schema::{Name, Schema};
+use apache_avro::reader::datum::GenericDatumReader;
+use apache_avro::schema::{Name, ResolvedSchema, Schema};
+use apache_avro::to_value;
 use apache_avro::types::{Record, Value};
-use apache_avro::{to_avro_datum, to_value};
+use apache_avro::writer::datum::GenericDatumWriter;
+use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
 use serde::ser::Serialize;
 use serde_json::{value, Map};
 use std::collections::HashMap;
+use std::io::Cursor;
 use std::sync::Arc;
 
 use crate::error::SRCError;
@@ -31,6 +35,71 @@ pub struct AvroSchema {
     pub version: Option<u32>,
     pub properties: Option<HashMap<String, String>>,
     pub tags: Option<HashMap<String, Vec<String>>>,
+}
+
+/// A schema's named types resolved once and reused for every subsequent encode/decode of that
+/// schema id, instead of redone from scratch on every call the way the now-deprecated
+/// `to_avro_datum`/`from_avro_datum` free functions do internally (each builds a fresh
+/// `GenericDatumReader`/`GenericDatumWriter`, which resolves the full schema tree into a
+/// `ResolvedSchema` every time). See https://github.com/gklijs/schema_registry_converter/issues/190.
+///
+/// `schema` is `Box::leak`'d to get the `'static` borrow `ResolvedSchema` needs. That never gets
+/// freed, but neither does the `Arc<AvroSchema>` this is resolved from -- `AvroEncoder`'s and
+/// `AvroDecoder`'s own schema caches never evict a successfully-fetched entry either, so this
+/// doesn't change the crate's existing "schemas we've seen stay resident for the process's
+/// lifetime" behavior, just adds one more (much cheaper to reproduce, being just a resolved
+/// lookup table rather than a freshly parsed/validated schema) copy alongside it.
+#[derive(Debug)]
+pub(crate) struct ResolvedContext {
+    schema: &'static Schema,
+    resolved: ResolvedSchema<'static>,
+}
+
+/// Per-`AvroEncoder`/`AvroDecoder`-instance cache for [`ResolvedContext`], keyed by schema id.
+///
+/// Deliberately *not* a single process-wide cache: a schema id is only unique within the schema
+/// registry it came from, and this crate explicitly supports encoders/decoders pointed at
+/// different registries coexisting in the same process (and, more mundanely, different tests in
+/// this crate's own suite reusing the same small mock ids for unrelated schemas). A shared
+/// global keyed on the bare id would silently hand back the wrong resolution for id collisions
+/// like that -- caught by the test suite failing under `cargo test`'s default parallelism, even
+/// though every individual affected test passed in isolation.
+pub(crate) type ResolvedSchemaCache = DashMap<u32, Arc<ResolvedContext>>;
+
+fn resolved_context(
+    cache: &ResolvedSchemaCache,
+    avro_schema: &AvroSchema,
+) -> Result<Arc<ResolvedContext>, SRCError> {
+    match cache.entry(avro_schema.id) {
+        Entry::Occupied(entry) => Ok(entry.get().clone()),
+        Entry::Vacant(entry) => {
+            let schema: &'static Schema = Box::leak(Box::new(avro_schema.parsed.clone()));
+            let resolved = ResolvedSchema::try_from(schema).map_err(|e| {
+                SRCError::non_retryable_with_cause(e, "Could not resolve Avro schema")
+            })?;
+            let context = Arc::new(ResolvedContext { schema, resolved });
+            entry.insert(context.clone());
+            Ok(context)
+        }
+    }
+}
+
+/// Decodes bytes into an apache_avro `Value` using the writer schema in `avro_schema`, reusing
+/// its cached schema resolution (see [`resolved_context`]) rather than rebuilding it per call.
+pub(crate) fn decode_bytes(
+    cache: &ResolvedSchemaCache,
+    avro_schema: &AvroSchema,
+    bytes: &[u8],
+) -> Result<Value, SRCError> {
+    let context = resolved_context(cache, avro_schema)?;
+    let mut reader = Cursor::new(bytes);
+    GenericDatumReader::builder(context.schema)
+        .resolved_writer_schemata(context.resolved.clone())
+        .build()
+        .and_then(|r| r.read_value(&mut reader))
+        .map_err(|e| {
+            SRCError::non_retryable_with_cause(e, "Could not transform bytes using schema")
+        })
 }
 
 #[derive(Debug, PartialEq)]
@@ -118,8 +187,17 @@ pub(crate) fn replace_reference(parent: value::Value, child: value::Value) -> va
     }
 }
 
-fn to_bytes(avro_schema: &AvroSchema, record: Value) -> Result<Vec<u8>, SRCError> {
-    match to_avro_datum(&avro_schema.parsed, record) {
+fn to_bytes(
+    cache: &ResolvedSchemaCache,
+    avro_schema: &AvroSchema,
+    record: Value,
+) -> Result<Vec<u8>, SRCError> {
+    let context = resolved_context(cache, avro_schema)?;
+    let result = GenericDatumWriter::builder(context.schema)
+        .resolved_schemata(context.resolved.clone())
+        .build()
+        .and_then(|writer| writer.write_value_to_vec(record));
+    match result {
         Ok(v) => Ok(get_payload(avro_schema.id, v)),
         Err(e) => Err(SRCError::non_retryable_with_cause(
             e,
@@ -131,6 +209,7 @@ fn to_bytes(avro_schema: &AvroSchema, record: Value) -> Result<Vec<u8>, SRCError
 /// Using the schema with a vector of values the values will be correctly deserialized according to
 /// the avro specification.
 pub(crate) fn values_to_bytes(
+    cache: &ResolvedSchemaCache,
     avro_schema: &AvroSchema,
     values: Vec<(&str, Value)>,
 ) -> Result<Vec<u8>, SRCError> {
@@ -147,12 +226,13 @@ pub(crate) fn values_to_bytes(
     for value in values {
         record.put(value.0, value.1)
     }
-    to_bytes(avro_schema, Value::from(record))
+    to_bytes(cache, avro_schema, Value::from(record))
 }
 
 /// Using the schema with an item implementing serialize the item will be correctly deserialized
 /// according to the avro specification.
 pub(crate) fn item_to_bytes(
+    cache: &ResolvedSchemaCache,
     avro_schema: &AvroSchema,
     item: impl Serialize,
 ) -> Result<Vec<u8>, SRCError> {
@@ -162,14 +242,18 @@ pub(crate) fn item_to_bytes(
         })
         .map(|r| r.resolve(&avro_schema.parsed))
     {
-        Ok(Ok(v)) => to_bytes(avro_schema, v),
+        Ok(Ok(v)) => to_bytes(cache, avro_schema, v),
         Ok(Err(e)) => Err(SRCError::non_retryable_with_cause(e, "Failed to resolve")),
         Err(e) => Err(e),
     }
 }
 
-pub(crate) fn record_to_bytes(avro_schema: &AvroSchema, item: Value) -> Result<Vec<u8>, SRCError> {
-    to_bytes(avro_schema, item)
+pub(crate) fn record_to_bytes(
+    cache: &ResolvedSchemaCache,
+    avro_schema: &AvroSchema,
+    item: Value,
+) -> Result<Vec<u8>, SRCError> {
+    to_bytes(cache, avro_schema, item)
 }
 
 pub(crate) fn get_name(schema: &Schema) -> Option<Name> {
@@ -201,6 +285,7 @@ pub fn get_supplied_schema(schema: &Schema) -> SuppliedSchema {
 mod tests {
     use apache_avro::types::Value;
     use apache_avro::Schema;
+    use dashmap::DashMap;
 
     use test_utils::{Atype, ConfirmAccountCreation, Heartbeat};
 
@@ -218,7 +303,7 @@ mod tests {
             properties: None,
             tags: None,
         };
-        let result = values_to_bytes(&schema, vec![("beat", Value::Long(3))]);
+        let result = values_to_bytes(&DashMap::new(), &schema, vec![("beat", Value::Long(3))]);
         assert_eq!(
             result,
             Err(SRCError::new(
@@ -240,7 +325,8 @@ mod tests {
             properties: None,
             tags: None,
         };
-        let err = values_to_bytes(&schema, vec![("beat", Value::Long(3))]).unwrap_err();
+        let err =
+            values_to_bytes(&DashMap::new(), &schema, vec![("beat", Value::Long(3))]).unwrap_err();
         assert_eq!(err.error, "Could not get Avro bytes")
     }
 
@@ -259,7 +345,9 @@ mod tests {
             properties: None,
             tags: None,
         };
-        let err = crate::avro_common::item_to_bytes(&schema, Heartbeat { beat: 3 }).unwrap_err();
+        let err =
+            crate::avro_common::item_to_bytes(&DashMap::new(), &schema, Heartbeat { beat: 3 })
+                .unwrap_err();
         assert_eq!(err.error, "Failed to resolve")
     }
 
@@ -284,7 +372,7 @@ mod tests {
             ],
             a_type: Atype::Manual,
         };
-        let err = crate::avro_common::item_to_bytes(&schema, item).unwrap_err();
+        let err = crate::avro_common::item_to_bytes(&DashMap::new(), &schema, item).unwrap_err();
         assert_eq!(err.error, "Failed to resolve")
     }
 }

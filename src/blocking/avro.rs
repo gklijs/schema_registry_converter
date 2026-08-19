@@ -26,19 +26,18 @@
 //!
 //! [avro-rs]: https://crates.io/crates/avro-rs
 
-use std::io::Cursor;
 use std::sync::Arc;
 
 use apache_avro::types::Value;
-use apache_avro::{from_avro_datum, Schema};
+use apache_avro::Schema;
 use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
 use serde::ser::Serialize;
 use serde_json::Value as JsonValue;
 
 use crate::avro_common::{
-    get_name, item_to_bytes, replace_reference, values_to_bytes, AvroSchema, DecodeResult,
-    DecodeResultWithSchema,
+    decode_bytes, get_name, item_to_bytes, replace_reference, values_to_bytes, AvroSchema,
+    DecodeResult, DecodeResultWithSchema, ResolvedSchemaCache,
 };
 use crate::blocking::schema_registry::{
     get_referenced_schema, get_schema_by_id_and_type, get_schema_by_subject, SrSettings,
@@ -82,6 +81,7 @@ use crate::schema_registry_common::{
 pub struct AvroDecoder {
     sr_settings: SrSettings,
     cache: DashMap<u32, Result<Arc<AvroSchema>, SRCError>>,
+    resolved_cache: ResolvedSchemaCache,
 }
 
 impl AvroDecoder {
@@ -96,6 +96,7 @@ impl AvroDecoder {
         AvroDecoder {
             sr_settings,
             cache: DashMap::new(),
+            resolved_cache: DashMap::new(),
         }
     }
     /// Removes all non-retriable errors from the cache. You might need/want to run this when the
@@ -166,27 +167,22 @@ impl AvroDecoder {
                 name: None,
                 value: Value::Null,
             }),
-            BytesResult::Valid(id, bytes) => self.deserialize(id, &bytes),
+            BytesResult::Valid(id, bytes) => self.deserialize(id, bytes),
             BytesResult::Invalid(bytes) => Err(SRCError::non_retryable_without_cause(
-                &invalid_bytes_error(&bytes),
+                &invalid_bytes_error(bytes),
             )),
         }
     }
     /// The actual deserialization trying to get the id from the bytes to retrieve the schema, and
     /// using a reader transforms the bytes to a value.
     fn deserialize(&self, id: u32, bytes: &[u8]) -> Result<DecodeResult, SRCError> {
-        let schema = self.schema(id);
-        let mut reader = Cursor::new(bytes);
-        match schema {
-            Ok(s) => match from_avro_datum(&s.parsed, &mut reader, None) {
+        match self.schema(id) {
+            Ok(s) => match decode_bytes(&self.resolved_cache, &s, bytes) {
                 Ok(v) => Ok(DecodeResult {
                     name: get_name(&s.parsed),
                     value: v,
                 }),
-                Err(e) => Err(SRCError::non_retryable_with_cause(
-                    e,
-                    "Could not transform bytes using schema",
-                )),
+                Err(e) => Err(e),
             },
             Err(e) => Err(e),
         }
@@ -202,12 +198,12 @@ impl AvroDecoder {
     ) -> Result<Option<DecodeResultWithSchema>, SRCError> {
         match get_bytes_result(bytes) {
             BytesResult::Null => Ok(None),
-            BytesResult::Valid(id, bytes) => match self.deserialize_with_schema(id, &bytes) {
+            BytesResult::Valid(id, bytes) => match self.deserialize_with_schema(id, bytes) {
                 Ok(v) => Ok(Some(v)),
                 Err(e) => Err(e),
             },
             BytesResult::Invalid(bytes) => Err(SRCError::non_retryable_without_cause(
-                &invalid_bytes_error(&bytes),
+                &invalid_bytes_error(bytes),
             )),
         }
     }
@@ -218,19 +214,14 @@ impl AvroDecoder {
         id: u32,
         bytes: &[u8],
     ) -> Result<DecodeResultWithSchema, SRCError> {
-        let optional_schema = self.schema(id);
-        let mut reader = Cursor::new(bytes);
-        match optional_schema {
-            Ok(schema) => match from_avro_datum(&schema.parsed, &mut reader, None) {
+        match self.schema(id) {
+            Ok(schema) => match decode_bytes(&self.resolved_cache, &schema, bytes) {
                 Ok(value) => Ok(DecodeResultWithSchema {
                     name: get_name(&schema.parsed),
                     value,
                     schema,
                 }),
-                Err(e) => Err(SRCError::non_retryable_with_cause(
-                    e,
-                    "Could not transform bytes using schema",
-                )),
+                Err(e) => Err(e),
             },
             Err(e) => Err(e),
         }
@@ -307,6 +298,7 @@ impl AvroDecoder {
 pub struct AvroEncoder {
     sr_settings: SrSettings,
     cache: DashMap<String, Result<Arc<AvroSchema>, SRCError>>,
+    resolved_cache: ResolvedSchemaCache,
 }
 
 impl AvroEncoder {
@@ -349,6 +341,7 @@ impl AvroEncoder {
         AvroEncoder {
             sr_settings,
             cache: DashMap::new(),
+            resolved_cache: DashMap::new(),
         }
     }
     /// Removes all non-retriable errors from the cache. You might need/want to run this when the
@@ -427,7 +420,7 @@ impl AvroEncoder {
     ) -> Result<Vec<u8>, SRCError> {
         let key = subject_name_strategy.get_subject()?;
         match self.get_schema_and_id(key, subject_name_strategy) {
-            Ok(avro_schema) => values_to_bytes(&avro_schema, values),
+            Ok(avro_schema) => values_to_bytes(&self.resolved_cache, &avro_schema, values),
             Err(e) => Err(e),
         }
     }
@@ -484,7 +477,7 @@ impl AvroEncoder {
     ) -> Result<Vec<u8>, SRCError> {
         let key = subject_name_strategy.get_subject()?;
         match self.get_schema_and_id(key, subject_name_strategy) {
-            Ok(avro_schema) => item_to_bytes(&avro_schema, item),
+            Ok(avro_schema) => item_to_bytes(&self.resolved_cache, &avro_schema, item),
             Err(e) => Err(e),
         }
     }

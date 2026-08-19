@@ -204,9 +204,9 @@ impl<'a> JsonDecoder<'a> {
     pub async fn decode(&self, bytes: Option<&[u8]>) -> Result<Option<DecodeResult>, SRCError> {
         match get_bytes_result(bytes) {
             BytesResult::Null => Ok(None),
-            BytesResult::Valid(id, bytes) => Ok(Some(self.deserialize(id, &bytes).await?)),
+            BytesResult::Valid(id, bytes) => Ok(Some(self.deserialize(id, bytes).await?)),
             BytesResult::Invalid(i) => Err(SRCError::non_retryable_without_cause(
-                &invalid_bytes_error(&i),
+                &invalid_bytes_error(i),
             )),
         }
     }
