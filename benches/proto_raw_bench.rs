@@ -66,5 +66,12 @@ fn proto_raw_benchmarks(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, proto_raw_benchmarks);
+// Raised from criterion's defaults (1% / 5%) to match this kind of environment's real noise
+// floor -- see the comment in benches/avro_bench.rs and
+// https://github.com/gklijs/schema_registry_converter/issues/190 for how that was measured.
+criterion_group! {
+    name = benches;
+    config = Criterion::default().noise_threshold(0.05).significance_level(0.02);
+    targets = proto_raw_benchmarks
+}
 criterion_main!(benches);

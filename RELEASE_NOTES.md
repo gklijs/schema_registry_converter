@@ -1,6 +1,55 @@
 ## Release notes
 
-### 4.11.0
+### 5.0.0
+
+Two breaking changes bump this to a major version:
+
+`BytesResult` (in `schema_registry_common`) now borrows the payload instead of owning it --
+`Invalid(Vec<u8>)` / `Valid(u32, Vec<u8>)` are now `Invalid(&'a [u8])` / `Valid(u32, &'a [u8])`,
+and `get_bytes_result` returns `BytesResult<'_>` borrowing from its input, instead of copying the
+whole payload into a fresh `Vec` on every call. This is on the hot path of every decode, for
+every format (Avro, JSON, protobuf), so it matters more the larger your messages are -- see
+#190 for measurements.
+
+This only affects code that calls `get_bytes_result`/matches on `BytesResult` directly. The
+built-in `AvroDecoder`, `JsonDecoder`, `ProtoDecoder` and `ProtoRawDecoder` (blocking and async)
+are **not** affected -- their `decode`/`decode_with_schema`/etc. signatures haven't changed, and
+existing code calling those is unaffected. If you do call `get_bytes_result` directly and need to
+keep the bytes beyond the immediate match (store them, return them, carry them across an
+`.await`), copy them out explicitly where you used to get an owned `Vec` for free:
+```rust
+match get_bytes_result(bytes) {
+    BytesResult::Valid(id, bytes) => {
+        let owned: Vec<u8> = bytes.to_vec();
+        // ... use `owned` instead of `bytes` wherever it needs to outlive this match
+    }
+    BytesResult::Invalid(bytes) => {
+        let owned: Vec<u8> = bytes.to_vec();
+        // ...
+    }
+    BytesResult::Null => {}
+}
+```
+
+Second, `apache-avro` moved from `^0.21` to `^0.22`, which turned `Name::name`/`Name::namespace`
+(`apache_avro::schema::Name`, returned in `DecodeResult.name`/`DecodeResultWithSchema.name`) from
+public fields into methods returning borrows (`name() -> &str`, `namespace() -> Option<&str>`)
+instead of owned `String`s. If you access those on a `Name` obtained through this crate, it's not
+just adding parentheses -- `.unwrap()` on the `Option<Name>` now needs `.as_ref()` first, or the
+borrow from `.name()`/`.namespace()` outlives the temporary it came from:
+```rust
+// before (apache-avro 0.21, schema_registry_converter <5.0.0)
+let name: String = decode_result.name.unwrap().name;
+let namespace: Option<String> = decode_result.name.unwrap().namespace;
+// after (apache-avro 0.22, schema_registry_converter >=5.0.0)
+let name: &str = decode_result.name.as_ref().unwrap().name();
+let namespace: Option<&str> = decode_result.name.as_ref().unwrap().namespace();
+```
+
+Not breaking, but worth knowing about: Avro encode/decode now reuse a cached, already-resolved
+schema instead of re-resolving it from scratch on every single call -- internal, not observable
+in the API, but measurably faster, more so the more named types (records/enums/fixed) your
+schema has. See #190.
 
 Fix a panic when decoding a 5-byte (or otherwise malformed/truncated) protobuf-framed payload
 with `ProtoDecoder`/`ProtoRawDecoder` (blocking and async); such payloads now yield an `SRCError`
