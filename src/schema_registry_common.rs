@@ -123,11 +123,16 @@ pub struct Metadata {
 
 /// Intermediate result to just handle the byte transformation. When used in a decoder just the
 /// id might me enough because the resolved schema is cashed already.
+///
+/// Borrows from the payload passed to [`get_bytes_result`] rather than copying it -- decoding is
+/// one of the hottest paths in this crate (every message goes through it), and the payload is
+/// already available as a borrow for at least the duration of the call in every caller. See
+/// https://github.com/gklijs/schema_registry_converter/issues/190.
 #[derive(Debug, PartialEq)]
-pub enum BytesResult {
+pub enum BytesResult<'a> {
     Null,
-    Invalid(Vec<u8>),
-    Valid(u32, Vec<u8>),
+    Invalid(&'a [u8]),
+    Valid(u32, &'a [u8]),
 }
 
 /// Strategy similar to the one in the Java client. By default, schema's needs to be backwards
@@ -259,15 +264,15 @@ pub fn get_payload(id: u32, encoded_bytes: Vec<u8>) -> Vec<u8> {
 /// it will return the id and the data bytes. The way schema registry messages are encoded is
 /// starting with a zero, with the next 4 bytes having the id. The other bytes are the encoded
 /// message.
-pub fn get_bytes_result(bytes: Option<&[u8]>) -> BytesResult {
+pub fn get_bytes_result(bytes: Option<&[u8]>) -> BytesResult<'_> {
     match bytes {
         None => BytesResult::Null,
         Some(p) if p.len() > 4 && p[0] == 0 => {
             let mut buf = &p[1..5];
             let id = buf.read_u32::<BigEndian>().unwrap();
-            BytesResult::Valid(id, p[5..].to_owned())
+            BytesResult::Valid(id, &p[5..])
         }
-        Some(p) => BytesResult::Invalid(p[..].to_owned()),
+        Some(p) => BytesResult::Invalid(p),
     }
 }
 
@@ -375,13 +380,13 @@ mod test {
 
     #[test]
     fn display_byte_result_invalid() {
-        let byte_result = BytesResult::Invalid(vec![0, 0]);
+        let byte_result = BytesResult::Invalid(&[0, 0]);
         assert_eq!(r#"Invalid([0, 0])"#, format!("{:?}", byte_result))
     }
 
     #[test]
     fn display_byte_result_valid() {
-        let byte_result = BytesResult::Valid(6, vec![101, 33]);
+        let byte_result = BytesResult::Valid(6, &[101, 33]);
         assert_eq!(r#"Valid(6, [101, 33])"#, format!("{:?}", byte_result))
     }
 
@@ -418,13 +423,13 @@ mod test {
     #[test]
     fn get_bytes_result_valid() {
         let result = get_bytes_result(Some(&[0, 0, 0, 0, 7, 101, 99]));
-        assert_eq!(BytesResult::Valid(7, vec![101, 99]), result)
+        assert_eq!(BytesResult::Valid(7, &[101, 99]), result)
     }
 
     #[test]
     fn get_bytes_result_invalid() {
         let result = get_bytes_result(Some(&[0, 0, 0, 0]));
-        assert_eq!(BytesResult::Invalid(vec![0, 0, 0, 0]), result)
+        assert_eq!(BytesResult::Invalid(&[0, 0, 0, 0]), result)
     }
 
     #[test]

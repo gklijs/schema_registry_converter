@@ -59,9 +59,9 @@ impl<'a> ProtoDecoder<'a> {
         match get_bytes_result(bytes) {
             BytesResult::Null => Ok(Value::Bytes(Bytes::new())),
             BytesResult::Valid(id, bytes) => Ok(Value::Message(Box::from(
-                self.deserialize(id, &bytes).await?,
+                self.deserialize(id, bytes).await?,
             ))),
-            BytesResult::Invalid(i) => Ok(Value::Bytes(Bytes::from(i))),
+            BytesResult::Invalid(i) => Ok(Value::Bytes(Bytes::copy_from_slice(i))),
         }
     }
     /// The actual deserialization trying to get the id from the bytes to retrieve the schema, and
@@ -85,12 +85,10 @@ impl<'a> ProtoDecoder<'a> {
     ) -> Result<Option<DecodeResultWithContext>, SRCError> {
         match get_bytes_result(bytes) {
             BytesResult::Null => Ok(None),
-            BytesResult::Valid(id, bytes) => {
-                match self.deserialize_with_context(id, &bytes).await {
-                    Ok(v) => Ok(Some(v)),
-                    Err(e) => Err(e),
-                }
-            }
+            BytesResult::Valid(id, bytes) => match self.deserialize_with_context(id, bytes).await {
+                Ok(v) => Ok(Some(v)),
+                Err(e) => Err(e),
+            },
             BytesResult::Invalid(_) => {
                 Err(SRCError::new("no protobuf compatible bytes", None, false))
             }
