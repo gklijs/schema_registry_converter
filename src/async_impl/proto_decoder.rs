@@ -463,4 +463,16 @@ mod tests {
         let result = into_decode_context(vec_of_schemas);
         assert!(result.is_ok())
     }
+
+    #[test]
+    fn test_into_decode_context_with_optional_field() {
+        // Regression test for https://github.com/gklijs/schema_registry_converter/issues/147:
+        // proto3 `optional` fields make protofish generate a synthetic `oneof _<field>`, which
+        // used to fail to re-parse because protofish's own grammar didn't allow identifiers
+        // starting with an underscore. Fixed upstream in
+        // https://github.com/Rantanen/protofish/pull/13, released in protofish 0.5.3.
+        let schema = "syntax = \"proto3\";\n\npackage in.abc.event_entities;\n\noption java_outer_classname = \"EventSourceProto\";\n\nmessage EventSource {\n  message Actor {\n    enum UserEntity {\n      USER_ENTITY_UNSPECIFIED = 0;\n      USER_ENTITY_ADMIN = 1;\n    }\n\n    UserEntity entity = 1;\n    uint32 id = 2;\n  }\n  string system = 1;\n  optional Actor initiator = 2;\n  optional Actor proxy = 3;\n  optional string reason = 4;\n}\n";
+        let result = into_decode_context(vec![schema.to_string()]);
+        assert!(result.is_ok())
+    }
 }
