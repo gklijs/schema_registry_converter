@@ -32,3 +32,9 @@ jobs:
         run: cargo test --verbose --all-features -- --test-threads=1
       - name: ci-flow
         run: cargo make --makefile make.toml ci-flow
+      - name: benchmarks
+        # See https://github.com/gklijs/schema_registry_converter/issues/118. Shared runners are
+        # too noisy for reliable pass/fail thresholds, so this just prints timings to the job log
+        # for a human to eyeball across PRs rather than gating the build on them.
+        run: cargo bench --all-features
+        continue-on-error: true

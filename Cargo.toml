@@ -91,6 +91,7 @@ optional = true
 
 [dev-dependencies]
 async-trait = "^0.1"
+criterion = "^0.8"
 http = "^1.0"
 mockito = "^1.7.0"
 rdkafka = { version = "^0.39.0", features = ["cmake-build", "curl-static"] }
@@ -100,3 +101,27 @@ tokio = { version = "^1.46.1", features = ["macros"] }
 
 [package.metadata.docs.rs]
 all-features = true
+
+# Benchmarks of the blocking API's hot path (schema already cached), see
+# https://github.com/gklijs/schema_registry_converter/issues/118. Each one needs its matching
+# format feature plus `blocking`, so run e.g. `cargo bench --features avro,blocking` for a single
+# group, or `cargo bench --all-features` for all of them.
+[[bench]]
+name = "avro_bench"
+harness = false
+required-features = ["avro", "blocking"]
+
+[[bench]]
+name = "proto_raw_bench"
+harness = false
+required-features = ["proto_raw", "blocking"]
+
+[[bench]]
+name = "proto_decoder_bench"
+harness = false
+required-features = ["proto_decoder", "blocking"]
+
+[[bench]]
+name = "json_bench"
+harness = false
+required-features = ["json", "blocking"]
