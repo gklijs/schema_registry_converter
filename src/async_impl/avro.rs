@@ -228,10 +228,11 @@ impl<'a> AvroDecoder<'a> {
     ///
     /// # async fn doc() -> Result<(), reqwest::Error> {
     /// let mut server = Server::new_async().await;
+    /// // GET /schemas/guids/{guid} never carries an "id" field on a real registry -- only "guid".
     /// let _m = server .mock("GET", "/schemas/guids/cc0e0e0e-53c1-4a1a-8f1a-000000000001")
     ///     .with_status(200)
     ///     .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-    ///     .with_body(r#"{"id":1,"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
+    ///     .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
     ///     .create();
     ///
     /// let sr_settings = SrSettings::new_builder(server.url()).no_proxy().build().unwrap();

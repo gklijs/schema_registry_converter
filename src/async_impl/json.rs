@@ -2,7 +2,6 @@
 //!
 //! **NOTE**: Requires the `json` feature
 use std::collections::HashMap;
-use std::str::FromStr;
 use std::sync::Arc;
 
 use dashmap::mapref::entry::Entry;
@@ -418,10 +417,15 @@ fn schema_id_header_for(schema: &JsonSchema, is_key: bool) -> Result<SchemaIdHea
     build_schema_id_header(name, guid, &[])
 }
 
-fn reference_url(rr: &RegisteredReference) -> Result<Url, SRCError> {
-    match Url::from_str(&rr.name) {
+/// `base` is the url the referencing schema is compiled under -- a reference's `name` is
+/// resolved against it the same way a JSON Schema validator resolves a `$ref`, since that's
+/// exactly what `name` is used as inside the referencing schema. Confluent doesn't require
+/// `name` to be a fully qualified url itself (it's commonly just a bare file name like
+/// `result.json`), only that it resolves to one relative to `base`.
+fn reference_url(rr: &RegisteredReference, base: &Url) -> Result<Url, SRCError> {
+    match Url::options().base_url(Some(base)).parse(&rr.name) {
         Ok(v) => Ok(v),
-        Err(e) => Err(SRCError::non_retryable_with_cause(e, &format!("reference schema with subject {} and version {} has invalid id {}, it has to be a fully qualified url", rr.subject, rr.version, rr.name)))
+        Err(e) => Err(SRCError::non_retryable_with_cause(e, &format!("reference schema with subject {} and version {} has invalid id {}, it has to be a fully qualified url or resolve against {}", rr.subject, rr.version, rr.name, base)))
     }
 }
 
@@ -438,22 +442,25 @@ fn to_json_schema(
     registered_schema: RegisteredSchema,
 ) -> BoxFuture<Result<JsonSchema, SRCError>> {
     async move {
+        let schema: Value = to_value(&registered_schema.schema)?;
+        let url = match optional_url {
+            Some(v) => v,
+            None => main_url(&schema, sr_settings, registered_schema.id),
+        };
         let refs: Result<Vec<JsonSchema>, SRCError> = stream::iter(registered_schema.references)
-            .then(|rr| async move {
-                let url = reference_url(&rr)?;
-                let rs = get_referenced_schema(sr_settings, &rr).await?;
-                to_json_schema(sr_settings, Some(url), rs).await
+            .then(|rr| {
+                let base = url.clone();
+                async move {
+                    let ref_url = reference_url(&rr, &base)?;
+                    let rs = get_referenced_schema(sr_settings, &rr).await?;
+                    to_json_schema(sr_settings, Some(ref_url), rs).await
+                }
             })
             .collect::<Vec<_>>()
             .await
             .into_iter()
             .collect();
         let references = refs?;
-        let schema: Value = to_value(&registered_schema.schema)?;
-        let url = match optional_url {
-            Some(v) => v,
-            None => main_url(&schema, sr_settings, registered_schema.id),
-        };
         Ok(JsonSchema {
             id: registered_schema.id,
             url,
@@ -611,11 +618,12 @@ mod tests {
             ]
         );
 
+        // GET /schemas/guids/{guid} never carries an "id" field on a real registry -- only "guid".
         let _m2 = server
             .mock("GET", "/schemas/guids/cc0e0e0e-53c1-4a1a-8f1a-000000000001")
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
-            .with_body(r#"{"id":10,"schema":"{\"type\":\"object\"}","schemaType":"JSON"}"#)
+            .with_body(r#"{"schema":"{\"type\":\"object\"}","schemaType":"JSON"}"#)
             .create();
 
         let decoder = JsonDecoder::new(sr_settings);
@@ -907,6 +915,43 @@ mod tests {
             }
             _ => panic!("Not an Object that was expected"),
         }
+    }
+
+    #[tokio::test]
+    async fn add_referred_schema_with_bare_reference_name() {
+        // Confluent doesn't require a reference's `name` to be a fully qualified url -- it's
+        // commonly just a bare file name like "result.json", matching what actually appears in
+        // the referencing schema's own `$ref`. Resolving it should work the same way a JSON
+        // Schema validator resolves a relative `$ref`: against the referencing schema's own
+        // (fallback, since it has no `$id`) url. See
+        // https://github.com/gklijs/schema_registry_converter/issues/139.
+        let mut server = Server::new_async().await;
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
+        let decoder = JsonDecoder::new(sr_settings);
+
+        let schema = r#"{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"additionalProperties\":false,\"properties\":{\"result\":{\"$ref\":\"result.json\"}},\"required\":[\"result\"]}"#;
+        let reference = r#"{"name": "result.json", "subject": "result.json", "version": 1}"#;
+
+        let _m = server
+            .mock("GET", "/schemas/ids/5?deleted=true")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(get_json_body_with_reference(schema, 5, reference))
+            .create();
+        let _m2 = server
+            .mock("GET", "/subjects/result.json/versions/1")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(get_json_body(json_result_schema(), 4))
+            .create();
+
+        let value = serde_json::json!({"result": {"up": "STRING", "down": "string"}});
+        let bytes = get_payload(5, serde_json::to_vec(&value).unwrap());
+        let decoded = decoder.decode(Some(&bytes)).await.unwrap().unwrap().value;
+        assert_eq!(decoded, value);
     }
 
     #[tokio::test]

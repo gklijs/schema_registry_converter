@@ -229,7 +229,14 @@ pub fn get_schema_by_guid(
     sr_settings: &SrSettings,
 ) -> Result<RegisteredSchema, SRCError> {
     let raw_schema = perform_sr_call(sr_settings, SrCall::GetByGuid(guid))?;
-    raw_to_registered_schema(raw_schema, None)
+    // GET /schemas/guids/{guid} returns a `SchemaString` -- the same response shape as
+    // GET /schemas/ids/{id} -- which never carries an `id` field (Confluent's own model for it
+    // only has `guid`, not `id`). Unlike `get_schema_by_id`, there's no numeric id to pass in
+    // from the caller either, since not having one is the whole reason to look a schema up by
+    // guid. Default to 0 rather than erroring: nothing in the guid-based decode path depends on
+    // `RegisteredSchema.id` being a real registry id.
+    let id = raw_schema.id.unwrap_or(0);
+    raw_to_registered_schema(raw_schema, Some(id))
 }
 
 pub fn get_schema_by_guid_and_type(
@@ -747,7 +754,9 @@ pub fn is_compatible_schema(
 mod tests {
     use std::{collections::HashMap, time::Duration};
 
-    use crate::blocking::schema_registry::{get_schema_by_id, post_schema, SrSettings};
+    use crate::blocking::schema_registry::{
+        get_schema_by_guid, get_schema_by_id, post_schema, SrSettings,
+    };
     use crate::schema_registry_common::{
         Metadata, RawRegisteredSchema, RegisteredReference, RegisteredSchema, SchemaType,
         SuppliedSchema,
@@ -843,6 +852,32 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn test_get_schema_by_guid_without_id_in_response() {
+        // GET /schemas/guids/{guid} returns a `SchemaString` -- same as GET /schemas/ids/{id} --
+        // which never carries an "id" field on a real Confluent Schema Registry, only "guid".
+        // See https://github.com/gklijs/schema_registry_converter/issues/139.
+        let mut server = mockito::Server::new();
+        let guid = "cc0e0e0e-53c1-4a1a-8f1a-000000000001";
+
+        let _m = server
+            .mock("GET", format!("/schemas/guids/{guid}").as_str())
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(r#"{"guid":"cc0e0e0e-53c1-4a1a-8f1a-000000000001","schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}","schemaType":"AVRO"}"#)
+            .create();
+
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
+
+        let result = get_schema_by_guid(guid, &sr_settings)
+            .expect("guid lookup should succeed even without an id in the response");
+        assert_eq!(result.id, 0);
+        assert_eq!(result.guid, Some(guid.to_owned()));
     }
 
     #[test]
