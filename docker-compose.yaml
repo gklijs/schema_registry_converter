@@ -28,6 +28,13 @@ services:
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       KAFKA_CONFLUENT_LICENSE_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_CONFLUENT_BALANCER_TOPIC_REPLICATION_FACTOR: 1
+      # Without this, Cluster Linking's internal _confluent-link-metadata topic is (re)created
+      # with a hardcoded replicationFactor=3 -- unlike the topics above, it has no single-broker
+      # fallback, so it fails with INVALID_REPLICATION_FACTOR and retries in a loop indefinitely,
+      # every ~30s for as long as the cluster runs. See
+      # https://github.com/confluentinc/cp-all-in-one/issues/139 (unresolved upstream as of
+      # Confluent Platform 8.3.1).
+      KAFKA_CONFLUENT_CLUSTER_LINK_METADATA_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       CONFLUENT_METRICS_REPORTER_BOOTSTRAP_SERVERS: broker:29092
