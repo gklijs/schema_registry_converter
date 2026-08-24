@@ -1,6 +1,8 @@
 extern crate schema_registry_converter;
 
-use crate::blocking::avro_consumer::{consume_avro, DeserializedAvroRecord};
+use crate::blocking::avro_consumer::{
+    consume_avro, consume_avro_with_header_id, DeserializedAvroRecord,
+};
 use crate::blocking::kafka_producer::get_producer;
 use apache_avro::types::Value;
 use rand::prelude::*;
@@ -139,68 +141,89 @@ fn test3_topic_record_name_strategy_with_schema() {
     do_avro_test(topic, key_strategy, value_strategy)
 }
 
+/// Assertions shared by `test4_test_avro_from_java_test_app` and
+/// `test5_test_avro_header_id_from_java_test_app`: both consume the same `AvroTest` value the
+/// Java test app produces (see `TestAvro.testValue()`), just via different wire formats.
+fn assert_java_avro_test_record(rec: DeserializedAvroRecord) {
+    println!("testing record {:#?}", rec);
+    match rec.key {
+        Value::String(s) => assert_eq!("testkey", s, "check string key"),
+        _ => panic!("Keys wasn't a string"),
+    };
+    let value_values = match rec.value {
+        Value::Record(v) => v,
+        _ => panic!("Not a record, while only only those expected"),
+    };
+    let id_key = match &value_values[0] {
+        (_id, Value::Fixed(16, _v)) => _id,
+        _ => panic!("Not a fixed value of 16 bytes while that was expected"),
+    };
+    assert_eq!("id", id_key, "expected id key to be id");
+    let enum_value = match &value_values[1] {
+        (_id, Value::Enum(0, v)) => v,
+        _ => panic!("Not an enum value for by while that was expected"),
+    };
+    assert_eq!("Java", enum_value, "expect message from Java");
+    let counter_value = match &value_values[2] {
+        (_id, Value::Long(v)) => v,
+        _ => panic!("Not a long value for counter while that was expected"),
+    };
+    assert_eq!(&1i64, counter_value, "counter is 1");
+    let input_value = match &value_values[3] {
+        (_id, Value::Union(_, v)) => v,
+        _ => panic!("Not an unions value for input while that was expected"),
+    };
+    assert_eq!(
+        &Box::new(Value::String(String::from("String"))),
+        input_value,
+        "Optional string is string"
+    );
+    let results = match &value_values[4] {
+        (_id, Value::Array(v)) => v,
+        _ => panic!("Not an array value for results while that was expected"),
+    };
+    let result = match results.first().expect("one item to be present") {
+        Value::Record(v) => v,
+        _ => panic!("Not record for first of results while that was expected"),
+    };
+    let up_result = match &result[0] {
+        (_id, Value::String(v)) => v,
+        _ => panic!("First result value wasn't a string"),
+    };
+    assert_eq!("STRING", up_result, "expected upper case string");
+    let down_result = match &result[1] {
+        (_id, Value::String(v)) => v,
+        _ => panic!("Second result value wasn't a string"),
+    };
+    assert_eq!("string", down_result, "expected upper case string");
+}
+
 #[test]
 fn test4_test_avro_from_java_test_app() {
     let topic = "testavro";
-    let test = Box::new(move |rec: DeserializedAvroRecord| {
-        println!("testing record {:#?}", rec);
-        match rec.key {
-            Value::String(s) => assert_eq!("testkey", s, "check string key"),
-            _ => panic!("Keys wasn't a string"),
-        };
-        let value_values = match rec.value {
-            Value::Record(v) => v,
-            _ => panic!("Not a record, while only only those expected"),
-        };
-        let id_key = match &value_values[0] {
-            (_id, Value::Fixed(16, _v)) => _id,
-            _ => panic!("Not a fixed value of 16 bytes while that was expected"),
-        };
-        assert_eq!("id", id_key, "expected id key to be id");
-        let enum_value = match &value_values[1] {
-            (_id, Value::Enum(0, v)) => v,
-            _ => panic!("Not an enum value for by while that was expected"),
-        };
-        assert_eq!("Java", enum_value, "expect message from Java");
-        let counter_value = match &value_values[2] {
-            (_id, Value::Long(v)) => v,
-            _ => panic!("Not a long value for counter while that was expected"),
-        };
-        assert_eq!(&1i64, counter_value, "counter is 1");
-        let input_value = match &value_values[3] {
-            (_id, Value::Union(_, v)) => v,
-            _ => panic!("Not an unions value for input while that was expected"),
-        };
-        assert_eq!(
-            &Box::new(Value::String(String::from("String"))),
-            input_value,
-            "Optional string is string"
-        );
-        let results = match &value_values[4] {
-            (_id, Value::Array(v)) => v,
-            _ => panic!("Not an array value for results while that was expected"),
-        };
-        let result = match results.first().expect("one item to be present") {
-            Value::Record(v) => v,
-            _ => panic!("Not record for first of results while that was expected"),
-        };
-        let up_result = match &result[0] {
-            (_id, Value::String(v)) => v,
-            _ => panic!("First result value wasn't a string"),
-        };
-        assert_eq!("STRING", up_result, "expected upper case string");
-        let down_result = match &result[1] {
-            (_id, Value::String(v)) => v,
-            _ => panic!("Second result value wasn't a string"),
-        };
-        assert_eq!("string", down_result, "expected upper case string");
-    });
     consume_avro(
         get_brokers(),
         "test",
         get_schema_registry_url(),
         &[topic],
         false,
-        test,
+        Box::new(assert_java_avro_test_record),
+    )
+}
+
+#[test]
+fn test5_test_avro_header_id_from_java_test_app() {
+    // Consumes what the Java test app produces to "testavroheader" via HeaderSchemaIdSerializer
+    // -- same AvroTest value as test4, but with the schema guid in a __value_schema_id header
+    // instead of the payload prefix. See
+    // https://github.com/gklijs/schema_registry_converter/issues/139.
+    let topic = "testavroheader";
+    consume_avro_with_header_id(
+        get_brokers(),
+        "test",
+        get_schema_registry_url(),
+        &[topic],
+        false,
+        Box::new(assert_java_avro_test_record),
     )
 }

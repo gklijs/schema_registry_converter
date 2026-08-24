@@ -63,6 +63,15 @@ index bookkeeping from the real message nesting, since its lexer didn't previous
 string literals and treated every `{`/`}` as message nesting. String literals are now skipped as
 a whole when scanning for braces.
 
+Add support for carrying the schema id/guid in a Kafka header instead of prefixing the payload,
+matching Confluent Schema Registry 8.0's `HeaderSchemaIdSerializer`/`DualSchemaIdDeserializer`.
+Every encoder/decoder (Avro, JSON, protobuf; blocking and async) gains `_with_header_id`
+variants, plain-data types `SchemaIdHeader`/`KEY_SCHEMA_ID_HEADER`/`VALUE_SCHEMA_ID_HEADER` are
+added to `schema_registry_common`, `RegisteredSchema`/`RawRegisteredSchema` gain a `guid` field,
+and schema lookup by guid (`GET /schemas/guids/{guid}`) is now supported alongside lookup by id.
+This is purely additive -- no existing signatures change. See #139 and the "Schema id in Kafka
+headers" section of the README.
+
 ### 4.10.0
 
 Propagate properties and tags.

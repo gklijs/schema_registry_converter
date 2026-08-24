@@ -36,16 +36,18 @@ use serde::ser::Serialize;
 use serde_json::Value as JsonValue;
 
 use crate::avro_common::{
-    decode_bytes, get_name, item_to_bytes, replace_reference, values_to_bytes, AvroSchema,
-    DecodeResult, DecodeResultWithSchema, ResolvedSchemaCache,
+    decode_bytes, get_name, item_to_bytes, item_to_bytes_raw, replace_reference, values_to_bytes,
+    values_to_bytes_raw, AvroSchema, DecodeResult, DecodeResultWithSchema, ResolvedSchemaCache,
 };
 use crate::blocking::schema_registry::{
-    get_referenced_schema, get_schema_by_id_and_type, get_schema_by_subject, SrSettings,
+    get_referenced_schema, get_schema_by_guid_and_type, get_schema_by_id_and_type,
+    get_schema_by_subject, SrSettings,
 };
 use crate::error::SRCError;
 use crate::schema_registry_common::{
-    get_bytes_result, invalid_bytes_error, BytesResult, RegisteredReference, RegisteredSchema,
-    SchemaType, SubjectNameStrategy,
+    build_schema_id_header, get_bytes_result, invalid_bytes_error, parse_schema_id_header,
+    BytesResult, HeaderSchemaId, RegisteredReference, RegisteredSchema, SchemaIdHeader, SchemaType,
+    SubjectNameStrategy, KEY_SCHEMA_ID_HEADER, VALUE_SCHEMA_ID_HEADER,
 };
 
 /// A decoder used to transform bytes to a Value object
@@ -81,6 +83,10 @@ use crate::schema_registry_common::{
 pub struct AvroDecoder {
     sr_settings: SrSettings,
     cache: DashMap<u32, Result<Arc<AvroSchema>, SRCError>>,
+    /// Cache for schemas looked up by guid rather than id, used by
+    /// [`AvroDecoder::decode_with_header_id`]. Kept separate from `cache` (keyed by id) since a
+    /// guid and an id are different keyspaces.
+    guid_cache: DashMap<String, Result<Arc<AvroSchema>, SRCError>>,
     resolved_cache: ResolvedSchemaCache,
 }
 
@@ -96,6 +102,7 @@ impl AvroDecoder {
         AvroDecoder {
             sr_settings,
             cache: DashMap::new(),
+            guid_cache: DashMap::new(),
             resolved_cache: DashMap::new(),
         }
     }
@@ -140,6 +147,7 @@ impl AvroDecoder {
     /// ```
     pub fn remove_errors_from_cache(&self) {
         self.cache.retain(|_, v| v.is_ok());
+        self.guid_cache.retain(|_, v| v.is_ok());
     }
     /// Decodes bytes into a value.
     /// The choice to use Option<&[u8]> as type us made so it plays nice with the BorrowedMessage
@@ -185,6 +193,64 @@ impl AvroDecoder {
                 Err(e) => Err(e),
             },
             Err(e) => Err(e),
+        }
+    }
+    /// Like [`AvroDecoder::decode`], but for a message that may carry its schema id/guid in a
+    /// `__key_schema_id`/`__value_schema_id` header instead of (or in addition to) the payload
+    /// prefix, mirroring Confluent's `DualSchemaIdDeserializer`: `header_value` present ->
+    /// resolve the schema from it and treat `bytes` as the raw (unprefixed) payload;
+    /// `header_value` absent -> falls straight through to [`AvroDecoder::decode`], so the only
+    /// overhead for a caller who always passes `None` is this one check. See
+    /// https://github.com/gklijs/schema_registry_converter/issues/139.
+    /// ```
+    /// use apache_avro::types::Value;
+    /// use schema_registry_converter::blocking::avro::AvroDecoder;
+    /// use schema_registry_converter::blocking::schema_registry::SrSettings;
+    ///
+    /// let mut server = mockito::Server::new();
+    /// let _m = server .mock("GET", "/schemas/guids/cc0e0e0e-53c1-4a1a-8f1a-000000000001")
+    ///     .with_status(200)
+    ///     .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+    ///     .with_body(r#"{"id":1,"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
+    ///     .create();
+    ///
+    /// let sr_settings = SrSettings::new_builder(server.url()).no_proxy().build().unwrap();
+    /// let decoder = AvroDecoder::new(sr_settings);
+    /// let header_value = [0x01, 0xcc, 0x0e, 0x0e, 0x0e, 0x53, 0xc1, 0x4a, 0x1a, 0x8f, 0x1a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01];
+    /// let heartbeat = decoder.decode_with_header_id(Some(&header_value), Some(&[6])).unwrap().value;
+    ///
+    /// assert_eq!(heartbeat, Value::Record(vec![("beat".to_string(), Value::Long(3))]))
+    /// ```
+    pub fn decode_with_header_id(
+        &self,
+        header_value: Option<&[u8]>,
+        bytes: Option<&[u8]>,
+    ) -> Result<DecodeResult, SRCError> {
+        let payload = match bytes {
+            Some(v) => v,
+            None => {
+                return Ok(DecodeResult {
+                    name: None,
+                    value: Value::Null,
+                });
+            }
+        };
+        match header_value {
+            None => self.decode(Some(payload)),
+            Some(header) => {
+                let (schema_id, _rest) = parse_schema_id_header(header)?;
+                let schema = match schema_id {
+                    HeaderSchemaId::Id(id) => self.schema(id)?,
+                    HeaderSchemaId::Guid(guid) => self.guid_schema(guid)?,
+                };
+                match decode_bytes(&self.resolved_cache, &schema, payload) {
+                    Ok(v) => Ok(DecodeResult {
+                        name: get_name(&schema.parsed),
+                        value: v,
+                    }),
+                    Err(e) => Err(e),
+                }
+            }
         }
     }
     /// Decodes bytes into a value.
@@ -240,6 +306,29 @@ impl AvroDecoder {
                     // Retriable errors (transient network/HTTP issues) don't make sense to
                     // cache, so the entry is left vacant and the next call issues a fresh
                     // request rather than replaying a stale failure.
+                    Err(e) if e.retriable => Err(e),
+                    result => entry
+                        .insert(result.map_err(SRCError::into_cache))
+                        .value()
+                        .clone(),
+                }
+            }
+        }
+    }
+
+    /// Like [`AvroDecoder::schema`], but looks the schema up by guid instead of id -- used by
+    /// [`AvroDecoder::decode_with_header_id`] when the header carries a guid rather than an id.
+    fn guid_schema(&self, guid: String) -> Result<Arc<AvroSchema>, SRCError> {
+        let sr_settings = &self.sr_settings;
+        match self.guid_cache.entry(guid.clone()) {
+            Entry::Occupied(entry) => entry.get().clone(),
+            Entry::Vacant(entry) => {
+                let result = match get_schema_by_guid_and_type(&guid, sr_settings, SchemaType::Avro)
+                {
+                    Ok(registered_schema) => to_avro_schema(sr_settings, registered_schema),
+                    Err(e) => Err(e),
+                };
+                match result {
                     Err(e) if e.retriable => Err(e),
                     result => entry
                         .insert(result.map_err(SRCError::into_cache))
@@ -425,6 +514,51 @@ impl AvroEncoder {
         }
     }
 
+    /// Like [`AvroEncoder::encode`], but instead of prefixing the payload with the schema id
+    /// (the default confluent wire format), returns the raw Avro bytes alongside a
+    /// [`SchemaIdHeader`] carrying the schema's guid. Attach the header to the Kafka record
+    /// using whatever Kafka client you're using -- this crate has no dependency on one. `is_key`
+    /// picks between the `__key_schema_id`/`__value_schema_id` header names, matching
+    /// Confluent's `HeaderSchemaIdSerializer`. See
+    /// https://github.com/gklijs/schema_registry_converter/issues/139.
+    ///
+    /// Requires a schema registry that returns a `guid` (Confluent Schema Registry 8.0+); a
+    /// registry that doesn't will make this return an error.
+    /// ```
+    /// use apache_avro::types::Value;
+    /// use schema_registry_converter::blocking::avro::AvroEncoder;
+    /// use schema_registry_converter::schema_registry_common::{SubjectNameStrategy, VALUE_SCHEMA_ID_HEADER};
+    /// use schema_registry_converter::blocking::schema_registry::SrSettings;
+    ///
+    /// let mut server = mockito::Server::new();
+    /// let _m = server .mock("GET", "/subjects/heartbeat-nl.openweb.data.Heartbeat/versions/latest")
+    ///     .with_status(200)
+    ///     .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+    ///     .with_body(r#"{"subject":"heartbeat-value","version":1,"id":3,"guid":"cc0e0e0e-53c1-4a1a-8f1a-000000000001","schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
+    ///     .create();
+    ///
+    /// let sr_settings = SrSettings::new_builder(server.url()).no_proxy().build().unwrap();
+    /// let encoder = AvroEncoder::new(sr_settings);
+    /// let strategy = SubjectNameStrategy::TopicRecordNameStrategy(String::from("heartbeat"), String::from("nl.openweb.data.Heartbeat"));
+    /// let (bytes, header) = encoder.encode_with_header_id(vec![("beat", Value::Long(3))], &strategy, false).unwrap();
+    ///
+    /// assert_eq!(bytes, vec![6]); // no prefix -- just the raw Avro-encoded value
+    /// assert_eq!(header.name, VALUE_SCHEMA_ID_HEADER);
+    /// assert_eq!(header.value, vec![0x01, 0xcc, 0x0e, 0x0e, 0x0e, 0x53, 0xc1, 0x4a, 0x1a, 0x8f, 0x1a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01]);
+    /// ```
+    pub fn encode_with_header_id(
+        &self,
+        values: Vec<(&str, Value)>,
+        subject_name_strategy: &SubjectNameStrategy,
+        is_key: bool,
+    ) -> Result<(Vec<u8>, SchemaIdHeader), SRCError> {
+        let key = subject_name_strategy.get_subject()?;
+        let avro_schema = self.get_schema_and_id(key, subject_name_strategy)?;
+        let bytes = values_to_bytes_raw(&self.resolved_cache, &avro_schema, values)?;
+        let header = schema_id_header_for(&avro_schema, is_key)?;
+        Ok((bytes, header))
+    }
+
     /// Encodes a struct or a primitive value to bytes. The schema used for the encoding will be
     /// retrieved from the schema registry, or it will use the one supplied with the
     /// SubjectNameStrategy.
@@ -480,6 +614,22 @@ impl AvroEncoder {
             Ok(avro_schema) => item_to_bytes(&self.resolved_cache, &avro_schema, item),
             Err(e) => Err(e),
         }
+    }
+
+    /// Like [`AvroEncoder::encode_struct`], but returns the schema id/guid as a
+    /// [`SchemaIdHeader`] instead of prefixing the payload with it. See
+    /// [`AvroEncoder::encode_with_header_id`].
+    pub fn encode_struct_with_header_id(
+        &self,
+        item: impl Serialize,
+        subject_name_strategy: &SubjectNameStrategy,
+        is_key: bool,
+    ) -> Result<(Vec<u8>, SchemaIdHeader), SRCError> {
+        let key = subject_name_strategy.get_subject()?;
+        let avro_schema = self.get_schema_and_id(key, subject_name_strategy)?;
+        let bytes = item_to_bytes_raw(&self.resolved_cache, &avro_schema, item)?;
+        let header = schema_id_header_for(&avro_schema, is_key)?;
+        Ok((bytes, header))
     }
 
     fn get_schema_and_id(
@@ -541,6 +691,24 @@ fn add_references(
     Ok(new_value)
 }
 
+/// Builds the [`SchemaIdHeader`] for `schema`, requiring it to carry a guid (populated when the
+/// schema registry response included one, i.e. Confluent Schema Registry 8.0+). Avro has no
+/// message index, unlike protobuf, so there are no trailing bytes to append.
+fn schema_id_header_for(schema: &AvroSchema, is_key: bool) -> Result<SchemaIdHeader, SRCError> {
+    let guid = schema.guid.as_deref().ok_or_else(|| {
+        SRCError::non_retryable_without_cause(
+            "Schema registry response did not include a guid; encoding the schema id in a \
+             header requires Confluent Schema Registry 8.0+",
+        )
+    })?;
+    let name = if is_key {
+        KEY_SCHEMA_ID_HEADER
+    } else {
+        VALUE_SCHEMA_ID_HEADER
+    };
+    build_schema_id_header(name, guid, &[])
+}
+
 fn to_avro_schema(
     sr_settings: &SrSettings,
     registered_schema: RegisteredSchema,
@@ -572,6 +740,7 @@ fn to_avro_schema(
             version: registered_schema.version,
             properties: registered_schema.properties,
             tags: registered_schema.tags,
+            guid: registered_schema.guid,
         })),
         Err(e) => Err(SRCError::non_retryable_with_cause(
             e,
@@ -1517,6 +1686,7 @@ mod tests {
             tags: None,
             subject: None,
             version: None,
+            guid: None,
         };
         let sr_settings = SrSettings::new_builder(String::from("http://127.0.0.1:1234"))
             .no_proxy()
@@ -1542,6 +1712,7 @@ mod tests {
             tags: None,
             subject: None,
             version: None,
+            guid: None,
         };
         let sr_settings = SrSettings::new_builder(String::from("http://127.0.0.1:1234"))
             .no_proxy()
@@ -1558,7 +1729,7 @@ mod tests {
     }
 
     #[test]
-    fn to_avro_schema_propagates_subject_and_version() {
+    fn to_avro_schema_propagates_subject_version_and_guid() {
         let registered_schema = RegisteredSchema {
             id: 7,
             schema_type: SchemaType::Avro,
@@ -1568,6 +1739,7 @@ mod tests {
             tags: None,
             subject: Some("orders-value".to_string()),
             version: Some(3),
+            guid: Some("cc0e0e0e-53c1-4a1a-8f1a-000000000001".to_string()),
         };
         let sr_settings = SrSettings::new_builder(String::from("http://127.0.0.1:1234"))
             .no_proxy()
@@ -1578,6 +1750,10 @@ mod tests {
         assert_eq!(avro.id, 7);
         assert_eq!(avro.subject.as_deref(), Some("orders-value"));
         assert_eq!(avro.version, Some(3));
+        assert_eq!(
+            avro.guid.as_deref(),
+            Some("cc0e0e0e-53c1-4a1a-8f1a-000000000001")
+        );
     }
 
     #[test]

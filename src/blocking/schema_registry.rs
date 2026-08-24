@@ -221,6 +221,32 @@ pub fn get_schema_by_id_and_type(
     }
 }
 
+/// Gets a schema by its guid. This is used to get the correct schema to deserialize bytes when
+/// the guid is carried in a Kafka header rather than the payload prefix. See
+/// https://github.com/gklijs/schema_registry_converter/issues/139.
+pub fn get_schema_by_guid(
+    guid: &str,
+    sr_settings: &SrSettings,
+) -> Result<RegisteredSchema, SRCError> {
+    let raw_schema = perform_sr_call(sr_settings, SrCall::GetByGuid(guid))?;
+    raw_to_registered_schema(raw_schema, None)
+}
+
+pub fn get_schema_by_guid_and_type(
+    guid: &str,
+    sr_settings: &SrSettings,
+    schema_type: SchemaType,
+) -> Result<RegisteredSchema, SRCError> {
+    match get_schema_by_guid(guid, sr_settings) {
+        Ok(v) if v.schema_type == schema_type => Ok(v),
+        Ok(v) => Err(SRCError::non_retryable_without_cause(&format!(
+            "type {:?}, is not correct",
+            v.schema_type
+        ))),
+        Err(e) => Err(e),
+    }
+}
+
 /// Gets the registered schema by supplying a SubjectNameStrategy. This is used to as part of the
 /// encoding so we get the correct schema and id, and possible references.
 pub fn get_schema_by_subject(
@@ -293,6 +319,7 @@ fn raw_to_registered_schema(
         tags,
         subject: raw_schema.subject,
         version: raw_schema.version,
+        guid: raw_schema.guid,
     })
 }
 
@@ -332,7 +359,7 @@ pub fn post_schema(
         schema.properties.as_ref(),
         schema.tags.as_ref(),
     );
-    let id = call_and_get_id(sr_settings, SrCall::PostNew(&subject, &body))?;
+    let (id, guid) = call_and_get_id_and_guid(sr_settings, SrCall::PostNew(&subject, &body))?;
     Ok(RegisteredSchema {
         id,
         schema_type: schema.schema_type,
@@ -342,6 +369,7 @@ pub fn post_schema(
         tags: schema.tags,
         subject: Some(subject),
         version: None,
+        guid,
     })
 }
 
@@ -385,10 +413,15 @@ fn get_body(
     schema_element.to_string()
 }
 
-fn call_and_get_id(sr_setting: &SrSettings, sr_call: SrCall) -> Result<u32, SRCError> {
+/// Performs a schema registry call and extracts both the id and the guid from the response
+/// (`guid` is `None` against a schema registry older than 8.0, which doesn't return one).
+fn call_and_get_id_and_guid(
+    sr_setting: &SrSettings,
+    sr_call: SrCall,
+) -> Result<(u32, Option<String>), SRCError> {
     let raw_schema = perform_sr_call(sr_setting, sr_call)?;
     match raw_schema.id {
-        Some(v) => Ok(v),
+        Some(v) => Ok((v, raw_schema.guid)),
         None => Err(SRCError::non_retryable_without_cause(&format!(
             "Could not get id from response for {:?}",
             sr_call
@@ -514,9 +547,10 @@ fn perform_single_sr_call(
 ) -> Result<RawRegisteredSchema, SRCError> {
     let url = url_for_call(&sr_call, base_url);
     let builder = match sr_call {
-        SrCall::GetById(_) | SrCall::GetLatest(_) | SrCall::GetBySubjectAndVersion(_, _) => {
-            client.get(&url)
-        }
+        SrCall::GetById(_)
+        | SrCall::GetByGuid(_)
+        | SrCall::GetLatest(_)
+        | SrCall::GetBySubjectAndVersion(_, _) => client.get(&url),
         SrCall::PostNew(_, body) | SrCall::PostForVersion(_, body) => client
             .post(&url)
             .body(String::from(body))
@@ -859,6 +893,7 @@ mod tests {
             subject: Some("ietf-tls-common".to_string()),
             version: Some(1),
             id: Some(68),
+            guid: Some("9550709c-d6c9-0194-fefa-6381b953668d".to_string()),
             schema_type: Some("YANG".to_string()),
             references: Some(vec![
                 RegisteredReference {
@@ -933,6 +968,7 @@ mod tests {
             }),
             subject: Some("ietf-tls-common".to_string()),
             version: Some(1),
+            guid: Some("9550709c-d6c9-0194-fefa-6381b953668d".to_string()),
         };
 
         let parsed: RawRegisteredSchema = serde_json::from_str(json_str).expect("parse json");

@@ -15,13 +15,17 @@ use valico::json_schema::schema::ScopedSchema;
 use valico::json_schema::Scope;
 
 use crate::async_impl::schema_registry::{
-    get_referenced_schema, get_schema_by_id_and_type, get_schema_by_subject, SrSettings,
+    get_referenced_schema, get_schema_by_guid_and_type, get_schema_by_id_and_type,
+    get_schema_by_subject, SrSettings,
 };
 use crate::error::SRCError;
-use crate::json_common::{fetch_fallback, fetch_id, handle_validation, to_bytes, to_value};
+use crate::json_common::{
+    fetch_fallback, fetch_id, handle_validation, to_bytes, to_bytes_raw, to_value,
+};
 use crate::schema_registry_common::{
-    get_bytes_result, invalid_bytes_error, BytesResult, RegisteredReference, RegisteredSchema,
-    SchemaType, SubjectNameStrategy,
+    build_schema_id_header, get_bytes_result, invalid_bytes_error, parse_schema_id_header,
+    BytesResult, HeaderSchemaId, RegisteredReference, RegisteredSchema, SchemaIdHeader, SchemaType,
+    SubjectNameStrategy, KEY_SCHEMA_ID_HEADER, VALUE_SCHEMA_ID_HEADER,
 };
 
 /// Encoder that works by prepending the correct bytes in order to make it valid schema registry
@@ -66,6 +70,30 @@ impl<'a> JsonEncoder<'a> {
         let id = schema.id;
         validate(schema.clone(), value)?;
         to_bytes(id, value)
+    }
+
+    /// Like [`JsonEncoder::encode`], but instead of prefixing the payload with the schema id
+    /// (the default confluent wire format), returns the raw JSON bytes alongside a
+    /// [`SchemaIdHeader`] carrying the schema's guid. Attach the header to the Kafka record
+    /// using whatever Kafka client you're using -- this crate has no dependency on one. `is_key`
+    /// picks between the `__key_schema_id`/`__value_schema_id` header names, matching
+    /// Confluent's `HeaderSchemaIdSerializer`. See
+    /// https://github.com/gklijs/schema_registry_converter/issues/139.
+    ///
+    /// Requires a schema registry that returns a `guid` (Confluent Schema Registry 8.0+); a
+    /// registry that doesn't will make this return an error.
+    pub async fn encode_with_header_id(
+        &self,
+        value: &Value,
+        subject_name_strategy: SubjectNameStrategy,
+        is_key: bool,
+    ) -> Result<(Vec<u8>, SchemaIdHeader), SRCError> {
+        let key = subject_name_strategy.get_subject()?;
+        let schema = self.get_schema(key, subject_name_strategy).await?;
+        validate((*schema).clone(), value)?;
+        let bytes = to_bytes_raw(value)?;
+        let header = schema_id_header_for(&schema, is_key)?;
+        Ok((bytes, header))
     }
 
     async fn get_schema(
@@ -166,6 +194,10 @@ pub struct JsonSchema {
     pub version: Option<u32>,
     pub properties: Option<HashMap<String, String>>,
     pub tags: Option<HashMap<String, Vec<String>>>,
+    /// The schema's UUID, as returned by Confluent Schema Registry 8.0+. `None` against an older
+    /// registry. Used by the `_with_header_id` encode methods to build a
+    /// [`crate::schema_registry_common::SchemaIdHeader`].
+    pub guid: Option<String>,
 }
 
 #[derive(Debug)]
@@ -173,6 +205,11 @@ pub struct JsonDecoder<'a> {
     sr_settings: SrSettings,
     direct_cache: DashMap<u32, Arc<JsonSchema>>,
     cache: DashMap<u32, SharedFutureSchema<'a>>,
+    /// Cache for schemas looked up by guid rather than id, used by
+    /// [`JsonDecoder::decode_with_header_id`]. Kept separate from `direct_cache`/`cache` (keyed
+    /// by id) since a guid and an id are different keyspaces.
+    guid_direct_cache: DashMap<String, Arc<JsonSchema>>,
+    guid_cache: DashMap<String, SharedFutureSchema<'a>>,
 }
 
 impl<'a> JsonDecoder<'a> {
@@ -188,6 +225,8 @@ impl<'a> JsonDecoder<'a> {
             sr_settings,
             direct_cache: DashMap::new(),
             cache: DashMap::new(),
+            guid_direct_cache: DashMap::new(),
+            guid_cache: DashMap::new(),
         }
     }
     /// Removes all non-retriable errors from the cache. You might need/want to run this when the
@@ -196,6 +235,10 @@ impl<'a> JsonDecoder<'a> {
     /// stored in the cache in the first place, so there's nothing to remove for those.
     pub fn remove_errors_from_cache(&self) {
         self.cache.retain(|_, v| match v.peek() {
+            Some(r) => r.is_ok(),
+            None => true,
+        });
+        self.guid_cache.retain(|_, v| match v.peek() {
             Some(r) => r.is_ok(),
             None => true,
         });
@@ -208,6 +251,43 @@ impl<'a> JsonDecoder<'a> {
             BytesResult::Invalid(i) => Err(SRCError::non_retryable_without_cause(
                 &invalid_bytes_error(i),
             )),
+        }
+    }
+    /// Like [`JsonDecoder::decode`], but for a message that may carry its schema id/guid in a
+    /// `__key_schema_id`/`__value_schema_id` header instead of (or in addition to) the payload
+    /// prefix, mirroring Confluent's `DualSchemaIdDeserializer`: `header_value` present ->
+    /// resolve the schema from it and treat `bytes` as the raw (unprefixed) payload;
+    /// `header_value` absent -> falls straight through to [`JsonDecoder::decode`], so the only
+    /// overhead for a caller who always passes `None` is this one check. See
+    /// https://github.com/gklijs/schema_registry_converter/issues/139.
+    pub async fn decode_with_header_id(
+        &self,
+        header_value: Option<&[u8]>,
+        bytes: Option<&[u8]>,
+    ) -> Result<Option<DecodeResult>, SRCError> {
+        let payload = match bytes {
+            Some(v) => v,
+            None => return Ok(None),
+        };
+        match header_value {
+            None => self.decode(Some(payload)).await,
+            Some(header) => {
+                let (schema_id, _rest) = parse_schema_id_header(header)?;
+                let schema = match schema_id {
+                    HeaderSchemaId::Id(id) => self.get_schema(id).await?,
+                    HeaderSchemaId::Guid(guid) => self.get_schema_by_guid(guid).await?,
+                };
+                match serde_json::from_slice(payload) {
+                    Ok(value) => Ok(Some(DecodeResult {
+                        schema: (*schema).clone(),
+                        value,
+                    })),
+                    Err(e) => Err(SRCError::non_retryable_with_cause(
+                        e,
+                        "could not create value from bytes",
+                    )),
+                }
+            }
         }
     }
     /// The actual deserialization trying to get the id from the bytes to retrieve the schema, and
@@ -274,6 +354,68 @@ impl<'a> JsonDecoder<'a> {
             }
         }
     }
+
+    /// Like [`JsonDecoder::get_schema`], but looks the schema up by guid instead of id -- used
+    /// by [`JsonDecoder::decode_with_header_id`] when the header carries a guid rather than an
+    /// id.
+    async fn get_schema_by_guid(&self, guid: String) -> Result<Arc<JsonSchema>, SRCError> {
+        match self.guid_direct_cache.get(&guid) {
+            None => {
+                let result = self.get_schema_by_guid_shared_future(guid.clone()).await;
+                match result {
+                    Ok(v) => {
+                        if !self.guid_direct_cache.contains_key(&guid) {
+                            self.guid_direct_cache.insert(guid.clone(), v.clone());
+                            self.guid_cache.remove(&guid);
+                        }
+                        Ok(v)
+                    }
+                    Err(e) if e.retriable => {
+                        self.guid_cache.remove(&guid);
+                        Err(e)
+                    }
+                    Err(e) => Err(e.into_cache()),
+                }
+            }
+            Some(result) => Ok(result.value().clone()),
+        }
+    }
+
+    fn get_schema_by_guid_shared_future(&self, guid: String) -> SharedFutureSchema<'a> {
+        match self.guid_cache.entry(guid.clone()) {
+            Entry::Occupied(e) => e.get().clone(),
+            Entry::Vacant(e) => {
+                let sr_settings = self.sr_settings.clone();
+                let v = async move {
+                    match get_schema_by_guid_and_type(&guid, &sr_settings, SchemaType::Json).await {
+                        Ok(schema) => match to_json_schema(&sr_settings, None, schema).await {
+                            Ok(v) => Ok(Arc::new(v)),
+                            Err(e) => Err(e),
+                        },
+                        Err(e) => Err(e),
+                    }
+                }
+                .boxed()
+                .shared();
+                e.insert(v).value().clone()
+            }
+        }
+    }
+}
+
+fn schema_id_header_for(schema: &JsonSchema, is_key: bool) -> Result<SchemaIdHeader, SRCError> {
+    let guid = schema.guid.as_deref().ok_or_else(|| {
+        SRCError::non_retryable_without_cause(
+            "Schema registry response did not include a guid; encoding the schema id in a \
+             header requires Confluent Schema Registry 8.0+",
+        )
+    })?;
+    let name = if is_key {
+        KEY_SCHEMA_ID_HEADER
+    } else {
+        VALUE_SCHEMA_ID_HEADER
+    };
+    build_schema_id_header(name, guid, &[])
 }
 
 fn reference_url(rr: &RegisteredReference) -> Result<Url, SRCError> {
@@ -321,6 +463,7 @@ fn to_json_schema(
             version: registered_schema.version,
             properties: registered_schema.properties,
             tags: registered_schema.tags,
+            guid: registered_schema.guid,
         })
     }
     .boxed()
@@ -344,7 +487,7 @@ mod tests {
     use crate::async_impl::json::{to_json_schema, validate, JsonDecoder, JsonEncoder};
     use crate::async_impl::schema_registry::SrSettings;
     use crate::schema_registry_common::{
-        get_payload, RegisteredSchema, SchemaType, SubjectNameStrategy,
+        get_payload, RegisteredSchema, SchemaType, SubjectNameStrategy, VALUE_SCHEMA_ID_HEADER,
     };
     use test_utils::{
         get_json_body, get_json_body_with_reference, json_get_result_references,
@@ -363,6 +506,7 @@ mod tests {
             tags: None,
             subject: Some("orders-value".to_string()),
             version: Some(3),
+            guid: None,
         };
         let sr_settings = SrSettings::new(String::from("http://127.0.0.1:1234"));
         let json_schema = to_json_schema(&sr_settings, None, registered_schema)
@@ -432,6 +576,70 @@ mod tests {
         let encoded_data = encoder.encode(&result_example, strategy).await.unwrap();
 
         assert_eq!(encoded_data, json_result_java_bytes())
+    }
+
+    #[tokio::test]
+    async fn test_encode_and_decode_with_header_id() {
+        let mut server = Server::new_async().await;
+        let _m = server
+            .mock("GET", "/subjects/testresult-value/versions/latest")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(r#"{"subject":"testresult-value","version":1,"id":10,"guid":"cc0e0e0e-53c1-4a1a-8f1a-000000000001","schema":"{\"type\":\"object\"}","schemaType":"JSON"}"#)
+            .create();
+
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
+        let encoder = JsonEncoder::new(sr_settings.clone());
+        let strategy = SubjectNameStrategy::TopicNameStrategy(String::from("testresult"), false);
+        let value: Value = serde_json::json!({"foo": "bar"});
+
+        let (bytes, header) = encoder
+            .encode_with_header_id(&value, strategy, false)
+            .await
+            .unwrap();
+
+        assert_eq!(bytes, serde_json::to_vec(&value).unwrap());
+        assert_eq!(header.name, VALUE_SCHEMA_ID_HEADER);
+        assert_eq!(
+            header.value,
+            vec![
+                0x01, 0xcc, 0x0e, 0x0e, 0x0e, 0x53, 0xc1, 0x4a, 0x1a, 0x8f, 0x1a, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x01,
+            ]
+        );
+
+        let _m2 = server
+            .mock("GET", "/schemas/guids/cc0e0e0e-53c1-4a1a-8f1a-000000000001")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(r#"{"id":10,"schema":"{\"type\":\"object\"}","schemaType":"JSON"}"#)
+            .create();
+
+        let decoder = JsonDecoder::new(sr_settings);
+        let decoded = decoder
+            .decode_with_header_id(Some(&header.value), Some(&bytes))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(decoded.value, value);
+
+        // header absent -> falls straight through to decode(), which expects the prefix
+        let _m3 = server
+            .mock("GET", "/schemas/ids/10?deleted=true")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(r#"{"id":10,"schema":"{\"type\":\"object\"}","schemaType":"JSON"}"#)
+            .create();
+        let prefixed = get_payload(10, serde_json::to_vec(&value).unwrap());
+        let decoded = decoder
+            .decode_with_header_id(None, Some(&prefixed))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(decoded.value, value);
     }
 
     #[tokio::test]
