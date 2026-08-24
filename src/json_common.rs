@@ -5,6 +5,21 @@ use valico::json_schema::validators::ValidationState;
 use crate::error::SRCError;
 use crate::schema_registry_common::get_payload;
 
+/// Cap on how deep a chain of JSON schema `references` is followed before giving up with an
+/// `SRCError`. Without a cap, a circular reference chain (a schema that references itself,
+/// directly or transitively) recurses without bound -- each level makes a network call, so this
+/// is reached long before it could ever stack-overflow, turning what would otherwise be a hang/
+/// crash into a clean, actionable error. 32 is generously deep for any legitimate schema.
+pub(crate) const MAX_REFERENCE_DEPTH: usize = 32;
+
+pub(crate) fn reference_depth_exceeded_error() -> SRCError {
+    SRCError::non_retryable_without_cause(&format!(
+        "JSON schema reference chain exceeded {} levels -- this usually means a schema \
+         (transitively) references itself",
+        MAX_REFERENCE_DEPTH
+    ))
+}
+
 pub(crate) fn handle_validation(
     validation: ValidationState,
     value: &Value,
@@ -47,8 +62,14 @@ pub(crate) fn fetch_id(def: &Value) -> Option<Url> {
     Url::parse(id).ok()
 }
 
-pub(crate) fn fetch_fallback(url: &str, id: u32) -> Url {
-    let id = format!("{}/id/{}.json", url, id);
+/// `label` should uniquely identify the schema -- its numeric id when known, or its guid when
+/// the numeric id isn't available (e.g. a schema resolved via [`crate::schema_registry_common`]'s
+/// guid lookup, which -- unlike the id lookup -- never gets a real numeric id back from the
+/// registry). A non-unique label (e.g. the same placeholder for every guid-only lookup) would
+/// make two different schemas collide on the same fallback url and silently share one compiled
+/// schema.
+pub(crate) fn fetch_fallback(url: &str, label: &str) -> Url {
+    let id = format!("{}/id/{}.json", url, label);
     Url::parse(&id).unwrap()
 }
 

@@ -12,12 +12,13 @@ use crate::blocking::schema_registry::{
 };
 use crate::error::SRCError;
 use crate::json_common::{
-    fetch_fallback, fetch_id, handle_validation, to_bytes, to_bytes_raw, to_value,
+    fetch_fallback, fetch_id, handle_validation, reference_depth_exceeded_error, to_bytes,
+    to_bytes_raw, to_value, MAX_REFERENCE_DEPTH,
 };
 use crate::schema_registry_common::{
-    build_schema_id_header, get_bytes_result, invalid_bytes_error, parse_schema_id_header,
+    get_bytes_result, invalid_bytes_error, parse_schema_id_header, schema_id_header_for,
     BytesResult, HeaderSchemaId, RegisteredReference, RegisteredSchema, SchemaIdHeader, SchemaType,
-    SubjectNameStrategy, KEY_SCHEMA_ID_HEADER, VALUE_SCHEMA_ID_HEADER,
+    SubjectNameStrategy,
 };
 
 /// Encoder that works by prepending the correct bytes in order to make it valid schema registry
@@ -148,13 +149,17 @@ impl JsonEncoder {
             Ok(c) => c.clone(),
             Err(e) => return Err(e.clone()),
         };
-        if self.scope.resolve(&context.url).is_none() {
-            return Err(SRCError::non_retryable_without_cause(
-                "could not get schema from scope",
-            ));
-        }
+        let validation = match self.scope.resolve(&context.url) {
+            Some(schema) => schema.validate(value),
+            None => {
+                return Err(SRCError::non_retryable_without_cause(
+                    "could not get schema from scope",
+                ))
+            }
+        };
+        handle_validation(validation, value)?;
         let bytes = to_bytes_raw(value)?;
-        let header = schema_id_header_for(context.guid.as_deref(), is_key)?;
+        let header = schema_id_header_for(context.guid.as_deref(), is_key, &[])?;
         Ok((bytes, header))
     }
 }
@@ -164,21 +169,6 @@ struct EncodeContext {
     id: u32,
     url: Url,
     guid: Option<String>,
-}
-
-fn schema_id_header_for(guid: Option<&str>, is_key: bool) -> Result<SchemaIdHeader, SRCError> {
-    let guid = guid.ok_or_else(|| {
-        SRCError::non_retryable_without_cause(
-            "Schema registry response did not include a guid; encoding the schema id in a \
-             header requires Confluent Schema Registry 8.0+",
-        )
-    })?;
-    let name = if is_key {
-        KEY_SCHEMA_ID_HEADER
-    } else {
-        VALUE_SCHEMA_ID_HEADER
-    };
-    build_schema_id_header(name, guid, &[])
 }
 
 #[derive(Debug)]
@@ -348,7 +338,11 @@ fn add_refs_to_scope(
     sr_settings: &SrSettings,
     base: &Url,
     refs: &[RegisteredReference],
+    depth: usize,
 ) -> Result<(), SRCError> {
+    if depth > MAX_REFERENCE_DEPTH {
+        return Err(reference_depth_exceeded_error());
+    }
     for rr in refs.iter() {
         let id = match Url::options().base_url(Some(base)).parse(&rr.name) {
             Ok(v) => v,
@@ -363,7 +357,7 @@ fn add_refs_to_scope(
         // A referenced schema with its own `$id` establishes a new base for its own references;
         // otherwise nested refs resolve against the url it was just compiled under.
         let nested_base = fetch_id(&def).unwrap_or_else(|| id.clone());
-        add_refs_to_scope(scope, sr_settings, &nested_base, &rs.references)?;
+        add_refs_to_scope(scope, sr_settings, &nested_base, &rs.references, depth + 1)?;
         scope.compile_with_id(&id, def, false).unwrap();
     }
     Ok(())
@@ -388,7 +382,16 @@ fn set_scoped_schema(
     };
     let id = match fetch_id(&def) {
         Some(url) => url,
-        None => fetch_fallback(sr_settings.url(), registered_schema.id),
+        None => {
+            // A schema resolved only by guid (`get_schema_by_guid`) never gets a real numeric
+            // id back from the registry -- `id` is a `0` placeholder in that case. Fall back to
+            // the guid instead so two different such schemas don't collide on the same url.
+            let label = match &registered_schema.guid {
+                Some(guid) if registered_schema.id == 0 => guid.clone(),
+                _ => registered_schema.id.to_string(),
+            };
+            fetch_fallback(sr_settings.url(), &label)
+        }
     };
     // Same schema can now be reached through two independent caches -- by id (`schema`) and by
     // guid (`guid_schema`) -- sharing this one `scope`. If it's already compiled under this url
@@ -398,7 +401,7 @@ fn set_scoped_schema(
     if scope.resolve(&id).is_some() {
         return Ok(id);
     }
-    add_refs_to_scope(scope, sr_settings, &id, &registered_schema.references)?;
+    add_refs_to_scope(scope, sr_settings, &id, &registered_schema.references, 0)?;
     match scope.compile_with_id(&id, def, false) {
         Ok(_) => (),
         Err(e) => {
@@ -427,7 +430,9 @@ mod tests {
     use crate::blocking::json::{JsonDecoder, JsonEncoder};
     use crate::blocking::schema_registry::SrSettings;
     use crate::json_common::handle_validation;
-    use crate::schema_registry_common::{get_payload, SubjectNameStrategy, VALUE_SCHEMA_ID_HEADER};
+    use crate::schema_registry_common::{
+        build_schema_id_header, get_payload, SubjectNameStrategy, VALUE_SCHEMA_ID_HEADER,
+    };
     use test_utils::{
         get_json_body, get_json_body_with_reference, json_extra_schema, json_get_extra_references,
         json_get_result_references, json_incorrect_bytes, json_result_java_bytes,
@@ -513,7 +518,10 @@ mod tests {
 
         // GET /schemas/guids/{guid} never carries an "id" field on a real registry -- only "guid".
         let _m2 = server
-            .mock("GET", "/schemas/guids/cc0e0e0e-53c1-4a1a-8f1a-000000000001")
+            .mock(
+                "GET",
+                "/schemas/guids/cc0e0e0e-53c1-4a1a-8f1a-000000000001?deleted=true",
+            )
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(r#"{"schema":"{\"type\":\"object\"}","schemaType":"JSON"}"#)
@@ -539,6 +547,74 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(decoded.value, value);
+    }
+
+    #[test]
+    fn guid_only_schemas_without_id_do_not_collide_on_fallback_url() {
+        // GET /schemas/guids/{guid} never returns an "id" (see get_schema_by_guid), so two
+        // different schemas resolved only by guid and lacking their own `$id` must not collide
+        // on the same fallback compile-scope url -- they used to, since both defaulted to the
+        // same "id/0.json" placeholder. See
+        // https://github.com/gklijs/schema_registry_converter/issues/139.
+        let mut server = mockito::Server::new();
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
+        let mut decoder = JsonDecoder::new(sr_settings);
+
+        let schema_a = r#"{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"additionalProperties\":false,\"properties\":{\"a\":{\"type\":\"string\"}},\"required\":[\"a\"]}"#;
+        let schema_b = r#"{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"additionalProperties\":false,\"properties\":{\"b\":{\"type\":\"string\"}},\"required\":[\"b\"]}"#;
+        let guid_a = "cc0e0e0e-53c1-4a1a-8f1a-000000000001";
+        let guid_b = "dd0e0e0e-53c1-4a1a-8f1a-000000000002";
+
+        let _m1 = server
+            .mock(
+                "GET",
+                format!("/schemas/guids/{guid_a}?deleted=true").as_str(),
+            )
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(format!(
+                r#"{{"guid":"{guid_a}","schema":"{schema_a}","schemaType":"JSON"}}"#
+            ))
+            .create();
+        let _m2 = server
+            .mock(
+                "GET",
+                format!("/schemas/guids/{guid_b}?deleted=true").as_str(),
+            )
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(format!(
+                r#"{{"guid":"{guid_b}","schema":"{schema_b}","schemaType":"JSON"}}"#
+            ))
+            .create();
+
+        let header_a = build_schema_id_header(VALUE_SCHEMA_ID_HEADER, guid_a, &[]).unwrap();
+        let header_b = build_schema_id_header(VALUE_SCHEMA_ID_HEADER, guid_b, &[]).unwrap();
+        let value_a = serde_json::json!({"a": "x"});
+        let value_b = serde_json::json!({"b": "y"});
+        let bytes_a = serde_json::to_vec(&value_a).unwrap();
+        let bytes_b = serde_json::to_vec(&value_b).unwrap();
+
+        let decoded_a = decoder
+            .decode_with_header_id(Some(&header_a.value), Some(&bytes_a))
+            .unwrap()
+            .unwrap();
+        // Each message must validate against its own schema...
+        assert!(decoded_a.schema.validate(&value_a).is_strictly_valid());
+        // ...and fail against the other's, proving they're genuinely different compiled schemas
+        // rather than both resolving to whichever was compiled first.
+        assert!(!decoded_a.schema.validate(&value_b).is_strictly_valid());
+        drop(decoded_a);
+
+        let decoded_b = decoder
+            .decode_with_header_id(Some(&header_b.value), Some(&bytes_b))
+            .unwrap()
+            .unwrap();
+        assert!(decoded_b.schema.validate(&value_b).is_strictly_valid());
+        assert!(!decoded_b.schema.validate(&value_a).is_strictly_valid());
     }
 
     #[test]
@@ -902,6 +978,45 @@ mod tests {
     }
 
     #[test]
+    fn circular_reference_returns_error_instead_of_overflowing_stack() {
+        // A schema that (transitively) references itself must be rejected with a clean
+        // SRCError instead of recursing until the stack overflows. See
+        // https://github.com/gklijs/schema_registry_converter/issues/139.
+        let mut server = mockito::Server::new();
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
+        let mut decoder = JsonDecoder::new(sr_settings);
+
+        let schema = r#"{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{\"self\":{\"$ref\":\"self.json\"}}}"#;
+        let reference = r#"{"name": "self.json", "subject": "circular", "version": 1}"#;
+
+        let _m = server
+            .mock("GET", "/schemas/ids/5?deleted=true")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(get_json_body_with_reference(schema, 5, reference))
+            .create();
+        // The reference resolves to the *same* self-referencing schema, so following it
+        // recurses into "self.json" again indefinitely.
+        let _m2 = server
+            .mock("GET", "/subjects/circular/versions/1")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(get_json_body_with_reference(schema, 5, reference))
+            .create();
+
+        let bytes = get_payload(5, br#"{"self":{}}"#.to_vec());
+        let error = decoder.decode(Some(&bytes)).unwrap_err();
+        assert!(
+            error.error.contains("reference chain exceeded"),
+            "expected a reference-depth error, got {:?}",
+            error
+        );
+    }
+
+    #[test]
     fn encounter_same_reference_again() {
         let mut server = mockito::Server::new();
         let sr_settings = SrSettings::new_builder(server.url())
@@ -1097,6 +1212,40 @@ mod tests {
         let result_example: Value = Value::String(String::from("Foo"));
 
         let error = encoder.encode(&result_example, &strategy).unwrap_err();
+
+        assert_eq!(
+            error.error,
+            String::from(
+                r#"Value "Foo" was not valid according to the schema because [WrongType { path: "", detail: "The value must be object" }]"#
+            )
+        )
+    }
+
+    #[test]
+    fn test_encode_with_header_id_not_valid() {
+        // encode_with_header_id must reject a non-conforming value just like encode() does,
+        // rather than skipping validation because it doesn't need the schema's numeric id.
+        let mut server = mockito::Server::new();
+        let _m = server
+            .mock("GET", "/subjects/testresult-value/versions/latest")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(
+                r#"{"subject":"testresult-value","version":1,"id":10,"guid":"cc0e0e0e-53c1-4a1a-8f1a-000000000001","schema":"{\"type\":\"object\"}","schemaType":"JSON"}"#,
+            )
+            .create();
+
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
+        let mut encoder = JsonEncoder::new(sr_settings);
+        let strategy = SubjectNameStrategy::TopicNameStrategy(String::from("testresult"), false);
+        let result_example: Value = Value::String(String::from("Foo"));
+
+        let error = encoder
+            .encode_with_header_id(&result_example, &strategy, false)
+            .unwrap_err();
 
         assert_eq!(
             error.error,

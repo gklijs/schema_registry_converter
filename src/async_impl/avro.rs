@@ -44,9 +44,9 @@ use crate::avro_common::{
 };
 use crate::error::SRCError;
 use crate::schema_registry_common::{
-    build_schema_id_header, get_bytes_result, invalid_bytes_error, parse_schema_id_header,
+    get_bytes_result, invalid_bytes_error, parse_schema_id_header, schema_id_header_for,
     BytesResult, HeaderSchemaId, RegisteredReference, RegisteredSchema, SchemaIdHeader, SchemaType,
-    SubjectNameStrategy, KEY_SCHEMA_ID_HEADER, VALUE_SCHEMA_ID_HEADER,
+    SubjectNameStrategy,
 };
 
 /// A decoder used to transform bytes to a Value object
@@ -229,7 +229,7 @@ impl<'a> AvroDecoder<'a> {
     /// # async fn doc() -> Result<(), reqwest::Error> {
     /// let mut server = Server::new_async().await;
     /// // GET /schemas/guids/{guid} never carries an "id" field on a real registry -- only "guid".
-    /// let _m = server .mock("GET", "/schemas/guids/cc0e0e0e-53c1-4a1a-8f1a-000000000001")
+    /// let _m = server .mock("GET", "/schemas/guids/cc0e0e0e-53c1-4a1a-8f1a-000000000001?deleted=true")
     ///     .with_status(200)
     ///     .with_header("content-type", "application/vnd.schemaregistry.v1+json")
     ///     .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
@@ -643,7 +643,7 @@ impl<'a> AvroEncoder<'a> {
         let key = subject_name_strategy.get_subject()?;
         let schema = self.get_schema_and_id(&key, subject_name_strategy).await?;
         let bytes = values_to_bytes_raw(&self.resolved_cache, &schema, values)?;
-        let header = schema_id_header_for(&schema, is_key)?;
+        let header = schema_id_header_for(schema.guid.as_deref(), is_key, &[])?;
         Ok((bytes, header))
     }
 
@@ -721,7 +721,7 @@ impl<'a> AvroEncoder<'a> {
             .get_schema_and_id(&key, subject_name_strategy.clone())
             .await?;
         let bytes = item_to_bytes_raw(&self.resolved_cache, &schema, item)?;
-        let header = schema_id_header_for(&schema, is_key)?;
+        let header = schema_id_header_for(schema.guid.as_deref(), is_key, &[])?;
         Ok((bytes, header))
     }
 
@@ -750,7 +750,7 @@ impl<'a> AvroEncoder<'a> {
             .get_schema_and_id(&key, subject_name_strategy.clone())
             .await?;
         let bytes = record_to_bytes_raw(&self.resolved_cache, &schema, item)?;
-        let header = schema_id_header_for(&schema, is_key)?;
+        let header = schema_id_header_for(schema.guid.as_deref(), is_key, &[])?;
         Ok((bytes, header))
     }
 
@@ -809,24 +809,6 @@ impl<'a> AvroEncoder<'a> {
             }
         }
     }
-}
-
-/// Builds the [`SchemaIdHeader`] for `schema`, requiring it to carry a guid (populated when the
-/// schema registry response included one, i.e. Confluent Schema Registry 8.0+). Avro has no
-/// message index, unlike protobuf, so there are no trailing bytes to append.
-fn schema_id_header_for(schema: &AvroSchema, is_key: bool) -> Result<SchemaIdHeader, SRCError> {
-    let guid = schema.guid.as_deref().ok_or_else(|| {
-        SRCError::non_retryable_without_cause(
-            "Schema registry response did not include a guid; encoding the schema id in a \
-             header requires Confluent Schema Registry 8.0+",
-        )
-    })?;
-    let name = if is_key {
-        KEY_SCHEMA_ID_HEADER
-    } else {
-        VALUE_SCHEMA_ID_HEADER
-    };
-    build_schema_id_header(name, guid, &[])
 }
 
 async fn to_avro_schema(

@@ -8,9 +8,8 @@ use crate::proto_raw_common::{
 };
 use crate::proto_resolver::{resolve_name, to_index_and_data, IndexResolver};
 use crate::schema_registry_common::{
-    build_schema_id_header, get_bytes_result, invalid_bytes_error, parse_schema_id_header,
+    get_bytes_result, invalid_bytes_error, parse_schema_id_header, schema_id_header_for,
     BytesResult, HeaderSchemaId, RegisteredSchema, SchemaIdHeader, SchemaType, SubjectNameStrategy,
-    KEY_SCHEMA_ID_HEADER, VALUE_SCHEMA_ID_HEADER,
 };
 use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
@@ -86,7 +85,7 @@ impl<'a> ProtoRawEncoder<'a> {
             .get_encoding_context(key, subject_name_strategy)
             .await?;
         let index = index_bytes(&encode_context, full_name)?;
-        let header = schema_id_header_for(&encode_context, &index, is_key)?;
+        let header = schema_id_header_for(encode_context.guid.as_deref(), is_key, &index)?;
         Ok((bytes.to_vec(), header))
     }
 
@@ -118,7 +117,7 @@ impl<'a> ProtoRawEncoder<'a> {
             .get_encoding_context(key, subject_name_strategy)
             .await?;
         let index = index_bytes_single_message(&encode_context)?;
-        let header = schema_id_header_for(&encode_context, &index, is_key)?;
+        let header = schema_id_header_for(encode_context.guid.as_deref(), is_key, &index)?;
         Ok((bytes.to_vec(), header))
     }
 
@@ -168,28 +167,6 @@ impl<'a> ProtoRawEncoder<'a> {
             }
         }
     }
-}
-
-/// Builds the [`SchemaIdHeader`] for `encode_context`, requiring it to carry a guid (populated
-/// when the schema registry response included one, i.e. Confluent Schema Registry 8.0+),
-/// appending `index` (the message index, unlike Avro/JSON which have none) after the guid.
-fn schema_id_header_for(
-    encode_context: &EncodeContext,
-    index: &[u8],
-    is_key: bool,
-) -> Result<SchemaIdHeader, SRCError> {
-    let guid = encode_context.guid.as_deref().ok_or_else(|| {
-        SRCError::non_retryable_without_cause(
-            "Schema registry response did not include a guid; encoding the schema id in a \
-             header requires Confluent Schema Registry 8.0+",
-        )
-    })?;
-    let name = if is_key {
-        KEY_SCHEMA_ID_HEADER
-    } else {
-        VALUE_SCHEMA_ID_HEADER
-    };
-    build_schema_id_header(name, guid, index)
 }
 
 #[derive(Debug)]
@@ -295,11 +272,23 @@ impl<'a> ProtoRawDecoder<'a> {
         match self.direct_cache.get(&id) {
             None => {
                 let result = self.get_context_by_shared_future(id).await;
-                if result.is_ok() && !self.direct_cache.contains_key(&id) {
-                    self.direct_cache.insert(id, result.clone().unwrap());
-                    self.cache.remove(&id);
-                };
-                result
+                match result {
+                    Ok(v) => {
+                        if !self.direct_cache.contains_key(&id) {
+                            self.direct_cache.insert(id, v.clone());
+                            self.cache.remove(&id);
+                        }
+                        Ok(v)
+                    }
+                    // Retriable errors (transient network/HTTP issues) don't make sense to
+                    // cache, so the shared-future entry is dropped and the next call issues a
+                    // fresh request rather than replaying a stale failure.
+                    Err(e) if e.retriable => {
+                        self.cache.remove(&id);
+                        Err(e)
+                    }
+                    Err(e) => Err(e.into_cache()),
+                }
             }
             Some(result) => Ok(result.value().clone()),
         }
@@ -314,7 +303,7 @@ impl<'a> ProtoRawDecoder<'a> {
                 let v = async move {
                     match get_schema_by_id_and_type(id, &sr_settings, SchemaType::Protobuf).await {
                         Ok(r) => Ok(Arc::new(to_decode_context(r))),
-                        Err(e) => Err(e.into_cache()),
+                        Err(e) => Err(e),
                     }
                 }
                 .boxed()
@@ -331,12 +320,20 @@ impl<'a> ProtoRawDecoder<'a> {
         match self.guid_direct_cache.get(&guid) {
             None => {
                 let result = self.get_context_by_guid_shared_future(guid.clone()).await;
-                if result.is_ok() && !self.guid_direct_cache.contains_key(&guid) {
-                    self.guid_direct_cache
-                        .insert(guid.clone(), result.clone().unwrap());
-                    self.guid_cache.remove(&guid);
-                };
-                result
+                match result {
+                    Ok(v) => {
+                        if !self.guid_direct_cache.contains_key(&guid) {
+                            self.guid_direct_cache.insert(guid.clone(), v.clone());
+                            self.guid_cache.remove(&guid);
+                        }
+                        Ok(v)
+                    }
+                    Err(e) if e.retriable => {
+                        self.guid_cache.remove(&guid);
+                        Err(e)
+                    }
+                    Err(e) => Err(e.into_cache()),
+                }
             }
             Some(result) => Ok(result.value().clone()),
         }
@@ -352,7 +349,7 @@ impl<'a> ProtoRawDecoder<'a> {
                         .await
                     {
                         Ok(r) => Ok(Arc::new(to_decode_context(r))),
-                        Err(e) => Err(e.into_cache()),
+                        Err(e) => Err(e),
                     }
                 }
                 .boxed()
@@ -375,7 +372,8 @@ mod tests {
     use crate::async_impl::proto_raw::{ProtoRawDecoder, ProtoRawEncoder};
     use crate::async_impl::schema_registry::SrSettings;
     use crate::schema_registry_common::{
-        SchemaType, SubjectNameStrategy, SuppliedReference, SuppliedSchema, VALUE_SCHEMA_ID_HEADER,
+        build_schema_id_header, SchemaType, SubjectNameStrategy, SuppliedReference, SuppliedSchema,
+        VALUE_SCHEMA_ID_HEADER,
     };
     use mockito::Server;
     use test_utils::{
@@ -427,7 +425,10 @@ mod tests {
         );
 
         let _m2 = server
-            .mock("GET", "/schemas/guids/cc0e0e0e-53c1-4a1a-8f1a-000000000001")
+            .mock(
+                "GET",
+                "/schemas/guids/cc0e0e0e-53c1-4a1a-8f1a-000000000001?deleted=true",
+            )
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(get_proto_body(get_proto_hb_schema(), 7))
@@ -451,6 +452,61 @@ mod tests {
             .create();
         let decoded = decoder
             .decode_with_header_id(None, Some(get_proto_hb_101()))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(decoded.bytes, get_proto_hb_101_only_data());
+    }
+
+    #[tokio::test]
+    async fn test_decode_with_header_id_guid_retriable_error_is_not_cached() {
+        // Regression test: a retriable error (e.g. a transient 503) resolving a schema by guid
+        // must not stick around in the cache, so the very next call succeeds without needing
+        // remove_errors_from_cache(). See https://github.com/gklijs/schema_registry_converter/issues/139.
+        let mut server = Server::new_async().await;
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
+        let decoder = ProtoRawDecoder::new(sr_settings);
+        let guid = "cc0e0e0e-53c1-4a1a-8f1a-000000000001";
+        let header = build_schema_id_header(VALUE_SCHEMA_ID_HEADER, guid, &[0x00]).unwrap();
+
+        let _m = server
+            .mock(
+                "GET",
+                format!("/schemas/guids/{guid}?deleted=true").as_str(),
+            )
+            .with_status(503)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(r#"{"error_code":50302,"message":"Leader not known"}"#)
+            .create();
+
+        let err = decoder
+            .decode_with_header_id(Some(&header.value), Some(get_proto_hb_101_only_data()))
+            .await
+            .unwrap_err();
+        assert!(err.retriable, "expected a retriable error, got {:?}", err);
+        assert!(
+            !err.cached,
+            "retriable error should not be cached, got {:?}",
+            err
+        );
+
+        let _m = server
+            .mock(
+                "GET",
+                format!("/schemas/guids/{guid}?deleted=true").as_str(),
+            )
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(get_proto_body(get_proto_hb_schema(), 7))
+            .create();
+
+        // No remove_errors_from_cache() call: this must succeed purely because the retriable
+        // error above was never cached in the first place.
+        let decoded = decoder
+            .decode_with_header_id(Some(&header.value), Some(get_proto_hb_101_only_data()))
             .await
             .unwrap()
             .unwrap();

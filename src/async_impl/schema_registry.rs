@@ -1039,7 +1039,7 @@ mod tests {
         let guid = "cc0e0e0e-53c1-4a1a-8f1a-000000000001";
 
         let _m = server
-            .mock("GET", format!("/schemas/guids/{guid}").as_str())
+            .mock("GET", format!("/schemas/guids/{guid}?deleted=true").as_str())
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(r#"{"guid":"cc0e0e0e-53c1-4a1a-8f1a-000000000001","schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}","schemaType":"AVRO"}"#)

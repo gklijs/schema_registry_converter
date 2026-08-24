@@ -19,12 +19,13 @@ use crate::async_impl::schema_registry::{
 };
 use crate::error::SRCError;
 use crate::json_common::{
-    fetch_fallback, fetch_id, handle_validation, to_bytes, to_bytes_raw, to_value,
+    fetch_fallback, fetch_id, handle_validation, reference_depth_exceeded_error, to_bytes,
+    to_bytes_raw, to_value, MAX_REFERENCE_DEPTH,
 };
 use crate::schema_registry_common::{
-    build_schema_id_header, get_bytes_result, invalid_bytes_error, parse_schema_id_header,
+    get_bytes_result, invalid_bytes_error, parse_schema_id_header, schema_id_header_for,
     BytesResult, HeaderSchemaId, RegisteredReference, RegisteredSchema, SchemaIdHeader, SchemaType,
-    SubjectNameStrategy, KEY_SCHEMA_ID_HEADER, VALUE_SCHEMA_ID_HEADER,
+    SubjectNameStrategy,
 };
 
 /// Encoder that works by prepending the correct bytes in order to make it valid schema registry
@@ -91,7 +92,7 @@ impl<'a> JsonEncoder<'a> {
         let schema = self.get_schema(key, subject_name_strategy).await?;
         validate((*schema).clone(), value)?;
         let bytes = to_bytes_raw(value)?;
-        let header = schema_id_header_for(&schema, is_key)?;
+        let header = schema_id_header_for(schema.guid.as_deref(), is_key, &[])?;
         Ok((bytes, header))
     }
 
@@ -138,7 +139,7 @@ impl<'a> JsonEncoder<'a> {
                 let sr_settings = self.sr_settings.clone();
                 let v = async move {
                     match get_schema_by_subject(&sr_settings, &subject_name_strategy).await {
-                        Ok(schema) => match to_json_schema(&sr_settings, None, schema).await {
+                        Ok(schema) => match to_json_schema(&sr_settings, None, schema, 0).await {
                             Ok(s) => Ok(Arc::new(s)),
                             Err(e) => Err(e),
                         },
@@ -340,7 +341,7 @@ impl<'a> JsonDecoder<'a> {
                 let sr_settings = self.sr_settings.clone();
                 let v = async move {
                     match get_schema_by_id_and_type(id, &sr_settings, SchemaType::Json).await {
-                        Ok(schema) => match to_json_schema(&sr_settings, None, schema).await {
+                        Ok(schema) => match to_json_schema(&sr_settings, None, schema, 0).await {
                             Ok(v) => Ok(Arc::new(v)),
                             Err(e) => Err(e),
                         },
@@ -387,7 +388,7 @@ impl<'a> JsonDecoder<'a> {
                 let sr_settings = self.sr_settings.clone();
                 let v = async move {
                     match get_schema_by_guid_and_type(&guid, &sr_settings, SchemaType::Json).await {
-                        Ok(schema) => match to_json_schema(&sr_settings, None, schema).await {
+                        Ok(schema) => match to_json_schema(&sr_settings, None, schema, 0).await {
                             Ok(v) => Ok(Arc::new(v)),
                             Err(e) => Err(e),
                         },
@@ -402,21 +403,6 @@ impl<'a> JsonDecoder<'a> {
     }
 }
 
-fn schema_id_header_for(schema: &JsonSchema, is_key: bool) -> Result<SchemaIdHeader, SRCError> {
-    let guid = schema.guid.as_deref().ok_or_else(|| {
-        SRCError::non_retryable_without_cause(
-            "Schema registry response did not include a guid; encoding the schema id in a \
-             header requires Confluent Schema Registry 8.0+",
-        )
-    })?;
-    let name = if is_key {
-        KEY_SCHEMA_ID_HEADER
-    } else {
-        VALUE_SCHEMA_ID_HEADER
-    };
-    build_schema_id_header(name, guid, &[])
-}
-
 /// `base` is the url the referencing schema is compiled under -- a reference's `name` is
 /// resolved against it the same way a JSON Schema validator resolves a `$ref`, since that's
 /// exactly what `name` is used as inside the referencing schema. Confluent doesn't require
@@ -429,10 +415,20 @@ fn reference_url(rr: &RegisteredReference, base: &Url) -> Result<Url, SRCError> 
     }
 }
 
-fn main_url(schema: &Value, sr_settings: &SrSettings, id: u32) -> Url {
+/// `guid` is used as the fallback label instead of `id` when `id` is the `0` placeholder
+/// [`crate::async_impl::schema_registry::get_schema_by_guid`] returns for a schema that has no
+/// real numeric id in the registry's response -- without this, every such schema without its own
+/// `$id` would collide on the same fallback url and silently share one compiled schema.
+fn main_url(schema: &Value, sr_settings: &SrSettings, id: u32, guid: Option<&str>) -> Url {
     match fetch_id(schema) {
         Some(url) => url,
-        None => fetch_fallback(sr_settings.url(), id),
+        None => {
+            let label = match guid {
+                Some(guid) if id == 0 => guid.to_string(),
+                _ => id.to_string(),
+            };
+            fetch_fallback(sr_settings.url(), &label)
+        }
     }
 }
 
@@ -440,12 +436,24 @@ fn to_json_schema(
     sr_settings: &SrSettings,
     optional_url: Option<Url>,
     registered_schema: RegisteredSchema,
+    depth: usize,
 ) -> BoxFuture<Result<JsonSchema, SRCError>> {
     async move {
+        // A circular reference chain (a schema that references itself, directly or
+        // transitively) would otherwise recurse here without bound -- each level fetches over
+        // the network, so this is reached long before it could stack-overflow.
+        if depth > MAX_REFERENCE_DEPTH {
+            return Err(reference_depth_exceeded_error());
+        }
         let schema: Value = to_value(&registered_schema.schema)?;
         let url = match optional_url {
             Some(v) => v,
-            None => main_url(&schema, sr_settings, registered_schema.id),
+            None => main_url(
+                &schema,
+                sr_settings,
+                registered_schema.id,
+                registered_schema.guid.as_deref(),
+            ),
         };
         let refs: Result<Vec<JsonSchema>, SRCError> = stream::iter(registered_schema.references)
             .then(|rr| {
@@ -453,7 +461,7 @@ fn to_json_schema(
                 async move {
                     let ref_url = reference_url(&rr, &base)?;
                     let rs = get_referenced_schema(sr_settings, &rr).await?;
-                    to_json_schema(sr_settings, Some(ref_url), rs).await
+                    to_json_schema(sr_settings, Some(ref_url), rs, depth + 1).await
                 }
             })
             .collect::<Vec<_>>()
@@ -516,7 +524,7 @@ mod tests {
             guid: None,
         };
         let sr_settings = SrSettings::new(String::from("http://127.0.0.1:1234"));
-        let json_schema = to_json_schema(&sr_settings, None, registered_schema)
+        let json_schema = to_json_schema(&sr_settings, None, registered_schema, 0)
             .await
             .expect("conversion succeeds for empty references");
         assert_eq!(json_schema.id, 7);
@@ -620,7 +628,10 @@ mod tests {
 
         // GET /schemas/guids/{guid} never carries an "id" field on a real registry -- only "guid".
         let _m2 = server
-            .mock("GET", "/schemas/guids/cc0e0e0e-53c1-4a1a-8f1a-000000000001")
+            .mock(
+                "GET",
+                "/schemas/guids/cc0e0e0e-53c1-4a1a-8f1a-000000000001?deleted=true",
+            )
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(r#"{"schema":"{\"type\":\"object\"}","schemaType":"JSON"}"#)
@@ -992,6 +1003,45 @@ mod tests {
 
         let error = decoder.decode(Some(&bytes)).await.unwrap_err();
         assert!(error.error.starts_with("could not parse schema {"))
+    }
+
+    #[tokio::test]
+    async fn circular_reference_returns_error_instead_of_overflowing_stack() {
+        // A schema that (transitively) references itself must be rejected with a clean
+        // SRCError instead of recursing until the stack overflows. See
+        // https://github.com/gklijs/schema_registry_converter/issues/139.
+        let mut server = Server::new_async().await;
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
+        let decoder = JsonDecoder::new(sr_settings);
+
+        let schema = r#"{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{\"self\":{\"$ref\":\"self.json\"}}}"#;
+        let reference = r#"{"name": "self.json", "subject": "circular", "version": 1}"#;
+
+        let _m = server
+            .mock("GET", "/schemas/ids/5?deleted=true")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(get_json_body_with_reference(schema, 5, reference))
+            .create();
+        // The reference resolves to the *same* self-referencing schema, so following it
+        // recurses into "self.json" again indefinitely.
+        let _m2 = server
+            .mock("GET", "/subjects/circular/versions/1")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(get_json_body_with_reference(schema, 5, reference))
+            .create();
+
+        let bytes = get_payload(5, br#"{"self":{}}"#.to_vec());
+        let error = decoder.decode(Some(&bytes)).await.unwrap_err();
+        assert!(
+            error.error.contains("reference chain exceeded"),
+            "expected a reference-depth error, got {:?}",
+            error
+        );
     }
 
     #[tokio::test]

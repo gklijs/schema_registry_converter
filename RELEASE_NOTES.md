@@ -67,10 +67,12 @@ Add support for carrying the schema id/guid in a Kafka header instead of prefixi
 matching Confluent Schema Registry 8.0's `HeaderSchemaIdSerializer`/`DualSchemaIdDeserializer`.
 Every encoder/decoder (Avro, JSON, protobuf; blocking and async) gains `_with_header_id`
 variants, plain-data types `SchemaIdHeader`/`KEY_SCHEMA_ID_HEADER`/`VALUE_SCHEMA_ID_HEADER` are
-added to `schema_registry_common`, `RegisteredSchema`/`RawRegisteredSchema` gain a `guid` field,
-and schema lookup by guid (`GET /schemas/guids/{guid}`) is now supported alongside lookup by id.
-This is purely additive -- no existing signatures change. See #139 and the "Schema id in Kafka
-headers" section of the README.
+added to `schema_registry_common`, and schema lookup by guid (`GET /schemas/guids/{guid}`) is
+now supported alongside lookup by id. No existing function/method signature changes, so this is
+additive for all normal usage -- but `RegisteredSchema`, `RawRegisteredSchema`, `AvroSchema`, and
+`JsonSchema` all gain a new public `guid` field, which *is* a breaking change if you construct
+one of those via struct-literal syntax, or destructure one exhaustively without `..`. See #139
+and the "Schema id in Kafka headers" section of the README.
 
 ### 4.10.0
 
