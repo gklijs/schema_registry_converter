@@ -25,13 +25,15 @@ pub(crate) fn handle_validation(
 }
 
 pub(crate) fn to_bytes(id: u32, value: &Value) -> Result<Vec<u8>, SRCError> {
-    match serde_json::to_vec(value) {
-        Ok(bytes) => Ok(get_payload(id, bytes)),
-        Err(e) => Err(SRCError::non_retryable_with_cause(
-            e,
-            "error serialising value to bytes",
-        )),
-    }
+    to_bytes_raw(value).map(|bytes| get_payload(id, bytes))
+}
+
+/// Like [`to_bytes`], but without the confluent wire-format prefix -- used when the schema
+/// id/guid is carried in a Kafka header instead. See
+/// https://github.com/gklijs/schema_registry_converter/issues/139.
+pub(crate) fn to_bytes_raw(value: &Value) -> Result<Vec<u8>, SRCError> {
+    serde_json::to_vec(value)
+        .map_err(|e| SRCError::non_retryable_with_cause(e, "error serialising value to bytes"))
 }
 
 pub(crate) fn fetch_id(def: &Value) -> Option<Url> {

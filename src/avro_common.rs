@@ -35,6 +35,9 @@ pub struct AvroSchema {
     pub version: Option<u32>,
     pub properties: Option<HashMap<String, String>>,
     pub tags: Option<HashMap<String, Vec<String>>>,
+    /// The schema's UUID, as returned by Confluent Schema Registry 8.0+. `None` against an older
+    /// registry. Used by the `_with_header_id` encode methods to build a [`crate::schema_registry_common::SchemaIdHeader`].
+    pub guid: Option<String>,
 }
 
 /// A schema's named types resolved once and reused for every subsequent encode/decode of that
@@ -187,23 +190,29 @@ pub(crate) fn replace_reference(parent: value::Value, child: value::Value) -> va
     }
 }
 
-fn to_bytes(
+/// Encodes `record` using the (cached, resolved) writer schema, without the confluent wire-format
+/// prefix -- shared by both [`to_bytes`] (prefixed, the default wire format) and the raw variants
+/// used by the `_with_header_id` encode methods, where the id/guid instead goes in a Kafka header.
+/// See https://github.com/gklijs/schema_registry_converter/issues/139.
+fn encode_value(
     cache: &ResolvedSchemaCache,
     avro_schema: &AvroSchema,
     record: Value,
 ) -> Result<Vec<u8>, SRCError> {
     let context = resolved_context(cache, avro_schema)?;
-    let result = GenericDatumWriter::builder(context.schema)
+    GenericDatumWriter::builder(context.schema)
         .resolved_schemata(context.resolved.clone())
         .build()
-        .and_then(|writer| writer.write_value_to_vec(record));
-    match result {
-        Ok(v) => Ok(get_payload(avro_schema.id, v)),
-        Err(e) => Err(SRCError::non_retryable_with_cause(
-            e,
-            "Could not get Avro bytes",
-        )),
-    }
+        .and_then(|writer| writer.write_value_to_vec(record))
+        .map_err(|e| SRCError::non_retryable_with_cause(e, "Could not get Avro bytes"))
+}
+
+fn to_bytes(
+    cache: &ResolvedSchemaCache,
+    avro_schema: &AvroSchema,
+    record: Value,
+) -> Result<Vec<u8>, SRCError> {
+    encode_value(cache, avro_schema, record).map(|v| get_payload(avro_schema.id, v))
 }
 
 /// Using the schema with a vector of values the values will be correctly deserialized according to
@@ -213,6 +222,32 @@ pub(crate) fn values_to_bytes(
     avro_schema: &AvroSchema,
     values: Vec<(&str, Value)>,
 ) -> Result<Vec<u8>, SRCError> {
+    to_bytes(
+        cache,
+        avro_schema,
+        Value::from(build_record(avro_schema, values)?),
+    )
+}
+
+/// Like [`values_to_bytes`], but without the confluent wire-format prefix -- used when the
+/// schema id/guid is carried in a Kafka header instead. See
+/// https://github.com/gklijs/schema_registry_converter/issues/139.
+pub(crate) fn values_to_bytes_raw(
+    cache: &ResolvedSchemaCache,
+    avro_schema: &AvroSchema,
+    values: Vec<(&str, Value)>,
+) -> Result<Vec<u8>, SRCError> {
+    encode_value(
+        cache,
+        avro_schema,
+        Value::from(build_record(avro_schema, values)?),
+    )
+}
+
+fn build_record<'a>(
+    avro_schema: &'a AvroSchema,
+    values: Vec<(&str, Value)>,
+) -> Result<Record<'a>, SRCError> {
     let mut record = match Record::new(&avro_schema.parsed) {
         Some(v) => v,
         None => {
@@ -226,7 +261,7 @@ pub(crate) fn values_to_bytes(
     for value in values {
         record.put(value.0, value.1)
     }
-    to_bytes(cache, avro_schema, Value::from(record))
+    Ok(record)
 }
 
 /// Using the schema with an item implementing serialize the item will be correctly deserialized
@@ -236,13 +271,28 @@ pub(crate) fn item_to_bytes(
     avro_schema: &AvroSchema,
     item: impl Serialize,
 ) -> Result<Vec<u8>, SRCError> {
+    to_bytes(cache, avro_schema, resolve_item(avro_schema, item)?)
+}
+
+/// Like [`item_to_bytes`], but without the confluent wire-format prefix -- used when the schema
+/// id/guid is carried in a Kafka header instead. See
+/// https://github.com/gklijs/schema_registry_converter/issues/139.
+pub(crate) fn item_to_bytes_raw(
+    cache: &ResolvedSchemaCache,
+    avro_schema: &AvroSchema,
+    item: impl Serialize,
+) -> Result<Vec<u8>, SRCError> {
+    encode_value(cache, avro_schema, resolve_item(avro_schema, item)?)
+}
+
+fn resolve_item(avro_schema: &AvroSchema, item: impl Serialize) -> Result<Value, SRCError> {
     match to_value(item)
         .map_err(|e| {
             SRCError::non_retryable_with_cause(e, "Could not transform to apache_avro value")
         })
         .map(|r| r.resolve(&avro_schema.parsed))
     {
-        Ok(Ok(v)) => to_bytes(cache, avro_schema, v),
+        Ok(Ok(v)) => Ok(v),
         Ok(Err(e)) => Err(SRCError::non_retryable_with_cause(e, "Failed to resolve")),
         Err(e) => Err(e),
     }
@@ -254,6 +304,17 @@ pub(crate) fn record_to_bytes(
     item: Value,
 ) -> Result<Vec<u8>, SRCError> {
     to_bytes(cache, avro_schema, item)
+}
+
+/// Like [`record_to_bytes`], but without the confluent wire-format prefix -- used when the schema
+/// id/guid is carried in a Kafka header instead. See
+/// https://github.com/gklijs/schema_registry_converter/issues/139.
+pub(crate) fn record_to_bytes_raw(
+    cache: &ResolvedSchemaCache,
+    avro_schema: &AvroSchema,
+    item: Value,
+) -> Result<Vec<u8>, SRCError> {
+    encode_value(cache, avro_schema, item)
 }
 
 pub(crate) fn get_name(schema: &Schema) -> Option<Name> {
@@ -302,6 +363,7 @@ mod tests {
             version: None,
             properties: None,
             tags: None,
+            guid: None,
         };
         let result = values_to_bytes(&DashMap::new(), &schema, vec![("beat", Value::Long(3))]);
         assert_eq!(
@@ -324,6 +386,7 @@ mod tests {
             version: None,
             properties: None,
             tags: None,
+            guid: None,
         };
         let err =
             values_to_bytes(&DashMap::new(), &schema, vec![("beat", Value::Long(3))]).unwrap_err();
@@ -344,6 +407,7 @@ mod tests {
             version: None,
             properties: None,
             tags: None,
+            guid: None,
         };
         let err =
             crate::avro_common::item_to_bytes(&DashMap::new(), &schema, Heartbeat { beat: 3 })
@@ -365,6 +429,7 @@ mod tests {
             version: None,
             properties: None,
             tags: None,
+            guid: None,
         };
         let item = ConfirmAccountCreation {
             id: [

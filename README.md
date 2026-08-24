@@ -202,6 +202,33 @@ fn get_future_record_from_struct<'a>(
 }
 ```
 
+## Schema id in Kafka headers
+
+Confluent Schema Registry 8.0 introduced an alternative wire format where the schema
+id/guid travels in a `__key_schema_id`/`__value_schema_id` Kafka header instead of being
+prefixed onto the payload, mirroring the Java client's `HeaderSchemaIdSerializer` /
+`DualSchemaIdDeserializer`. This crate has no dependency on any particular Kafka client, so
+[`SchemaIdHeader`](https://docs.rs/schema_registry_converter/latest/schema_registry_converter/schema_registry_common/struct.SchemaIdHeader.html)
+is plain data (a header `name` and `value`); attach it to the record using whatever
+`Headers`/`OwnedHeaders`/etc. type your Kafka client uses.
+
+Every encoder/decoder (Avro, JSON, protobuf; blocking and async) has `_with_header_id`
+variants alongside the regular ones:
+
+* `encode_with_header_id` (and, for Avro, `encode_struct_with_header_id` /
+  `encode_value_with_header_id`) return `(payload, SchemaIdHeader)` -- the payload has no
+  magic-byte/id prefix, and the header carries the schema's guid instead. This requires
+  Confluent Schema Registry 8.0+, since guids are what makes the format unambiguous without a
+  payload prefix.
+* `decode_with_header_id` takes the raw header bytes alongside the payload: pass `Some(header)`
+  to resolve the schema from the header and treat the payload as unprefixed, or `None` to fall
+  straight through to the regular `decode`, so a consumer that needs to handle both wire formats
+  (e.g. during a migration) can call it unconditionally.
+
+See [issue #139](https://github.com/gklijs/schema_registry_converter/issues/139) for background,
+and the docs on `decode_with_header_id`/`encode_with_header_id` for each converter for worked
+examples.
+
 ## Direct interaction with schema registry
 
 Some functions have been opened so this library can be used to directly get all the subjects, all the version of a

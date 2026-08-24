@@ -8,13 +8,17 @@ use valico::json_schema::schema::ScopedSchema;
 use valico::json_schema::{Scope, ValidationState};
 
 use crate::blocking::schema_registry::{
-    get_referenced_schema, get_schema_by_id_and_type, get_schema_by_subject, SrSettings,
+    get_referenced_schema, get_schema_by_guid_and_type, get_schema_by_id_and_type,
+    get_schema_by_subject, SrSettings,
 };
 use crate::error::SRCError;
-use crate::json_common::{fetch_fallback, fetch_id, handle_validation, to_bytes, to_value};
+use crate::json_common::{
+    fetch_fallback, fetch_id, handle_validation, to_bytes, to_bytes_raw, to_value,
+};
 use crate::schema_registry_common::{
-    get_bytes_result, invalid_bytes_error, BytesResult, RegisteredReference, RegisteredSchema,
-    SchemaType, SubjectNameStrategy,
+    build_schema_id_header, get_bytes_result, invalid_bytes_error, parse_schema_id_header,
+    BytesResult, HeaderSchemaId, RegisteredReference, RegisteredSchema, SchemaIdHeader, SchemaType,
+    SubjectNameStrategy, KEY_SCHEMA_ID_HEADER, VALUE_SCHEMA_ID_HEADER,
 };
 
 /// Encoder that works by prepending the correct bytes in order to make it valid schema registry
@@ -74,6 +78,7 @@ impl JsonEncoder {
                         Ok(url) => Ok(EncodeContext {
                             id: registered_schema.id,
                             url,
+                            guid: registered_schema.guid,
                         }),
                         Err(e) => Err(e),
                     },
@@ -98,18 +103,93 @@ impl JsonEncoder {
             Err(e) => Err(e.clone()),
         }
     }
+
+    /// Like [`JsonEncoder::encode`], but instead of prefixing the payload with the schema id
+    /// (the default confluent wire format), returns the raw JSON bytes alongside a
+    /// [`SchemaIdHeader`] carrying the schema's guid. Attach the header to the Kafka record
+    /// using whatever Kafka client you're using -- this crate has no dependency on one. `is_key`
+    /// picks between the `__key_schema_id`/`__value_schema_id` header names, matching
+    /// Confluent's `HeaderSchemaIdSerializer`. See
+    /// https://github.com/gklijs/schema_registry_converter/issues/139.
+    ///
+    /// Requires a schema registry that returns a `guid` (Confluent Schema Registry 8.0+); a
+    /// registry that doesn't will make this return an error.
+    pub fn encode_with_header_id(
+        &mut self,
+        value: &Value,
+        subject_name_strategy: &SubjectNameStrategy,
+        is_key: bool,
+    ) -> Result<(Vec<u8>, SchemaIdHeader), SRCError> {
+        let key = subject_name_strategy.get_subject()?;
+        let cached_context = match self.cache.entry(key) {
+            Entry::Occupied(entry) => entry.into_mut().as_ref(),
+            Entry::Vacant(entry) => {
+                let result = match get_schema_by_subject(&self.sr_settings, subject_name_strategy) {
+                    Ok(registered_schema) => match set_scoped_schema(
+                        &mut self.scope,
+                        &self.sr_settings,
+                        &registered_schema,
+                    ) {
+                        Ok(url) => Ok(EncodeContext {
+                            id: registered_schema.id,
+                            url,
+                            guid: registered_schema.guid,
+                        }),
+                        Err(e) => Err(e),
+                    },
+                    Err(e) => Err(e),
+                };
+                match result {
+                    Err(e) if e.retriable => return Err(e),
+                    result => entry.insert(result.map_err(SRCError::into_cache)).as_ref(),
+                }
+            }
+        };
+        let context = match cached_context {
+            Ok(c) => c.clone(),
+            Err(e) => return Err(e.clone()),
+        };
+        if self.scope.resolve(&context.url).is_none() {
+            return Err(SRCError::non_retryable_without_cause(
+                "could not get schema from scope",
+            ));
+        }
+        let bytes = to_bytes_raw(value)?;
+        let header = schema_id_header_for(context.guid.as_deref(), is_key)?;
+        Ok((bytes, header))
+    }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct EncodeContext {
     id: u32,
     url: Url,
+    guid: Option<String>,
+}
+
+fn schema_id_header_for(guid: Option<&str>, is_key: bool) -> Result<SchemaIdHeader, SRCError> {
+    let guid = guid.ok_or_else(|| {
+        SRCError::non_retryable_without_cause(
+            "Schema registry response did not include a guid; encoding the schema id in a \
+             header requires Confluent Schema Registry 8.0+",
+        )
+    })?;
+    let name = if is_key {
+        KEY_SCHEMA_ID_HEADER
+    } else {
+        VALUE_SCHEMA_ID_HEADER
+    };
+    build_schema_id_header(name, guid, &[])
 }
 
 #[derive(Debug)]
 pub struct JsonDecoder {
     sr_settings: SrSettings,
     cache: HashMap<u32, Result<Url, SRCError>, RandomState>,
+    /// Cache for schemas looked up by guid rather than id, used by
+    /// [`JsonDecoder::decode_with_header_id`]. Kept separate from `cache` (keyed by id) since a
+    /// guid and an id are different keyspaces.
+    guid_cache: HashMap<String, Result<Url, SRCError>, RandomState>,
     scope: Scope,
 }
 
@@ -125,6 +205,7 @@ impl JsonDecoder {
         JsonDecoder {
             sr_settings,
             cache: HashMap::new(),
+            guid_cache: HashMap::new(),
             scope: Scope::new(),
         }
     }
@@ -134,6 +215,7 @@ impl JsonDecoder {
     /// stored in the cache in the first place, so there's nothing to remove for those.
     pub fn remove_errors_from_cache(&mut self) {
         self.cache.retain(|_, v| v.is_ok());
+        self.guid_cache.retain(|_, v| v.is_ok());
     }
     /// Reads the bytes to get the name, and gives back the data bytes.
     pub fn decode(&mut self, bytes: Option<&[u8]>) -> Result<Option<DecodeResult>, SRCError> {
@@ -143,6 +225,40 @@ impl JsonDecoder {
             BytesResult::Invalid(i) => Err(SRCError::non_retryable_without_cause(
                 &invalid_bytes_error(i),
             )),
+        }
+    }
+    /// Like [`JsonDecoder::decode`], but for a message that may carry its schema id/guid in a
+    /// `__key_schema_id`/`__value_schema_id` header instead of (or in addition to) the payload
+    /// prefix, mirroring Confluent's `DualSchemaIdDeserializer`: `header_value` present ->
+    /// resolve the schema from it and treat `bytes` as the raw (unprefixed) payload;
+    /// `header_value` absent -> falls straight through to [`JsonDecoder::decode`], so the only
+    /// overhead for a caller who always passes `None` is this one check. See
+    /// https://github.com/gklijs/schema_registry_converter/issues/139.
+    pub fn decode_with_header_id(
+        &mut self,
+        header_value: Option<&[u8]>,
+        bytes: Option<&[u8]>,
+    ) -> Result<Option<DecodeResult<'_>>, SRCError> {
+        let payload = match bytes {
+            Some(v) => v,
+            None => return Ok(None),
+        };
+        match header_value {
+            None => self.decode(Some(payload)),
+            Some(header) => {
+                let (schema_id, _rest) = parse_schema_id_header(header)?;
+                let schema = match schema_id {
+                    HeaderSchemaId::Id(id) => self.schema(id)?,
+                    HeaderSchemaId::Guid(guid) => self.guid_schema(guid)?,
+                };
+                match serde_json::from_slice(payload) {
+                    Ok(value) => Ok(Some(DecodeResult { schema, value })),
+                    Err(e) => Err(SRCError::non_retryable_with_cause(
+                        e,
+                        "could not create value from bytes",
+                    )),
+                }
+            }
         }
     }
     /// The actual deserialization trying to get the id from the bytes to retrieve the schema, and
@@ -175,6 +291,37 @@ impl JsonDecoder {
                     // Retriable errors (transient network/HTTP issues) don't make sense to
                     // cache, so the entry is left vacant and the next call issues a fresh
                     // request rather than replaying a stale failure.
+                    Err(e) if e.retriable => return Err(e),
+                    result => &*entry.insert(result.map_err(SRCError::into_cache)),
+                }
+            }
+        };
+        match url {
+            Ok(id) => match self.scope.resolve(id) {
+                Some(schema) => Ok(schema),
+                None => Err(SRCError::non_retryable_without_cause(
+                    "could not get schema from scope",
+                )),
+            },
+            Err(e) => Err(e.clone()),
+        }
+    }
+
+    /// Like [`JsonDecoder::schema`], but looks the schema up by guid instead of id -- used by
+    /// [`JsonDecoder::decode_with_header_id`] when the header carries a guid rather than an id.
+    fn guid_schema(&mut self, guid: String) -> Result<ScopedSchema<'_>, SRCError> {
+        let url = match self.guid_cache.entry(guid.clone()) {
+            Entry::Occupied(entry) => &*entry.into_mut(),
+            Entry::Vacant(entry) => {
+                let result =
+                    match get_schema_by_guid_and_type(&guid, &self.sr_settings, SchemaType::Json) {
+                        Ok(r) => match set_scoped_schema(&mut self.scope, &self.sr_settings, &r) {
+                            Ok(schema) => Ok(schema),
+                            Err(e) => Err(e),
+                        },
+                        Err(e) => Err(e),
+                    };
+                match result {
                     Err(e) if e.retriable => return Err(e),
                     result => &*entry.insert(result.map_err(SRCError::into_cache)),
                 }
@@ -236,6 +383,14 @@ fn set_scoped_schema(
         Some(url) => url,
         None => fetch_fallback(sr_settings.url(), registered_schema.id),
     };
+    // Same schema can now be reached through two independent caches -- by id (`schema`) and by
+    // guid (`guid_schema`) -- sharing this one `scope`. If it's already compiled under this url
+    // (e.g. looked up by id first, now by guid, or vice versa) reuse that rather than trying to
+    // `compile_with_id` a second time, which `valico` rejects as an id conflict. See
+    // https://github.com/gklijs/schema_registry_converter/issues/139.
+    if scope.resolve(&id).is_some() {
+        return Ok(id);
+    }
     match scope.compile_with_id(&id, def, false) {
         Ok(_) => (),
         Err(e) => {
@@ -264,7 +419,7 @@ mod tests {
     use crate::blocking::json::{JsonDecoder, JsonEncoder};
     use crate::blocking::schema_registry::SrSettings;
     use crate::json_common::handle_validation;
-    use crate::schema_registry_common::{get_payload, SubjectNameStrategy};
+    use crate::schema_registry_common::{get_payload, SubjectNameStrategy, VALUE_SCHEMA_ID_HEADER};
     use test_utils::{
         get_json_body, get_json_body_with_reference, json_extra_schema, json_get_extra_references,
         json_get_result_references, json_incorrect_bytes, json_result_java_bytes,
@@ -314,6 +469,67 @@ mod tests {
         let encoded_data = encoder.encode(&result_example, &strategy).unwrap();
 
         assert_eq!(encoded_data, json_result_java_bytes())
+    }
+
+    #[test]
+    fn test_encode_and_decode_with_header_id() {
+        let mut server = mockito::Server::new();
+        let _m = server
+            .mock("GET", "/subjects/testresult-value/versions/latest")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(r#"{"subject":"testresult-value","version":1,"id":10,"guid":"cc0e0e0e-53c1-4a1a-8f1a-000000000001","schema":"{\"type\":\"object\"}","schemaType":"JSON"}"#)
+            .create();
+
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
+        let mut encoder = JsonEncoder::new(sr_settings.clone());
+        let strategy = SubjectNameStrategy::TopicNameStrategy(String::from("testresult"), false);
+        let value: Value = serde_json::json!({"foo": "bar"});
+
+        let (bytes, header) = encoder
+            .encode_with_header_id(&value, &strategy, false)
+            .unwrap();
+
+        assert_eq!(bytes, serde_json::to_vec(&value).unwrap());
+        assert_eq!(header.name, VALUE_SCHEMA_ID_HEADER);
+        assert_eq!(
+            header.value,
+            vec![
+                0x01, 0xcc, 0x0e, 0x0e, 0x0e, 0x53, 0xc1, 0x4a, 0x1a, 0x8f, 0x1a, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x01,
+            ]
+        );
+
+        let _m2 = server
+            .mock("GET", "/schemas/guids/cc0e0e0e-53c1-4a1a-8f1a-000000000001")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(r#"{"id":10,"schema":"{\"type\":\"object\"}","schemaType":"JSON"}"#)
+            .create();
+
+        let mut decoder = JsonDecoder::new(sr_settings);
+        let decoded = decoder
+            .decode_with_header_id(Some(&header.value), Some(&bytes))
+            .unwrap()
+            .unwrap();
+        assert_eq!(decoded.value, value);
+
+        // header absent -> falls straight through to decode(), which expects the prefix
+        let _m3 = server
+            .mock("GET", "/schemas/ids/10?deleted=true")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(r#"{"id":10,"schema":"{\"type\":\"object\"}","schemaType":"JSON"}"#)
+            .create();
+        let prefixed = get_payload(10, serde_json::to_vec(&value).unwrap());
+        let decoded = decoder
+            .decode_with_header_id(None, Some(&prefixed))
+            .unwrap()
+            .unwrap();
+        assert_eq!(decoded.value, value);
     }
 
     #[test]
@@ -808,7 +1024,7 @@ mod tests {
         let sr_settings = SrSettings::new(String::from("http://127.0.0.1:1234"));
         let decoder = JsonDecoder::new(sr_settings);
         assert!(
-                   format!("{:?}", decoder).starts_with("JsonDecoder { sr_settings: SrSettings { urls: [\"http://127.0.0.1:1234\"], client: Client, authorization: None }, cache: {}, scope: Scope {")
+                   format!("{:?}", decoder).starts_with("JsonDecoder { sr_settings: SrSettings { urls: [\"http://127.0.0.1:1234\"], client: Client, authorization: None }, cache: {}, guid_cache: {}, scope: Scope {")
         )
     }
 

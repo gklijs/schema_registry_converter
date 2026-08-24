@@ -2,6 +2,10 @@
 pub mod avro_consumer;
 #[cfg(feature = "avro")]
 mod avro_tests;
+#[cfg(feature = "json")]
+pub mod json_consumer;
+#[cfg(feature = "json")]
+mod json_tests;
 pub mod kafka_consumer;
 pub mod kafka_producer;
 #[cfg(feature = "proto_decoder")]
