@@ -16,8 +16,25 @@ use crate::schema_registry_common::{
     get_bytes_result, parse_schema_id_header, BytesResult, HeaderSchemaId, RegisteredSchema,
     SchemaType,
 };
-use protofish::context::Context;
+use protofish::context::{Context, MessageInfo};
 use protofish::decode::{MessageValue, Value};
+
+/// `Context::get_message` returns `None` for a name it can't resolve. Surfacing that as an
+/// `SRCError` instead of panicking matters most for `decode_with_header_id`, where `full_name`
+/// is ultimately derived from Kafka header bytes a producer controls (a guid paired with a
+/// message index that doesn't actually match anything in the resolved schema), rather than from
+/// data `resolve_name` has already validated against this same context.
+fn get_message_info<'a>(
+    context: &'a Context,
+    full_name: &str,
+) -> Result<&'a MessageInfo, SRCError> {
+    context.get_message(full_name).ok_or_else(|| {
+        SRCError::non_retryable_without_cause(&format!(
+            "could not find message {} in the resolved protobuf schema",
+            full_name
+        ))
+    })
+}
 
 type SharedFutureSchema<'a> = Shared<BoxFuture<'a, Result<Arc<Vec<String>>, SRCError>>>;
 
@@ -105,7 +122,7 @@ impl<'a> ProtoDecoder<'a> {
                 let context = into_decode_context(vec_of_schemas.to_vec())?;
                 let (index, _empty) = to_index_and_data(index_bytes)?;
                 let full_name = resolve_name(&context.resolver, &index)?;
-                let message_info = context.context.get_message(&full_name).unwrap();
+                let message_info = get_message_info(&context.context, &full_name)?;
                 Ok(Value::Message(Box::from(
                     message_info.decode(payload, &context.context),
                 )))
@@ -119,7 +136,7 @@ impl<'a> ProtoDecoder<'a> {
         let context = into_decode_context(vec_of_schemas.to_vec())?;
         let (index, data) = to_index_and_data(bytes)?;
         let full_name = resolve_name(&context.resolver, &index)?;
-        let message_info = context.context.get_message(&full_name).unwrap();
+        let message_info = get_message_info(&context.context, &full_name)?;
         Ok(message_info.decode(&data, &context.context))
     }
     /// Decodes bytes into a value.
@@ -153,7 +170,7 @@ impl<'a> ProtoDecoder<'a> {
         let context = into_decode_context(vec_of_schemas.to_vec())?;
         let (index, data_bytes) = to_index_and_data(bytes)?;
         let full_name = resolve_name(&context.resolver, &index)?;
-        let message_info = context.context.get_message(&full_name).unwrap();
+        let message_info = get_message_info(&context.context, &full_name)?;
         let value = message_info.decode(&data_bytes, &context.context);
         Ok(DecodeResultWithContext {
             value,
@@ -384,7 +401,10 @@ mod tests {
     async fn test_decode_with_header_id() {
         let mut server = Server::new_async().await;
         let _m = server
-            .mock("GET", "/schemas/guids/cc0e0e0e-53c1-4a1a-8f1a-000000000001")
+            .mock(
+                "GET",
+                "/schemas/guids/cc0e0e0e-53c1-4a1a-8f1a-000000000001?deleted=true",
+            )
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(get_proto_body(get_proto_hb_schema(), 1))

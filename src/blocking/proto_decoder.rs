@@ -14,8 +14,25 @@ use crate::schema_registry_common::{
     get_bytes_result, parse_schema_id_header, BytesResult, HeaderSchemaId, RegisteredSchema,
     SchemaType,
 };
-use protofish::context::Context;
+use protofish::context::{Context, MessageInfo};
 use protofish::decode::{MessageValue, Value};
+
+/// `Context::get_message` returns `None` for a name it can't resolve. Surfacing that as an
+/// `SRCError` instead of panicking matters most for `decode_with_header_id`, where `full_name`
+/// is ultimately derived from Kafka header bytes a producer controls (a guid paired with a
+/// message index that doesn't actually match anything in the resolved schema), rather than from
+/// data `resolve_name` has already validated against this same context.
+fn get_message_info<'a>(
+    context: &'a Context,
+    full_name: &str,
+) -> Result<&'a MessageInfo, SRCError> {
+    context.get_message(full_name).ok_or_else(|| {
+        SRCError::non_retryable_without_cause(&format!(
+            "could not find message {} in the resolved protobuf schema",
+            full_name
+        ))
+    })
+}
 
 #[derive(Debug)]
 pub struct ProtoDecoder {
@@ -90,7 +107,7 @@ impl ProtoDecoder {
                 };
                 let (index, _empty) = to_index_and_data(index_bytes)?;
                 let full_name = resolve_name(&context.resolver, &index)?;
-                let message_info = context.context.get_message(&full_name).unwrap();
+                let message_info = get_message_info(&context.context, &full_name)?;
                 Ok(Value::Message(Box::from(
                     message_info.decode(payload, &context.context),
                 )))
@@ -104,7 +121,7 @@ impl ProtoDecoder {
             Ok(s) => {
                 let (index, data) = to_index_and_data(bytes)?;
                 let full_name = resolve_name(&s.resolver, &index)?;
-                let message_info = s.context.get_message(&full_name).unwrap();
+                let message_info = get_message_info(&s.context, &full_name)?;
                 Ok(message_info.decode(&data, &s.context))
             }
             Err(e) => Err(e),
@@ -141,7 +158,7 @@ impl ProtoDecoder {
             Ok(s) => {
                 let (index, data_bytes) = to_index_and_data(bytes)?;
                 let full_name = resolve_name(&s.resolver, &index)?;
-                let message_info = s.context.get_message(&full_name).unwrap();
+                let message_info = get_message_info(&s.context, &full_name)?;
                 let value = message_info.decode(&data_bytes, &s.context);
                 Ok(DecodeResultWithContext {
                     value,
@@ -268,8 +285,11 @@ fn to_resolve_context(
 
 #[cfg(test)]
 mod tests {
-    use crate::blocking::proto_decoder::ProtoDecoder;
+    use std::collections::HashSet;
+
+    use crate::blocking::proto_decoder::{get_message_info, ProtoDecoder};
     use crate::blocking::schema_registry::SrSettings;
+    use protofish::context::Context;
     use protofish::decode::Value;
     use test_utils::{
         get_proto_body, get_proto_body_with_reference, get_proto_complex,
@@ -309,7 +329,10 @@ mod tests {
     fn test_decode_with_header_id() {
         let mut server = mockito::Server::new();
         let _m = server
-            .mock("GET", "/schemas/guids/cc0e0e0e-53c1-4a1a-8f1a-000000000001")
+            .mock(
+                "GET",
+                "/schemas/guids/cc0e0e0e-53c1-4a1a-8f1a-000000000001?deleted=true",
+            )
             .with_status(200)
             .with_header("content-type", "application/vnd.schemaregistry.v1+json")
             .with_body(get_proto_body(get_proto_hb_schema(), 1))
@@ -351,6 +374,25 @@ mod tests {
             v => panic!("Other value: {:?} than expected Message", v),
         };
         assert_eq!(Value::UInt64(101u64), message.fields[0].value);
+    }
+
+    #[test]
+    fn get_message_info_returns_error_instead_of_panicking_for_unknown_message() {
+        // Context::get_message returns None for a name it can't resolve -- e.g. from a header
+        // whose guid/message-index resolves to a message this schema doesn't actually contain.
+        // That must come back as an SRCError, not panic the caller. See
+        // https://github.com/gklijs/schema_registry_converter/issues/139.
+        let schema =
+            "syntax = \"proto3\"; package nl.openweb.data; message Heartbeat { uint64 beat = 1; }";
+        let mut files = HashSet::new();
+        files.insert(schema.to_string());
+        let context = Context::parse(&files).unwrap();
+
+        let err = get_message_info(&context, "nl.openweb.data.DoesNotExist").unwrap_err();
+        assert_eq!(
+            err.error,
+            "could not find message nl.openweb.data.DoesNotExist in the resolved protobuf schema"
+        );
     }
 
     #[test]

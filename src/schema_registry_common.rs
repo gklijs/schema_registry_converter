@@ -219,7 +219,10 @@ pub enum SrCall<'a> {
 pub(crate) fn url_for_call(call: &SrCall<'_>, base_url: &str) -> String {
     match call {
         SrCall::GetById(id) => format!("{}/schemas/ids/{}?deleted=true", base_url, id),
-        SrCall::GetByGuid(guid) => format!("{}/schemas/guids/{}", base_url, guid),
+        // `deleted=true` matters here just like it does for GetById: a consumer decoding an old
+        // Kafka message whose header carries a guid must still be able to resolve it even if the
+        // subject/version it was registered under has since been soft-deleted.
+        SrCall::GetByGuid(guid) => format!("{}/schemas/guids/{}?deleted=true", base_url, guid),
         SrCall::GetLatest(subject) => {
             // Use escape sequences instead of slashes in the subject
             format!(
@@ -344,6 +347,32 @@ pub(crate) fn build_schema_id_header(
     Ok(SchemaIdHeader { name, value })
 }
 
+/// Builds the [`SchemaIdHeader`] for an `encode_with_header_id` call: picks the
+/// `__key_schema_id`/`__value_schema_id` header name based on `is_key`, and errors out if the
+/// schema has no `guid` (a registry older than Confluent Schema Registry 8.0, which doesn't
+/// return one). `message_indexes` is the protobuf message index that would otherwise be a
+/// payload-prefix (empty for Avro/JSON). Shared by every encoder (Avro, JSON, protobuf; blocking
+/// and async) so the guid-required error message and header-name selection can't drift between
+/// them.
+pub(crate) fn schema_id_header_for(
+    guid: Option<&str>,
+    is_key: bool,
+    message_indexes: &[u8],
+) -> Result<SchemaIdHeader, SRCError> {
+    let guid = guid.ok_or_else(|| {
+        SRCError::non_retryable_without_cause(
+            "Schema registry response did not include a guid; encoding the schema id in a \
+             header requires Confluent Schema Registry 8.0+",
+        )
+    })?;
+    let name = if is_key {
+        KEY_SCHEMA_ID_HEADER
+    } else {
+        VALUE_SCHEMA_ID_HEADER
+    };
+    build_schema_id_header(name, guid, message_indexes)
+}
+
 /// Parses the bytes of a `__key_schema_id`/`__value_schema_id` header, mirroring Confluent's
 /// `SchemaId.fromBytes`: magic byte `0x00` followed by a 4-byte id, or magic byte `0x01` followed
 /// by a 16-byte guid. Returns the id/guid plus whatever bytes follow it (the protobuf message
@@ -354,9 +383,17 @@ pub(crate) fn parse_schema_id_header(bytes: &[u8]) -> Result<(HeaderSchemaId, &[
             let id = BigEndian::read_u32(&bytes[1..5]);
             Ok((HeaderSchemaId::Id(id), &bytes[5..]))
         }
+        Some(0x00) => Err(SRCError::non_retryable_without_cause(&format!(
+            "Invalid schema id header: {} bytes, expected at least 5 (magic byte 0x00 + 4-byte id)",
+            bytes.len()
+        ))),
         Some(0x01) if bytes.len() >= 17 => {
             Ok((HeaderSchemaId::Guid(bytes_to_guid(&bytes[1..17])), &bytes[17..]))
         }
+        Some(0x01) => Err(SRCError::non_retryable_without_cause(&format!(
+            "Invalid schema id header: {} bytes, expected at least 17 (magic byte 0x01 + 16-byte guid)",
+            bytes.len()
+        ))),
         Some(b) => Err(SRCError::non_retryable_without_cause(&format!(
             "Invalid schema id header: first byte is {:#04x}, expected magic byte 0x00 (id) or 0x01 (guid)",
             b
@@ -611,6 +648,27 @@ mod test {
     fn parse_schema_id_header_empty() {
         let err = parse_schema_id_header(&[]).unwrap_err();
         assert_eq!("Invalid schema id header: empty", err.error);
+    }
+
+    #[test]
+    fn parse_schema_id_header_truncated_id() {
+        // A correctly-prefixed but truncated header must be reported as truncated, not
+        // misattributed to a wrong magic byte (the byte at index 0 *is* the valid 0x00 magic
+        // byte -- there just aren't enough bytes after it).
+        let err = parse_schema_id_header(&[0x00, 0, 0]).unwrap_err();
+        assert_eq!(
+            "Invalid schema id header: 3 bytes, expected at least 5 (magic byte 0x00 + 4-byte id)",
+            err.error
+        );
+    }
+
+    #[test]
+    fn parse_schema_id_header_truncated_guid() {
+        let err = parse_schema_id_header(&[0x01, 0, 0]).unwrap_err();
+        assert_eq!(
+            "Invalid schema id header: 3 bytes, expected at least 17 (magic byte 0x01 + 16-byte guid)",
+            err.error
+        );
     }
 
     #[test]
