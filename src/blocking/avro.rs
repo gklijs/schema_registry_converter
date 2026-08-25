@@ -1547,6 +1547,57 @@ mod tests {
     }
 
     #[test]
+    fn test_encode_struct_with_inferred_schema_round_trips() {
+        // See https://github.com/gklijs/schema_registry_converter/issues/111: `get_supplied_schema_for`
+        // lets a caller register+encode using a schema derived from the struct itself (via
+        // `#[derive(apache_avro::AvroSchema)]`), instead of hand-writing/maintaining a separate
+        // JSON schema.
+        #[derive(
+            Debug, PartialEq, serde::Serialize, serde::Deserialize, apache_avro::AvroSchema,
+        )]
+        struct InferredHeartbeat {
+            beat: i64,
+        }
+
+        let supplied = crate::avro_common::get_supplied_schema_for::<InferredHeartbeat>();
+        let subject = supplied.name.clone().expect("derived schema has a name");
+        let schema_json = supplied.schema.clone();
+
+        let mut server = mockito::Server::new();
+        let _m = server
+            .mock("POST", format!("/subjects/{subject}/versions").as_str())
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(r#"{"id":12}"#)
+            .create();
+        let _m2 = server
+            .mock("GET", "/schemas/ids/12?deleted=true")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(format!(
+                r#"{{"schema":{}}}"#,
+                serde_json::to_string(&schema_json).unwrap()
+            ))
+            .create();
+
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
+        let encoder = AvroEncoder::new(sr_settings.clone());
+        let strategy = SubjectNameStrategy::RecordNameStrategyWithSchema(supplied);
+
+        let bytes = encoder
+            .encode_struct(InferredHeartbeat { beat: 42 }, &strategy)
+            .unwrap();
+
+        let decoder = AvroDecoder::new(sr_settings);
+        let value = decoder.decode(Some(&bytes)).unwrap().value;
+        let decoded: InferredHeartbeat = from_value(&value).unwrap();
+        assert_eq!(decoded, InferredHeartbeat { beat: 42 });
+    }
+
+    #[test]
     fn test_encode_record_name_strategy_supplied_record_wrong_response() {
         let mut server = mockito::Server::new();
         let _m = server

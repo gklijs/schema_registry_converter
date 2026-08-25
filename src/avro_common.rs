@@ -353,6 +353,35 @@ pub fn get_supplied_schema(schema: &Schema) -> SuppliedSchema {
     }
 }
 
+/// Like [`get_supplied_schema`], but for a type implementing `apache_avro`'s own [`AvroSchema`
+/// trait`](apache_avro::AvroSchema) -- most commonly via `#[derive(apache_avro::AvroSchema)]`
+/// (needs apache_avro's `derive` feature) -- instead of an already-built [`Schema`]. Saves
+/// hand-writing and maintaining the schema as a separate JSON string: the registered schema
+/// always matches the exact shape apache_avro's own serializer will produce for `T`, so there's
+/// nothing to drift out of sync with the struct.
+///
+/// Combine it with any of the `*WithSchema`
+/// [`SubjectNameStrategy`](crate::schema_registry_common::SubjectNameStrategy) variants, which
+/// already register the schema with the registry if it isn't there yet:
+/// ```
+/// use apache_avro::AvroSchema;
+/// use serde::Serialize;
+/// use schema_registry_converter::avro_common::get_supplied_schema_for;
+/// use schema_registry_converter::schema_registry_common::SubjectNameStrategy;
+///
+/// #[derive(Serialize, AvroSchema)]
+/// struct Heartbeat {
+///     beat: i64,
+/// }
+///
+/// let strategy = SubjectNameStrategy::RecordNameStrategyWithSchema(get_supplied_schema_for::<Heartbeat>());
+/// ```
+///
+/// See https://github.com/gklijs/schema_registry_converter/issues/111.
+pub fn get_supplied_schema_for<T: apache_avro::AvroSchema>() -> SuppliedSchema {
+    get_supplied_schema(&T::get_schema())
+}
+
 #[cfg(test)]
 mod tests {
     use apache_avro::types::Value;
@@ -361,8 +390,34 @@ mod tests {
 
     use test_utils::{Atype, ConfirmAccountCreation, Heartbeat};
 
-    use crate::avro_common::{values_to_bytes, AvroSchema};
+    use crate::avro_common::{get_name, get_supplied_schema_for, values_to_bytes, AvroSchema};
     use crate::error::SRCError;
+    use crate::schema_registry_common::SchemaType;
+
+    #[test]
+    fn get_supplied_schema_for_matches_derived_schema() {
+        // See https://github.com/gklijs/schema_registry_converter/issues/111.
+        #[derive(serde::Serialize, apache_avro::AvroSchema)]
+        struct SimpleRecord {
+            #[allow(dead_code)]
+            count: i64,
+        }
+
+        let supplied = get_supplied_schema_for::<SimpleRecord>();
+        assert_eq!(supplied.schema_type, SchemaType::Avro);
+        assert!(supplied.references.is_empty());
+        assert!(supplied.properties.is_none());
+        assert!(supplied.tags.is_none());
+
+        // The registered JSON must round-trip into a schema apache_avro itself considers the
+        // same record `SimpleRecord::get_schema()` produces -- otherwise the registered schema
+        // and the data this crate would actually send could disagree.
+        let parsed = Schema::parse_str(&supplied.schema)
+            .expect("get_supplied_schema_for's output must be valid Avro schema JSON");
+        let derived = <SimpleRecord as apache_avro::AvroSchema>::get_schema();
+        assert_eq!(get_name(&parsed), get_name(&derived));
+        assert_eq!(supplied.name, get_name(&derived).map(|n| n.fullname(None)));
+    }
 
     #[test]
     fn to_bytes_no_record() {

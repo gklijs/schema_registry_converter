@@ -229,6 +229,34 @@ See [issue #139](https://github.com/gklijs/schema_registry_converter/issues/139)
 and the docs on `decode_with_header_id`/`encode_with_header_id` for each converter for worked
 examples.
 
+## Deriving an Avro schema from a struct
+
+The `*WithSchema` `SubjectNameStrategy` variants (`RecordNameStrategyWithSchema`, etc.) already
+register a `SuppliedSchema` with the registry if it isn't there yet -- but until now you had to
+hand-write and maintain that schema as a JSON string yourself, kept in sync with the struct by
+hand. `get_supplied_schema_for` closes that gap by building the `SuppliedSchema` straight from
+[`apache-avro`'s own `AvroSchema` trait](https://docs.rs/apache-avro/latest/apache_avro/trait.AvroSchema.html),
+most commonly via `#[derive(apache_avro::AvroSchema)]` (needs apache_avro's `derive` feature):
+
+```rust
+use apache_avro::AvroSchema;
+use serde::Serialize;
+use schema_registry_converter::avro_common::get_supplied_schema_for;
+use schema_registry_converter::schema_registry_common::SubjectNameStrategy;
+
+#[derive(Serialize, AvroSchema)]
+struct Heartbeat {
+    beat: i64,
+}
+
+let strategy = SubjectNameStrategy::RecordNameStrategyWithSchema(get_supplied_schema_for::<Heartbeat>());
+// encoder.encode_struct(Heartbeat { beat: 3 }, &strategy)?;
+```
+
+The registered schema always matches the exact shape apache_avro's own serializer produces for
+the struct, so there's no separate schema to drift out of sync. See
+[issue #111](https://github.com/gklijs/schema_registry_converter/issues/111).
+
 ## Direct interaction with schema registry
 
 Some functions have been opened so this library can be used to directly get all the subjects, all the version of a

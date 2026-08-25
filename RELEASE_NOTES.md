@@ -85,6 +85,14 @@ Not breaking for normal usage, but the exact wording of the `SRCError` returned 
 doesn't match its schema has changed (e.g. `"Failed to resolve"` is now `"Could not get Avro
 bytes"`, with a more specific cause) -- don't match on that text. See #117.
 
+Add `avro_common::get_supplied_schema_for::<T>()`, building a `SuppliedSchema` straight from a type
+implementing apache_avro's own `AvroSchema` trait (most commonly via
+`#[derive(apache_avro::AvroSchema)]`) instead of hand-writing/maintaining the schema as a
+separate JSON string. Combine it with any `*WithSchema` `SubjectNameStrategy` variant, which
+already registers the schema if the registry doesn't have it yet. Purely additive -- a thin
+wrapper around the existing `avro_common::get_supplied_schema`. See #111 and the "Deriving an
+Avro schema from a struct" section of the README.
+
 ### 4.10.0
 
 Propagate properties and tags.
