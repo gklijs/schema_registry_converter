@@ -14,7 +14,7 @@ compliant with the Java client. Since
 library. If you want to use advanced features of the Confluent Schema Registry like client side encryption 
 [schema-registry-client](https://crates.io/crates/schema-registry-client) is likely better suited.
 
-The release notes can be found on [github](https://github.com/gklijs/schema_registry_converter/blob/master/RELEASE_NOTES.md)
+The release notes can be found on [github](https://github.com/gklijs/schema_registry_converter/blob/main/RELEASE_NOTES.md)
 Consuming/decoding and producing/encoding is supported. It's also possible to provide the schema to use when decoding.
 You can also include references when decoding. Without a schema provided, the latest schema with the same `subject` will
 be used.
@@ -39,7 +39,7 @@ To use it to convert using Avro async use:
 
 ```toml
 [dependencies]
-schema_registry_converter = { version = "4.10.0", features = ["avro"] }
+schema_registry_converter = { version = "5.0.0", features = ["avro"] }
 ```
 
 For simplicity there are `easy` variants that internally have an arc.
@@ -48,7 +48,7 @@ structs that start with `Easy` in the name to do the conversions.
 
 ```toml
 [dependencies]
-schema_registry_converter = { version = "4.10.0", features = ["easy", "avro"] }
+schema_registry_converter = { version = "5.0.0", features = ["easy", "avro"] }
 ```
 
 ...and see the [docs](https://docs.rs/schema_registry_converter) for how to use it.
@@ -57,7 +57,7 @@ All the converters also have a blocking (non async) version, in that case use so
 
 ```toml
 [dependencies]
-schema_registry_converter = { version = "4.10.0", default-features = false, features = ["avro", "blocking"] }
+schema_registry_converter = { version = "5.0.0", default-features = false, features = ["avro", "blocking"] }
 ```
 
 If you need to use both in a project you can use something like, but have to be weary you import the correct paths
@@ -65,7 +65,7 @@ depending on your use.
 
 ```toml
 [dependencies]
-schema_registry_converter = { version = "4.10.0", features = ["avro", "blocking"] }
+schema_registry_converter = { version = "5.0.0", features = ["avro", "blocking"] }
 ```
 
 ### Protobuf
@@ -74,7 +74,7 @@ To use it to convert using Protobuf async use:
 
 ```toml
 [dependencies]
-schema_registry_converter = { version = "4.10.0", features = ["proto_raw"] }
+schema_registry_converter = { version = "5.0.0", features = ["proto_raw"] }
 ```
 
 For simplicity there are `easy` variants that internally have an arc.
@@ -83,7 +83,7 @@ structs that start with `Easy` in the name to do the conversions.
 
 ```toml
 [dependencies]
-schema_registry_converter = { version = "4.10.0", features = ["easy", "proto_raw"] }
+schema_registry_converter = { version = "5.0.0", features = ["easy", "proto_raw"] }
 ```
 
 ...and see the [docs](https://docs.rs/schema_registry_converter) for how to use it.
@@ -93,7 +93,7 @@ schema_registry_converter = { version = "4.10.0", features = ["easy", "proto_raw
 For consuming messages encoded with the schema registry, you need to fetch the correct schema from the schema registry
 to transform it into a record. For clarity, error handling is omitted from the diagram.
 
-![Consumer activity flow](http://www.plantuml.com/plantuml/proxy?cache=no&src=https://raw.githubusercontent.com/gklijs/schema_registry_converter/master/uml/consumer.puml)
+![Consumer activity flow](http://www.plantuml.com/plantuml/proxy?cache=no&src=https://raw.githubusercontent.com/gklijs/schema_registry_converter/main/uml/consumer.puml)
 
 ## Producer
 
@@ -101,82 +101,32 @@ For producing messages which can be properly consumed by other clients, the prop
 message. To get the correct id, it might be necessary to register a new schema. For clarity, error handling is omitted
 from the diagram.
 
-![Producer activity flow](http://www.plantuml.com/plantuml/proxy?cache=no&src=https://raw.githubusercontent.com/gklijs/schema_registry_converter/master/uml/producer.puml)
+![Producer activity flow](http://www.plantuml.com/plantuml/proxy?cache=no&src=https://raw.githubusercontent.com/gklijs/schema_registry_converter/main/uml/producer.puml)
 
 ## Example with consumer and producer using Avro (blocking)
 
-Examples which does both consuming/decoding and producing/encoding. To use structs with Avro they must have an
-implementation
-of either the `serde::Deserialize` or `serde::Serialize` trait to work. The examples are especially useful to update
-from the 1.x.x version, when starting you probably want to use the async versions.
+An example doing both consuming/decoding and producing/encoding. To use structs with Avro they must implement
+`serde::Deserialize`/`serde::Serialize`. If you're starting a new project you probably want the async versions
+instead (`schema_registry_converter::async_impl::avro`), which mirror the same API.
 
 ```rust
-use rdkafka::message::{Message, BorrowedMessage};
-use apache_avro::types::Value;
-use schema_registry_converter::blocking::{Decoder, Encoder};
-use schema_registry_converter::blocking::schema_registry::SubjectNameStrategy;
+use rdkafka::message::{BorrowedMessage, Message};
+use rdkafka::producer::FutureRecord;
+use apache_avro::from_value;
+use schema_registry_converter::blocking::avro::{AvroDecoder, AvroEncoder};
+use schema_registry_converter::blocking::schema_registry::SrSettings;
+use schema_registry_converter::schema_registry_common::SubjectNameStrategy;
+use serde::{Deserialize, Serialize};
 
-fn main() {
-    let decoder = Decoder::new(SrSettings::new(String::from("http://localhost:8081")));
-    let encoder = Encoder::new(SrSettings::new(String::from("http://localhost:8081")));
-    let hb = get_heartbeat(msg, &decoder);
-    let record = get_future_record_from_struct("hb", Some("id"), hb, &encoder);
-    producer.send(record);
+#[derive(Debug, Deserialize, Serialize)]
+struct Heartbeat {
+    beat: i64,
 }
 
-fn get_value<'a>(
-    msg: &'a BorrowedMessage,
-    decoder: &'a Decoder,
-) -> Value {
+fn get_heartbeat(msg: &BorrowedMessage, decoder: &AvroDecoder) -> Heartbeat {
     match decoder.decode(msg.payload()) {
-        Ok(v) => v,
-        Err(e) => panic!("Error getting value: {}", e),
-    }
-}
-
-fn get_heartbeat<'a>(
-    msg: &'a BorrowedMessage,
-    decoder: &'a Decoder,
-) -> Heartbeat {
-    match decoder.decode_with_name(msg.payload()) {
-        Ok((name, value)) => {
-            match name.name.as_str() {
-                "Heartbeat" => {
-                    match name.namespace {
-                        Some(namespace) => {
-                            match namespace.as_str() {
-                                "nl.openweb.data" => from_value::<Heartbeat>(&value).unwrap(),
-                                ns => panic!("Unexpected namespace {}", ns),
-                            }
-                        }
-                        None => panic!("No namespace in schema, while expected"),
-                    }
-                }
-                name => panic!("Unexpected name {}", name),
-            }
-        }
-        Err(e) => panic!("error getting heartbeat: {}", e),
-    }
-}
-
-fn get_future_record<'a>(
-    topic: &'a str,
-    key: Option<&'a str>,
-    values: Vec<(&'static str, Value)>,
-    encoder: &'a Encoder,
-) -> FutureRecord<'a> {
-    let subject_name_strategy = SubjectNameStrategy::TopicNameStrategy(topic, false);
-    let payload = match encoder.encode(values, &subject_name_strategy) {
-        Ok(v) => v,
-        Err(e) => panic!("Error getting payload: {}", e),
-    };
-    FutureRecord {
-        topic,
-        partition: None,
-        payload: Some(&payload),
-        key,
-        timestamp: None,
-        headers: None,
+        Ok(result) => from_value::<Heartbeat>(&result.value).unwrap(),
+        Err(e) => panic!("Error getting heartbeat: {}", e),
     }
 }
 
@@ -184,9 +134,9 @@ fn get_future_record_from_struct<'a>(
     topic: &'a str,
     key: Option<&'a str>,
     heartbeat: Heartbeat,
-    encoder: &'a Encoder,
-) -> FutureRecord<'a> {
-    let subject_name_strategy = SubjectNameStrategy::TopicNameStrategy(topic, false);
+    encoder: &AvroEncoder,
+) -> FutureRecord<'a, str, [u8]> {
+    let subject_name_strategy = SubjectNameStrategy::TopicNameStrategy(String::from(topic), false);
     let payload = match encoder.encode_struct(heartbeat, &subject_name_strategy) {
         Ok(v) => v,
         Err(e) => panic!("Error getting payload: {}", e),
@@ -199,6 +149,15 @@ fn get_future_record_from_struct<'a>(
         timestamp: None,
         headers: None,
     }
+}
+
+fn main() {
+    let sr_settings = SrSettings::new(String::from("http://localhost:8081"));
+    let decoder = AvroDecoder::new(sr_settings.clone());
+    let encoder = AvroEncoder::new(sr_settings);
+    // let hb = get_heartbeat(&msg, &decoder);
+    // let record = get_future_record_from_struct("hb", Some("id"), hb, &encoder);
+    // producer.send(record, Duration::from_secs(0));
 }
 ```
 
@@ -260,8 +219,8 @@ the struct, so there's no separate schema to drift out of sync. See
 ## Direct interaction with schema registry
 
 Some functions have been opened so this library can be used to directly get all the subjects, all the version of a
-subject, or the raw schema with a subject and version. For these see the
-either [async](tests/async_impl/schema_registry_calls.rs) or [blocking](tests/blocking/schema_registry_calls.rs) version
+subject, or the raw schema with a subject and version. For these see
+either the [async](tests/async_impl/schema_registry_calls.rs) or [blocking](tests/blocking/schema_registry_calls.rs) version
 of the integration tests.
 
 ## Authentication middleware / token refresh
@@ -276,7 +235,7 @@ available for the async client; there is no middleware equivalent for the blocki
 
 ```toml
 [dependencies]
-schema_registry_converter = { version = "4.10.0", features = ["avro", "middleware"] }
+schema_registry_converter = { version = "5.0.0", features = ["avro", "middleware"] }
 ```
 
 ```rust
@@ -315,21 +274,26 @@ let sr_settings = SrSettings::new_builder(String::from("http://localhost:8081"))
 ## Example using to post schema to schema registry
 
 ```rust
-use schema_registry_converter::blocking::schema_registry::{
-    post_schema,
-    SuppliedSchema
-};
+use schema_registry_converter::blocking::schema_registry::{post_schema, SrSettings};
+use schema_registry_converter::schema_registry_common::{SchemaType, SuppliedSchema};
 
 fn main() {
+    let sr_settings = SrSettings::new(String::from("http://localhost:8081"));
     let schema = SuppliedSchema {
-        name: String::from("nl.openweb.data.Heartbeat"),
-        schema_type: SchemaType::AVRO,
+        name: Some(String::from("nl.openweb.data.Heartbeat")),
+        schema_type: SchemaType::Avro,
         schema: String::from(r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#),
         references: vec![],
+        properties: None,
+        tags: None,
     };
-    let result = post_schema("http://localhost:8081/subjects/test-value/versions", heartbeat_schema);
+    let result = post_schema(&sr_settings, String::from("test-value"), schema);
 }
 ```
+
+If you already have a struct implementing apache_avro's own `AvroSchema` trait (e.g. via
+`#[derive(apache_avro::AvroSchema)]`), `get_supplied_schema_for::<T>()` builds this `SuppliedSchema` for
+you -- see "Deriving an Avro schema from a struct" above.
 
 ## Relation to related libraries
 
@@ -337,8 +301,8 @@ The avro part of the conversion is handled by avro-rs. As such, I don't include 
 used rdkafka in combination to successfully consume from and produce to kafka, and while it's used in the example, this
 crate has no direct dependency on it. All this crate does is convert [u8] <-> Some Value (based on converter used). With
 Json and Protobuf some other dependencies are pulled in, by using said features. I have tried to encapsulate all the
-errors in the SRCError type. So even when you get a pannic/error that's an SRCError it could be an error from one of the
-dependencies. Please make sure you are using the library correctly, and the error is not caused by a depency, before
+errors in the SRCError type. So even when you get a panic/error that's an SRCError it could be an error from one of the
+dependencies. Please make sure you are using the library correctly, and the error is not caused by a dependency, before
 creating an issue.
 
 ## Integration test

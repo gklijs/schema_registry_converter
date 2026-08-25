@@ -1,6 +1,6 @@
 [package]
 name = "schema_registry_converter"
-version = "4.10.0"
+version = "5.0.0"
 authors = ["Gerard Klijs <g.klijs@gmail.com>"]
 include = ["src/**/*", "Cargo.toml"]
 description = "Encode/decode data from/to kafka using the Confluent Schema Registry"
@@ -90,8 +90,8 @@ version = "^4.0"
 optional = true
 
 [dev-dependencies]
-# `derive` is only needed for tests/doctests exercising `avro_common::avro_schema_for` via
-# `#[derive(apache_avro::AvroSchema)]` -- unified with the plain `apache-avro` optional
+# `derive` is only needed for tests/doctests exercising `avro_common::get_supplied_schema_for`
+# via `#[derive(apache_avro::AvroSchema)]` -- unified with the plain `apache-avro` optional
 # dependency (see the `avro` feature) when both are active in the same build.
 apache-avro = { version = "^0.22", features = ["derive"] }
 async-trait = "^0.1"

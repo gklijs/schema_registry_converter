@@ -51,6 +51,27 @@ schema instead of re-resolving it from scratch on every single call -- internal,
 in the API, but measurably faster, more so the more named types (records/enums/fixed) your
 schema has. See #190.
 
+Add support for plugging in a `reqwest_middleware::Middleware` (async only, behind the new
+`middleware` feature) via `SrSettingsBuilder`, for short-lived tokens that need periodic
+refreshing (e.g. GCP workload identity federation) without recreating `SrSettings` -- and losing
+its schema cache -- every time a token expires. See #144 and the "Authentication middleware /
+token refresh" section of the README.
+
+Fix the blocking protobuf decoder (`ProtoDecoder`) missing well-known/common-type imports (e.g.
+`google/protobuf/timestamp.proto`) when they're imported by a *referenced* schema rather than
+the top-level one -- the async decoder already handled this correctly. See #178.
+
+Fix the blocking JSON decoder (`JsonDecoder`) skipping a reference that comes after one already
+present in its (persistent, cross-call) scope, even when the later reference is a different
+schema in the same reference list -- it was short-circuiting on the first "already resolved"
+match instead of checking each reference independently. See #177.
+
+Fix a retriable error (e.g. a transient 503 from the registry) getting stuck in a decoder's or
+encoder's cache -- every subsequent call for that schema id/guid kept replaying the same stale
+failure instead of retrying, until `remove_errors_from_cache()` was called by hand -- and fix
+`SRCError.cached` being applied inconsistently between the blocking and async clients along the
+way. Retriable errors are no longer cached by either client. See #171 and #175.
+
 Fix a panic when decoding a 5-byte (or otherwise malformed/truncated) protobuf-framed payload
 with `ProtoDecoder`/`ProtoRawDecoder` (blocking and async); such payloads now yield an `SRCError`
 instead. As part of this, `proto_resolver::to_index_and_data` is now fallible: it returns
@@ -62,6 +83,12 @@ schema (e.g. a field/option default value) could desync `MessageResolver`/`Index
 index bookkeeping from the real message nesting, since its lexer didn't previously recognize
 string literals and treated every `{`/`}` as message nesting. String literals are now skipped as
 a whole when scanning for braces.
+
+Fix the blocking client silently dropping `properties`/`tags` metadata when registering a schema
+or reference (`post_schema`, `post_reference`) or checking compatibility --
+`blocking::schema_registry::get_body` never received the metadata support
+`async_impl::schema_registry::get_body` already had. Both clients now build the same metadata
+block. See #174.
 
 Add support for carrying the schema id/guid in a Kafka header instead of prefixing the payload,
 matching Confluent Schema Registry 8.0's `HeaderSchemaIdSerializer`/`DualSchemaIdDeserializer`.

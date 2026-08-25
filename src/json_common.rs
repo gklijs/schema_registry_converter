@@ -53,10 +53,10 @@ pub(crate) fn to_bytes_raw(value: &Value) -> Result<Vec<u8>, SRCError> {
 
 pub(crate) fn fetch_id(def: &Value) -> Option<Url> {
     let id = match def {
-        Value::Object(m) => match m.get("$id") {
-            Some(v) => v.as_str()?,
-            None => return None,
-        },
+        Value::Object(m) => {
+            let v = m.get("$id")?;
+            v.as_str()?
+        }
         _ => return None,
     };
     Url::parse(id).ok()

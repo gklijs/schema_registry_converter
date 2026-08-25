@@ -7,10 +7,11 @@
 --
 -- Includes: Schema (supplied -> registered lifecycle, with recursive references),
 -- subject-name resolution strategies, the Confluent wire envelope (magic byte + 4-byte
--- schema id), per-format encode/decode rules, schema/error caching semantics,
--- concurrent-request deduplication, multi-URL failover, compatibility checking, registry
--- introspection (list subjects/versions), and sync vs async as two invocation surfaces
--- over identical logic.
+-- schema id) and its Confluent Schema Registry 8.0+ alternative (schema id/guid carried
+-- in a Kafka message header instead of prefixing the payload), per-format encode/decode
+-- rules, schema/error caching semantics, concurrent-request deduplication, multi-URL
+-- failover, compatibility checking, registry introspection (list subjects/versions), and
+-- sync vs async as two invocation surfaces over identical logic.
 --
 -- Excludes:
 --   * The Easy*Decoder / Easy*Encoder wrappers (src/async_impl/easy_*.rs) -- pure Arc
@@ -82,6 +83,12 @@ value SchemaReferencePointer {
 value SchemaData {
     id: Integer?
 
+    -- The registry's own globally-unique identifier for this exact schema, distinct from
+    -- `id` (which is only unique within the registry, not globally). Only a Confluent
+    -- Schema Registry 8.0+ reports one; absent against an older registry, and always
+    -- absent for a caller-supplied schema. See Schema.guid.
+    guid: String?
+
     -- The registry does not always report a schema type. A caller always states one, but
     -- a lookup response that omits it is read as Avro -- a load-bearing default that most
     -- of the registry's own responses rely on.
@@ -108,6 +115,12 @@ value Bytes {
     first_byte: Integer?
 
     is_framed: length >= config.envelope_header_size and first_byte = config.magic_byte
+
+    -- A header value shaped like an id-shaped header (see WireEnvelope.HeaderEnvelopeShape)
+    -- has the exact same shape as a framed payload -- same magic byte, same width -- so
+    -- is_framed doubles as that check when applied to a header value instead of a
+    -- payload. is_guid_header is the one genuinely new shape the header channel adds.
+    is_guid_header: length >= config.guid_header_size and first_byte = config.guid_magic_byte
 }
 
 -- How a subject name is chosen, and whether the schema is supplied by the caller or
@@ -145,9 +158,10 @@ value SubjectStrategy {
 
 contract RegistryAccess {
     fetch_by_id: (id: Integer) -> SchemaData
+    fetch_by_guid: (guid: String) -> SchemaData
     fetch_latest_for_subject: (subject: String) -> SchemaData
     fetch_by_subject_and_version: (subject: String, version: Integer) -> SchemaData
-    register: (subject: String, schema: SchemaData) -> Integer
+    register: (subject: String, schema: SchemaData) -> SchemaData
     check_compatibility: (subject: String, schema: SchemaData) -> Boolean
     list_subjects: () -> Set<String>
     list_versions: (subject: String) -> Set<Integer>
@@ -178,6 +192,15 @@ contract WireEnvelope {
     frame: (schema_id: Integer, payload: Bytes) -> Bytes
     classify: (bytes: Bytes?) -> Bytes
 
+    -- The alternative wire format: the schema identifier travels in a Kafka message
+    -- header instead of prefixing the payload. frame_header always carries a guid (the
+    -- id-shaped header variant classify_header also accepts is never produced by this
+    -- library's own encoders; it exists so a decoder stays compatible with the wire
+    -- format regardless of which shape a producer used). message_index is present only
+    -- for a raw protobuf codec (see Codec.payload_model); empty for every other format.
+    frame_header: (guid: String, message_index: Bytes?) -> Bytes
+    classify_header: (header: Bytes?) -> Bytes
+
     @invariant EnvelopeShape
         -- Every encoded message is one magic byte (0x00), followed by the schema id as
         -- four big-endian bytes, followed by the format-specific payload bytes.
@@ -187,6 +210,20 @@ contract WireEnvelope {
         -- null key/value); framed (present, at least five bytes, first byte is the magic
         -- byte, yielding a schema id and a payload); or invalid (present but empty, too
         -- short, or carrying the wrong magic byte).
+
+    @invariant HeaderEnvelopeShape
+        -- A header value is one magic byte, either 0x00 (a schema id, four big-endian
+        -- bytes) or 0x01 (a schema guid, sixteen raw bytes), followed by the
+        -- format-specific message-index bytes. The payload carries no prefix of its own
+        -- in this mode; classify_header, not classify, governs it.
+
+    @invariant HeaderClassificationIsTotal
+        -- A header handed to a decoder is exactly one of: absent (fall through entirely
+        -- to the payload-framed contract above, both for classification and for the
+        -- payload itself); present and id-framed (magic byte 0x00, at least five bytes,
+        -- yielding a schema id); present and guid-framed (magic byte 0x01, at least
+        -- seventeen bytes, yielding a schema guid); or invalid (present but too short, or
+        -- carrying neither magic byte).
 }
 
 contract SubjectNaming {
@@ -246,6 +283,12 @@ enum SubjectNameSource { by_record_name | by_topic_name | by_topic_and_record_na
 -- bytes, so the entry point is part of the decoding contract, not a convenience overload.
 enum DecodeEntryPoint { primary | extended }
 
+-- Where the schema identifier travels: prefixed onto the payload (the classic wire
+-- format) or carried in a Kafka message header instead (see WireEnvelope). Every
+-- encoder/decoder supports both; a caller opts into header on an operation-by-operation
+-- basis, it is not a per-codec configuration choice.
+enum SchemaIdChannel { payload | header }
+
 ------------------------------------------------------------
 -- Entities and Variants
 ------------------------------------------------------------
@@ -272,6 +315,14 @@ entity Schema {
     -- ReferencesCarryTheirOwnSubject and ReferencesCarryTheirOwnVersion below.
     subject: String?
     version: Integer?
+
+    -- The registry's globally-unique identifier for this schema. Unlike `id` (only unique
+    -- within the registry), a guid needs no accompanying registry context to resolve
+    -- unambiguously -- what the header wire format (see WireEnvelope) carries. Only ever
+    -- set for a registered schema, and only when the registry is Confluent Schema
+    -- Registry 8.0+; a registered schema against an older registry has none. Not tied to
+    -- `status` via `when`, since it can be genuinely absent even once registered.
+    guid: String?
 
     properties: Set<SchemaProperty>?
     tags: Set<SchemaTag>?
@@ -391,6 +442,12 @@ entity CacheEntry {
     schema_id: Integer?
     subject: String?
 
+    -- Keys a decode-side entry resolved via the header wire format's guid channel (see
+    -- WireEnvelope). A distinct keyspace from schema_id: the codec keeps guid-keyed and
+    -- id-keyed entries in independent caches, so the same underlying schema resolved once
+    -- by id and once by guid occupies two entries, not one.
+    guid: String?
+
     status: in_flight | resolved | failed
     schema: Schema when status = resolved
     error: Error when status = failed
@@ -401,13 +458,14 @@ entity CacheEntry {
         terminal: resolved, failed
     }
 
-    invariant KeyedByIdOrSubject {
-        (schema_id != null and subject = null)
-            or (schema_id = null and subject != null)
+    invariant KeyedByIdSubjectOrGuid {
+        (schema_id != null and subject = null and guid = null)
+            or (schema_id = null and subject != null and guid = null)
+            or (schema_id = null and subject = null and guid != null)
     }
 
     invariant CacheKeyMatchesRole {
-        (codec.role = decoder implies schema_id != null)
+        (codec.role = decoder implies schema_id != null or guid != null)
             and (codec.role = encoder implies subject != null)
     }
 
@@ -424,6 +482,13 @@ config {
     magic_byte: Integer = 0
     schema_id_byte_width: Integer = 4
     envelope_header_size: Integer = schema_id_byte_width + 1
+
+    -- The header wire format's own magic byte, distinguishing a guid-shaped header value
+    -- (0x01) from an id-shaped one (which reuses magic_byte, 0x00). See
+    -- WireEnvelope.HeaderEnvelopeShape.
+    guid_magic_byte: Integer = 1
+    guid_byte_width: Integer = 16
+    guid_header_size: Integer = guid_byte_width + 1
 }
 
 ------------------------------------------------------------
@@ -475,7 +540,7 @@ rule RegisterSchemaWithRegistry {
 }
 
 rule RecordRegisteredSchema {
-    when: RegistryAssignedSchemaId(schema, subject, assigned_id, assigned_version?, entry?)
+    when: RegistryAssignedSchemaId(schema, subject, assigned_id, assigned_version?, assigned_guid?, entry?)
     requires: schema.status = supplied
 
     -- Registering a reference also looks up the version it landed on, because the parent
@@ -487,12 +552,13 @@ rule RecordRegisteredSchema {
         schema.id = assigned_id
         schema.subject = subject
         schema.version = assigned_version
+        schema.guid = assigned_guid
 }
 
 -- Registration that was started to satisfy an encode also settles that encoder's cache
 -- entry. Registration of a reference, or a standalone registration, has no entry.
 rule NotifyCacheEntryOfRegistration {
-    when: RegistryAssignedSchemaId(schema, subject, assigned_id, assigned_version?, entry?)
+    when: RegistryAssignedSchemaId(schema, subject, assigned_id, assigned_version?, assigned_guid?, entry?)
     requires: schema.status = supplied
     requires: entry != null
     ensures: SchemaRegisteredForEntry(entry: entry, schema: schema)
@@ -518,7 +584,7 @@ rule ResolveEntryFromRegistration {
 rule RecordFetchedSchema {
     when: RegistrySchemaFetched(entry, data)
     requires: entry.status = in_flight
-    requires: data.id != null
+    requires: data.id != null or data.guid != null
     requires: entry.codec.verifies_schema_format implies data.format = entry.codec.format
     ensures:
         let schema = Schema.created(
@@ -531,7 +597,8 @@ rule RecordFetchedSchema {
             properties: data.properties,
             tags: data.tags,
             status: registered,
-            id: data.id
+            id: data.id ?? 0,
+            guid: data.guid
         )
         if entry.codec.resolves_references and data.reference_pointers.count > 0:
             for pointer in data.reference_pointers:
@@ -547,6 +614,13 @@ rule RecordFetchedSchema {
     @guidance
         -- A response that reports no schema type is read as Avro, so a codec of any other
         -- format resolving such a response fails the format check.
+        --
+        -- A guid-only fetch (RegistryAccess.fetch_by_guid) never reports an id: the guid
+        -- is what identified the schema, and the registry's response for that lookup
+        -- carries no numeric id field at all, unlike an id-based fetch. `id` defaults to
+        -- 0 in that case rather than the fetch failing -- nothing on the decode path this
+        -- schema serves needs a real numeric id, since the header wire format that led
+        -- here identifies the schema by guid throughout.
 }
 
 -- Every decoder verifies the format. On encode only Avro does; see
@@ -655,14 +729,14 @@ rule ClearCachedErrors {
 -- --- Encoding --------------------------------------------------------------
 
 rule EncodeRejectsUnresolvableSubject {
-    when: EncodeMessage(codec, strategy, value, message_name?)
+    when: EncodeMessage(codec, strategy, value, message_name?, channel, is_key?)
     requires: codec.role = encoder
     requires: not strategy.is_resolvable
     ensures: EncodeFailed(codec: codec, error: missing_name_error(strategy))
 }
 
 rule EncodeWithCachedSchema {
-    when: EncodeMessage(codec, strategy, value, message_name?)
+    when: EncodeMessage(codec, strategy, value, message_name?, channel, is_key?)
     requires: codec.role = encoder
     requires: strategy.is_resolvable
     let entry = CacheEntry{codec: codec, subject: strategy.resolved_subject}
@@ -670,7 +744,26 @@ rule EncodeWithCachedSchema {
     requires: entry.status = resolved
     requires: entry.schema.status = registered
     ensures:
-        if codec.payload_model = raw:
+        if channel = header and entry.schema.guid = null:
+            EncodeFailed(codec: codec, error: missing_guid_error(entry.schema))
+        else if channel = header:
+            if codec.payload_model = raw:
+                MessageEncoded(
+                    codec: codec,
+                    schema: entry.schema,
+                    header: frame_header(entry.schema.guid, message_index(entry.schema, message_name)),
+                    is_key: is_key,
+                    bytes: value
+                )
+            else:
+                MessageEncoded(
+                    codec: codec,
+                    schema: entry.schema,
+                    header: frame_header(entry.schema.guid, null),
+                    is_key: is_key,
+                    bytes: serialize(entry.schema, value)
+                )
+        else if codec.payload_model = raw:
             MessageEncoded(
                 codec: codec,
                 schema: entry.schema,
@@ -690,11 +783,25 @@ rule EncodeWithCachedSchema {
         -- For a raw (protobuf) codec, `value` is bytes the caller has already encoded
         -- with its own generated types. with_message_index prepends the index path that
         -- identifies which message of a multi-message schema this is, so a decoder can
-        -- find it again; a schema declaring a single message needs no path.
+        -- find it again; a schema declaring a single message needs no path. message_index
+        -- computes that same index path without prepending it to anything -- the header
+        -- channel carries it in the header instead of the payload, so there is nothing to
+        -- prepend value with.
+        --
+        -- The header channel needs a guid: without one (a registry older than Confluent
+        -- Schema Registry 8.0), there is no way to make the header format unambiguous
+        -- without a payload prefix, so the operation fails outright rather than falling
+        -- back to the payload channel silently.
+        --
+        -- `is_key` only picks which of two fixed header names (one for a record's key,
+        -- one for its value) the resulting header is meant for; it plays no part in the
+        -- header's bytes, which is why frame_header does not take it. It is meaningful
+        -- only alongside a header, which is why it rides along on MessageEncoded rather
+        -- than being consumed here directly.
 }
 
 rule EncodeFailsOnCachedError {
-    when: EncodeMessage(codec, strategy, value, message_name?)
+    when: EncodeMessage(codec, strategy, value, message_name?, channel, is_key?)
     requires: codec.role = encoder
     requires: strategy.is_resolvable
     let entry = CacheEntry{codec: codec, subject: strategy.resolved_subject}
@@ -704,7 +811,7 @@ rule EncodeFailsOnCachedError {
 }
 
 rule EncodeAwaitsSharedResolution {
-    when: EncodeMessage(codec, strategy, value, message_name?)
+    when: EncodeMessage(codec, strategy, value, message_name?, channel, is_key?)
     requires: codec.role = encoder
     requires: strategy.is_resolvable
     let entry = CacheEntry{codec: codec, subject: strategy.resolved_subject}
@@ -719,7 +826,7 @@ rule EncodeAwaitsSharedResolution {
 }
 
 rule EncodeStartsSchemaResolution {
-    when: EncodeMessage(codec, strategy, value, message_name?)
+    when: EncodeMessage(codec, strategy, value, message_name?, channel, is_key?)
     requires: codec.role = encoder
     requires: strategy.is_resolvable
     requires: not exists CacheEntry{codec: codec, subject: strategy.resolved_subject}
@@ -761,7 +868,7 @@ rule ResolveByFetchingLatest {
 -- --- Decoding --------------------------------------------------------------
 
 rule DecodeAbsentBytes {
-    when: DecodeMessage(codec, bytes?)
+    when: DecodeMessage(codec, bytes?, header?)
     requires: codec.role = decoder
     requires: bytes = null
     ensures:
@@ -786,9 +893,10 @@ rule DecodeAbsentBytes {
 }
 
 rule DecodeInvalidBytes {
-    when: DecodeMessage(codec, bytes?)
+    when: DecodeMessage(codec, bytes?, header?)
     requires: codec.role = decoder
     requires: bytes != null
+    requires: header = null
     requires: not bytes?.is_framed
     ensures:
         if codec.format = protobuf and codec.payload_model = structured:
@@ -809,15 +917,100 @@ rule DecodeInvalidBytes {
 }
 
 rule DecodeFramedBytes {
-    when: DecodeMessage(codec, bytes?)
+    when: DecodeMessage(codec, bytes?, header?)
     requires: codec.role = decoder
     requires: bytes != null
+    requires: header = null
     requires: bytes?.is_framed
     ensures: SchemaNeededForDecode(
         codec: codec,
         schema_id: framed_schema_id(bytes),
         payload: framed_payload(bytes)
     )
+}
+
+-- When a header is present, the schema identifier comes from it instead and the payload
+-- carries no prefix of its own -- classification and framing of `bytes` itself (the rules
+-- above) do not apply at all. An absent header falls straight through to those rules
+-- unchanged: this is what lets a caller migrating between wire formats call the same
+-- operation unconditionally, regardless of which format the specific message it is
+-- decoding actually used.
+rule DecodeMessageWithHeader {
+    when: DecodeMessage(codec, bytes?, header?)
+    requires: codec.role = decoder
+    requires: bytes != null
+    requires: header != null
+    ensures:
+        if header?.is_guid_header:
+            SchemaNeededForDecodeByGuid(codec: codec, guid: header_guid(header), payload: bytes)
+        else if header?.is_framed:
+            SchemaNeededForDecode(codec: codec, schema_id: header_schema_id(header), payload: bytes)
+        else:
+            DecodeFailed(codec: codec, error: invalid_header_error(header))
+
+    @guidance
+        -- header_guid/header_schema_id extract the guid or id from the header's own magic
+        -- byte plus fixed-width identifier, mirroring framed_schema_id for the payload
+        -- envelope -- is_framed doubles as the id-shaped header check, see Bytes. This
+        -- library's own encoders only ever produce a guid-shaped header (see
+        -- WireEnvelope.frame_header); the id-shaped branch exists so a decoder stays
+        -- correct against a header some other producer wrote. For a raw protobuf codec,
+        -- the header's trailing message-index bytes reach message_name_at_index/
+        -- message_payload the same way the payload-embedded index does in the
+        -- payload-framed path; this spec treats that extraction as the same opaque
+        -- mechanism in both places, not a separately modelled one.
+}
+
+rule DecodeWithCachedSchemaByGuid {
+    when: SchemaNeededForDecodeByGuid(codec, guid, payload)
+    let entry = CacheEntry{codec: codec, guid: guid}
+    requires: exists entry
+    requires: entry.status = resolved
+    ensures:
+        if codec.payload_model = raw:
+            RawMessageDecoded(
+                codec: codec,
+                schema: entry.schema,
+                message_name: message_name_at_index(entry.schema, payload),
+                payload: message_payload(payload)
+            )
+        else:
+            MessageDecoded(
+                codec: codec,
+                schema: entry.schema,
+                value: deserialize(entry.schema, payload)
+            )
+}
+
+rule DecodeFailsOnCachedErrorByGuid {
+    when: SchemaNeededForDecodeByGuid(codec, guid, payload)
+    let entry = CacheEntry{codec: codec, guid: guid}
+    requires: exists entry
+    requires: entry.status = failed
+    ensures: DecodeFailed(codec: codec, error: entry.error)
+}
+
+rule DecodeAwaitsSharedResolutionByGuid {
+    when: SchemaNeededForDecodeByGuid(codec, guid, payload)
+    let entry = CacheEntry{codec: codec, guid: guid}
+    requires: exists entry
+    requires: entry.status = in_flight
+    ensures: DecodeAwaitsSchema(codec: codec, guid: guid)
+}
+
+rule DecodeStartsSchemaResolutionByGuid {
+    when: SchemaNeededForDecodeByGuid(codec, guid, payload)
+    requires: not exists CacheEntry{codec: codec, guid: guid}
+    ensures:
+        CacheEntry.created(
+            codec: codec,
+            guid: guid,
+            status: in_flight
+        )
+        RegistrySchemaByGuidRequested(
+            entry: CacheEntry{codec: codec, guid: guid},
+            guid: guid
+        )
 }
 
 rule DecodeWithCachedSchema {
@@ -1004,6 +1197,13 @@ invariant AtMostOneEntryPerSubject {
                 implies a.subject != b.subject
 }
 
+invariant AtMostOneEntryPerGuid {
+    for a in CacheEntries:
+        for b in CacheEntries:
+            a != b and a.codec = b.codec and a.guid != null
+                implies a.guid != b.guid
+}
+
 -- A codec only ever caches schemas of its own format on the decode path.
 invariant DecodersCacheTheirOwnFormat {
     for entry in CacheEntries:
@@ -1041,8 +1241,8 @@ surface AsyncCodecOperations {
         codec.payload_model
 
     provides:
-        EncodeMessage(codec, strategy, value, message_name?) when codec.role = encoder
-        DecodeMessage(codec, bytes?) when codec.role = decoder
+        EncodeMessage(codec, strategy, value, message_name?, channel, is_key?) when codec.role = encoder
+        DecodeMessage(codec, bytes?, header?) when codec.role = decoder
         ClearCachedErrors(codec)
 
     contracts:
@@ -1076,8 +1276,8 @@ surface BlockingCodecOperations {
         codec.payload_model
 
     provides:
-        EncodeMessage(codec, strategy, value, message_name?) when codec.role = encoder
-        DecodeMessage(codec, bytes?) when codec.role = decoder
+        EncodeMessage(codec, strategy, value, message_name?, channel, is_key?) when codec.role = encoder
+        DecodeMessage(codec, bytes?, header?) when codec.role = decoder
         ClearCachedErrors(codec)
 
     contracts:
@@ -1148,7 +1348,7 @@ surface RegistryBoundary {
         RegistryReferenceSchemaFetched(entry, parent, data)
         RegistrySchemaReferencesResolved(entry, schema)
         RegistryReferenceFetchFailed(entry, pointer, error)
-        RegistryAssignedSchemaId(schema, subject, assigned_id, assigned_version?)
+        RegistryAssignedSchemaId(schema, subject, assigned_id, assigned_version?, assigned_guid?)
         RegistryCompatibilityAnswered(schema, subject, compatible, root?, root_subject?)
         RegistryReferenceVersionUnavailable(schema, subject, root, root_subject)
         RegistryCallFailed(entry, error)
