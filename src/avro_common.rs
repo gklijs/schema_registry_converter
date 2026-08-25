@@ -2,7 +2,6 @@
 
 use apache_avro::reader::datum::GenericDatumReader;
 use apache_avro::schema::{Name, ResolvedSchema, Schema};
-use apache_avro::to_value;
 use apache_avro::types::{Record, Value};
 use apache_avro::writer::datum::GenericDatumWriter;
 use dashmap::mapref::entry::Entry;
@@ -264,6 +263,31 @@ fn build_record<'a>(
     Ok(record)
 }
 
+/// Serializes `item` directly against the (cached, resolved) writer schema using apache_avro's
+/// schema-aware serde serializer (`write_ser_to_vec`), rather than the two-step path this used
+/// to take: `to_value(item)` into an untyped intermediate `Value`, then a separate
+/// `Value::resolve(&avro_schema.parsed)` pass to make it match the schema (picking union
+/// variants, looking up named-type back-references, etc). For a schema with several fields
+/// sharing the same named type, that `.resolve()` step alone dominates encode time -- measured
+/// ~16x slower on a schema with 8 such fields than one with none, see
+/// `benches/avro_bench.rs`'s `avro_encode_struct_cached_named_refs` vs
+/// `avro_encode_struct_cached`. Writing directly still validates against the schema as it goes
+/// (an unresolvable union variant or missing named type is still an error), it just never
+/// allocates the untyped intermediate tree or makes a second pass over it. See
+/// https://github.com/gklijs/schema_registry_converter/issues/117.
+fn encode_item(
+    cache: &ResolvedSchemaCache,
+    avro_schema: &AvroSchema,
+    item: impl Serialize,
+) -> Result<Vec<u8>, SRCError> {
+    let context = resolved_context(cache, avro_schema)?;
+    GenericDatumWriter::builder(context.schema)
+        .resolved_schemata(context.resolved.clone())
+        .build()
+        .and_then(|writer| writer.write_ser_to_vec(&item))
+        .map_err(|e| SRCError::non_retryable_with_cause(e, "Could not get Avro bytes"))
+}
+
 /// Using the schema with an item implementing serialize the item will be correctly deserialized
 /// according to the avro specification.
 pub(crate) fn item_to_bytes(
@@ -271,7 +295,7 @@ pub(crate) fn item_to_bytes(
     avro_schema: &AvroSchema,
     item: impl Serialize,
 ) -> Result<Vec<u8>, SRCError> {
-    to_bytes(cache, avro_schema, resolve_item(avro_schema, item)?)
+    encode_item(cache, avro_schema, item).map(|v| get_payload(avro_schema.id, v))
 }
 
 /// Like [`item_to_bytes`], but without the confluent wire-format prefix -- used when the schema
@@ -282,20 +306,7 @@ pub(crate) fn item_to_bytes_raw(
     avro_schema: &AvroSchema,
     item: impl Serialize,
 ) -> Result<Vec<u8>, SRCError> {
-    encode_value(cache, avro_schema, resolve_item(avro_schema, item)?)
-}
-
-fn resolve_item(avro_schema: &AvroSchema, item: impl Serialize) -> Result<Value, SRCError> {
-    match to_value(item)
-        .map_err(|e| {
-            SRCError::non_retryable_with_cause(e, "Could not transform to apache_avro value")
-        })
-        .map(|r| r.resolve(&avro_schema.parsed))
-    {
-        Ok(Ok(v)) => Ok(v),
-        Ok(Err(e)) => Err(SRCError::non_retryable_with_cause(e, "Failed to resolve")),
-        Err(e) => Err(e),
-    }
+    encode_item(cache, avro_schema, item)
 }
 
 pub(crate) fn record_to_bytes(
@@ -412,7 +423,7 @@ mod tests {
         let err =
             crate::avro_common::item_to_bytes(&DashMap::new(), &schema, Heartbeat { beat: 3 })
                 .unwrap_err();
-        assert_eq!(err.error, "Failed to resolve")
+        assert_eq!(err.error, "Could not get Avro bytes")
     }
 
     #[test]
@@ -438,6 +449,6 @@ mod tests {
             a_type: Atype::Manual,
         };
         let err = crate::avro_common::item_to_bytes(&DashMap::new(), &schema, item).unwrap_err();
-        assert_eq!(err.error, "Failed to resolve")
+        assert_eq!(err.error, "Could not get Avro bytes")
     }
 }
