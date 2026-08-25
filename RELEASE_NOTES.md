@@ -74,6 +74,17 @@ additive for all normal usage -- but `RegisteredSchema`, `RawRegisteredSchema`, 
 one of those via struct-literal syntax, or destructure one exhaustively without `..`. See #139
 and the "Schema id in Kafka headers" section of the README.
 
+`AvroEncoder::encode_struct`/`encode_struct_with_header_id` (blocking and async) no longer go
+through an untyped intermediate `apache_avro::types::Value` plus a separate `Value::resolve()`
+pass to make it match the schema -- they now serialize directly against the (still cached)
+resolved schema via apache_avro's schema-aware serde serializer. For a schema with several
+fields sharing the same named type, `.resolve()` alone used to dominate encode time; benchmarked
+about 7x faster on a schema with 8 such fields, and about 2.7x faster even on a schema with none
+(`benches/avro_bench.rs`'s `avro_encode_struct_cached_named_refs`/`avro_encode_struct_cached`).
+Not breaking for normal usage, but the exact wording of the `SRCError` returned for a value that
+doesn't match its schema has changed (e.g. `"Failed to resolve"` is now `"Could not get Avro
+bytes"`, with a more specific cause) -- don't match on that text. See #117.
+
 ### 4.10.0
 
 Propagate properties and tags.
