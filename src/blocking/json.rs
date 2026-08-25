@@ -207,7 +207,7 @@ impl JsonDecoder {
         self.guid_cache.retain(|_, v| v.is_ok());
     }
     /// Reads the bytes to get the name, and gives back the data bytes.
-    pub fn decode(&mut self, bytes: Option<&[u8]>) -> Result<Option<DecodeResult>, SRCError> {
+    pub fn decode(&mut self, bytes: Option<&[u8]>) -> Result<Option<DecodeResult<'_>>, SRCError> {
         match get_bytes_result(bytes) {
             BytesResult::Null => Ok(None),
             BytesResult::Valid(id, bytes) => Ok(Some(self.deserialize(id, bytes)?)),
@@ -252,7 +252,7 @@ impl JsonDecoder {
     }
     /// The actual deserialization trying to get the id from the bytes to retrieve the schema, and
     /// using a reader transforms the bytes to a value.
-    fn deserialize(&mut self, id: u32, bytes: &[u8]) -> Result<DecodeResult, SRCError> {
+    fn deserialize(&mut self, id: u32, bytes: &[u8]) -> Result<DecodeResult<'_>, SRCError> {
         let schema = self.schema(id)?;
         match serde_json::from_slice(bytes) {
             Ok(value) => Ok(DecodeResult { schema, value }),
@@ -264,7 +264,7 @@ impl JsonDecoder {
     }
     /// Gets the Context object, either from the cache, or from the schema registry and then putting
     /// it into the cache.
-    fn schema(&mut self, id: u32) -> Result<ScopedSchema, SRCError> {
+    fn schema(&mut self, id: u32) -> Result<ScopedSchema<'_>, SRCError> {
         let url = match self.cache.entry(id) {
             Entry::Occupied(entry) => &*entry.into_mut(),
             Entry::Vacant(entry) => {

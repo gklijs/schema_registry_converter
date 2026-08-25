@@ -437,7 +437,7 @@ fn to_json_schema(
     optional_url: Option<Url>,
     registered_schema: RegisteredSchema,
     depth: usize,
-) -> BoxFuture<Result<JsonSchema, SRCError>> {
+) -> BoxFuture<'_, Result<JsonSchema, SRCError>> {
     async move {
         // A circular reference chain (a schema that references itself, directly or
         // transitively) would otherwise recurse here without bound -- each level fetches over
