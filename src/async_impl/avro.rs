@@ -314,6 +314,68 @@ impl<'a> AvroDecoder<'a> {
         }
     }
 
+    /// Like [`AvroDecoder::decode_with_schema`], but for a message that may carry its schema
+    /// id/guid in a `__key_schema_id`/`__value_schema_id` header instead of (or in addition to)
+    /// the payload prefix, mirroring [`AvroDecoder::decode_with_header_id`] except it returns the
+    /// full [`DecodeResultWithSchema`] (id, version, properties, tags, ...) instead of just the
+    /// name and value: `header_value` present -> resolve the schema from it and treat `bytes` as
+    /// the raw (unprefixed) payload; `header_value` absent -> falls straight through to
+    /// [`AvroDecoder::decode_with_schema`]. See
+    /// https://github.com/gklijs/schema_registry_converter/issues/139.
+    /// ```
+    /// use apache_avro::types::Value;
+    /// use mockito::Server;
+    /// use schema_registry_converter::async_impl::avro::AvroDecoder;
+    /// use schema_registry_converter::async_impl::schema_registry::SrSettings;
+    ///
+    /// # async fn doc() -> Result<(), reqwest::Error> {
+    /// let mut server = Server::new_async().await;
+    /// // GET /schemas/guids/{guid} never carries an "id" field on a real registry -- only "guid".
+    /// let _m = server .mock("GET", "/schemas/guids/cc0e0e0e-53c1-4a1a-8f1a-000000000001?deleted=true")
+    ///     .with_status(200)
+    ///     .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+    ///     .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
+    ///     .create();
+    ///
+    /// let sr_settings = SrSettings::new_builder(server.url()).no_proxy().build().unwrap();
+    /// let decoder = AvroDecoder::new(sr_settings);
+    /// let header_value = [0x01, 0xcc, 0x0e, 0x0e, 0x0e, 0x53, 0xc1, 0x4a, 0x1a, 0x8f, 0x1a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01];
+    /// let result = decoder.decode_with_schema_with_header_id(Some(&header_value), Some(&[6])).await.unwrap().unwrap();
+    ///
+    /// assert_eq!(result.value, Value::Record(vec![("beat".to_string(), Value::Long(3))]));
+    /// assert_eq!(result.schema.id, 0);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn decode_with_schema_with_header_id(
+        &self,
+        header_value: Option<&[u8]>,
+        bytes: Option<&[u8]>,
+    ) -> Result<Option<DecodeResultWithSchema>, SRCError> {
+        let payload = match bytes {
+            Some(v) => v,
+            None => return Ok(None),
+        };
+        match header_value {
+            None => self.decode_with_schema(Some(payload)).await,
+            Some(header) => {
+                let (schema_id, _rest) = parse_schema_id_header(header)?;
+                let schema = match schema_id {
+                    HeaderSchemaId::Id(id) => self.get_schema(id).await?,
+                    HeaderSchemaId::Guid(guid) => self.get_schema_by_guid(guid).await?,
+                };
+                match decode_bytes(&self.resolved_cache, &schema, payload) {
+                    Ok(value) => Ok(Some(DecodeResultWithSchema {
+                        name: get_name(&schema.parsed),
+                        value,
+                        schema,
+                    })),
+                    Err(e) => Err(e),
+                }
+            }
+        }
+    }
+
     /// Resolves `id` into a fully self-contained, reference-resolved [`AvroSchema`], using (and
     /// populating) this decoder's own id-keyed cache.
     pub async fn get_schema(&self, id: u32) -> Result<Arc<AvroSchema>, SRCError> {
