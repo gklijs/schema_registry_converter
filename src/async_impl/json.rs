@@ -434,6 +434,14 @@ fn main_url(schema: &Value, sr_settings: &SrSettings, id: u32, guid: Option<&str
     }
 }
 
+/// Resolves `registered_schema` into a fully self-contained [`JsonSchema`].
+pub async fn get_json_schema(
+    sr_settings: &SrSettings,
+    registered_schema: RegisteredSchema,
+) -> Result<JsonSchema, SRCError> {
+    to_json_schema(sr_settings, None, registered_schema, 0).await
+}
+
 fn to_json_schema(
     sr_settings: &SrSettings,
     optional_url: Option<Url>,

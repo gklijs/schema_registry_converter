@@ -875,6 +875,14 @@ impl<'a> AvroEncoder<'a> {
     }
 }
 
+/// Resolves `registered_schema` into a fully self-contained [`AvroSchema`].
+pub async fn get_avro_schema(
+    sr_settings: &SrSettings,
+    registered_schema: RegisteredSchema,
+) -> Result<Arc<AvroSchema>, SRCError> {
+    to_avro_schema(sr_settings, registered_schema).await
+}
+
 async fn to_avro_schema(
     sr_settings: &SrSettings,
     registered_schema: RegisteredSchema,

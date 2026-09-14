@@ -426,6 +426,21 @@ pub async fn get_referenced_schema(
     raw_to_registered_schema(raw_schema, None).await
 }
 
+/// Gets the registered schema for an explicit subject and version (`None` for "latest"),
+/// independent of any `SubjectNameStrategy`.
+pub async fn get_schema_by_subject_and_version(
+    sr_settings: &SrSettings,
+    subject: &str,
+    version: Option<u32>,
+) -> Result<RegisteredSchema, SRCError> {
+    let call = match version {
+        Some(v) => SrCall::GetBySubjectAndVersion(subject, v),
+        None => SrCall::GetLatest(subject),
+    };
+    let raw_schema = perform_sr_call(sr_settings, call).await?;
+    raw_to_registered_schema(raw_schema, None).await
+}
+
 async fn raw_to_registered_schema(
     raw_schema: RawRegisteredSchema,
     id: Option<u32>,
