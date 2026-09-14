@@ -314,7 +314,9 @@ impl<'a> AvroDecoder<'a> {
         }
     }
 
-    async fn get_schema(&self, id: u32) -> Result<Arc<AvroSchema>, SRCError> {
+    /// Resolves `id` into a fully self-contained, reference-resolved [`AvroSchema`], using (and
+    /// populating) this decoder's own id-keyed cache.
+    pub async fn get_schema(&self, id: u32) -> Result<Arc<AvroSchema>, SRCError> {
         match self.direct_cache.get(&id) {
             None => {
                 let result = self.get_schema_by_shared_future(id).await;
