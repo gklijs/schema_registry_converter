@@ -2024,6 +2024,89 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn decode_with_schema_with_header_id_exposes_registry_metadata_via_guid() {
+        let mut server = Server::new_async().await;
+        // GET /schemas/guids/{guid} never carries an "id" field on a real registry -- only "guid".
+        let _m = server
+            .mock(
+                "GET",
+                "/schemas/guids/cc0e0e0e-53c1-4a1a-8f1a-000000000001?deleted=true",
+            )
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(
+                r#"{"schema":"{\"type\":\"record\",\"name\":\"Customer\",\"namespace\":\"com.example\",\"fields\":[{\"name\":\"ssn\",\"type\":\"string\"}]}","guid":"cc0e0e0e-53c1-4a1a-8f1a-000000000001","version":3,"metadata":{"properties":{"owner":"identity-team"},"tags":{"io.confluent.field.ssn":["PII"]}}}"#,
+            )
+            .create();
+
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
+        let decoder = AvroDecoder::new(sr_settings);
+
+        let header_value = [
+            0x01, 0xcc, 0x0e, 0x0e, 0x0e, 0x53, 0xc1, 0x4a, 0x1a, 0x8f, 0x1a, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x01,
+        ];
+        // avro record { ssn: "x" } (string len 1); no wire-format prefix since the id/guid
+        // travels in the header
+        let result = decoder
+            .decode_with_schema_with_header_id(Some(&header_value), Some(&[2, b'x']))
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(
+            result.value,
+            Value::Record(vec![("ssn".to_string(), Value::String("x".to_string()))])
+        );
+        let schema = result.schema;
+        assert_eq!(schema.version, Some(3));
+        assert_eq!(
+            schema.guid.as_deref(),
+            Some("cc0e0e0e-53c1-4a1a-8f1a-000000000001")
+        );
+        assert_eq!(
+            schema.properties.as_ref().unwrap()["owner"],
+            "identity-team"
+        );
+        assert_eq!(
+            schema.tags.as_ref().unwrap()["io.confluent.field.ssn"],
+            vec!["PII".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn decode_with_schema_with_header_id_falls_through_without_a_header() {
+        let mut server = Server::new_async().await;
+        let _m = server
+            .mock("GET", "/schemas/ids/1?deleted=true")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
+            .create();
+
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
+        let decoder = AvroDecoder::new(sr_settings);
+
+        let result = decoder
+            .decode_with_schema_with_header_id(None, Some(&[0, 0, 0, 0, 1, 6]))
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(
+            result.value,
+            Value::Record(vec![("beat".to_string(), Value::Long(3))])
+        );
+        assert_eq!(result.schema.id, 1);
+    }
+
+    #[tokio::test]
     async fn test_primitive_schema() {
         let mut server = Server::new_async().await;
         let sr_settings = SrSettings::new_builder(server.url())
