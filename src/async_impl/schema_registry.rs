@@ -946,7 +946,8 @@ mod tests {
     use std::time::Duration;
 
     use crate::async_impl::schema_registry::{
-        get_schema_by_guid, get_schema_by_id, get_schema_by_id_and_type, post_schema, SrSettings,
+        get_schema_by_guid, get_schema_by_id, get_schema_by_id_and_type,
+        get_schema_by_subject_and_version, post_schema, SrSettings,
     };
     use crate::schema_registry_common::{
         Metadata, RawRegisteredSchema, RegisteredReference, RegisteredSchema, SchemaType,
@@ -1098,6 +1099,82 @@ mod tests {
             ),
             _ => panic!(),
         }
+    }
+
+    #[tokio::test]
+    async fn get_schema_by_subject_and_version_none_gets_latest() {
+        let mut server = Server::new_async().await;
+
+        let _m = server
+            .mock("GET", "/subjects/heartbeat-value/versions/latest")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(r#"{"subject":"heartbeat-value","version":3,"id":7,"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
+            .create();
+
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
+
+        let result = get_schema_by_subject_and_version(&sr_settings, "heartbeat-value", None)
+            .await
+            .expect("expected success");
+
+        assert_eq!(result.id, 7);
+        assert_eq!(result.subject.as_deref(), Some("heartbeat-value"));
+        assert_eq!(result.version, Some(3));
+    }
+
+    #[tokio::test]
+    async fn get_schema_by_subject_and_version_some_gets_explicit_version() {
+        let mut server = Server::new_async().await;
+
+        let _m = server
+            .mock("GET", "/subjects/heartbeat-value/versions/2")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(r#"{"subject":"heartbeat-value","version":2,"id":5,"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
+            .create();
+
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
+
+        let result = get_schema_by_subject_and_version(&sr_settings, "heartbeat-value", Some(2))
+            .await
+            .expect("expected success");
+
+        assert_eq!(result.id, 5);
+        assert_eq!(result.subject.as_deref(), Some("heartbeat-value"));
+        assert_eq!(result.version, Some(2));
+    }
+
+    #[tokio::test]
+    async fn get_schema_by_subject_and_version_propagates_error() {
+        let mut server = Server::new_async().await;
+
+        let _m = server
+            .mock("GET", "/subjects/missing-value/versions/latest")
+            .with_status(404)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"error_code":40401,"message":"Subject not found."}"#)
+            .create();
+
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
+
+        let err = get_schema_by_subject_and_version(&sr_settings, "missing-value", None)
+            .await
+            .expect_err("mock returns 404 for this subject, so the call must fail");
+
+        assert_eq!(
+            err.error,
+            "HTTP request to schema registry failed with status 404 Not Found"
+        );
     }
 
     #[tokio::test]

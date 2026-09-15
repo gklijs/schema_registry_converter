@@ -1997,6 +1997,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn get_avro_schema_wraps_to_avro_schema() {
+        let registered_schema = RegisteredSchema {
+            id: 7,
+            schema_type: SchemaType::Avro,
+            schema: String::from(r#"{"type":"record","name":"X","fields":[]}"#),
+            references: vec![],
+            properties: None,
+            tags: None,
+            subject: Some("orders-value".to_string()),
+            version: Some(3),
+            guid: Some("cc0e0e0e-53c1-4a1a-8f1a-000000000001".to_string()),
+        };
+        let sr_settings = SrSettings::new(String::from("http://127.0.0.1:1234"));
+        let avro = get_avro_schema(&sr_settings, registered_schema)
+            .await
+            .expect("conversion succeeds for empty references");
+        assert_eq!(avro.id, 7);
+        assert_eq!(avro.subject.as_deref(), Some("orders-value"));
+        assert_eq!(avro.version, Some(3));
+        assert_eq!(
+            avro.guid.as_deref(),
+            Some("cc0e0e0e-53c1-4a1a-8f1a-000000000001")
+        );
+    }
+
+    #[tokio::test]
     async fn decode_with_schema_exposes_registry_metadata() {
         let mut server = Server::new_async().await;
         let _m = server

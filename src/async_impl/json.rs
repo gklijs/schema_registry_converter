@@ -509,7 +509,9 @@ mod tests {
 
     use serde_json::Value;
 
-    use crate::async_impl::json::{to_json_schema, validate, JsonDecoder, JsonEncoder};
+    use crate::async_impl::json::{
+        get_json_schema, to_json_schema, validate, JsonDecoder, JsonEncoder,
+    };
     use crate::async_impl::schema_registry::SrSettings;
     use crate::schema_registry_common::{
         get_payload, RegisteredSchema, SchemaType, SubjectNameStrategy, VALUE_SCHEMA_ID_HEADER,
@@ -535,6 +537,28 @@ mod tests {
         };
         let sr_settings = SrSettings::new(String::from("http://127.0.0.1:1234"));
         let json_schema = to_json_schema(&sr_settings, None, registered_schema, 0)
+            .await
+            .expect("conversion succeeds for empty references");
+        assert_eq!(json_schema.id, 7);
+        assert_eq!(json_schema.subject.as_deref(), Some("orders-value"));
+        assert_eq!(json_schema.version, Some(3));
+    }
+
+    #[tokio::test]
+    async fn get_json_schema_wraps_to_json_schema() {
+        let registered_schema = RegisteredSchema {
+            id: 7,
+            schema_type: SchemaType::Json,
+            schema: r#"{"type":"object"}"#.to_string(),
+            references: vec![],
+            properties: None,
+            tags: None,
+            subject: Some("orders-value".to_string()),
+            version: Some(3),
+            guid: None,
+        };
+        let sr_settings = SrSettings::new(String::from("http://127.0.0.1:1234"));
+        let json_schema = get_json_schema(&sr_settings, registered_schema)
             .await
             .expect("conversion succeeds for empty references");
         assert_eq!(json_schema.id, 7);
