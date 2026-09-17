@@ -278,9 +278,10 @@ enum PayloadModel { structured | raw }
 enum SubjectNameSource { by_record_name | by_topic_name | by_topic_and_record_name }
 
 -- Two decoders offer a second entry point that also hands back what the payload was
--- resolved against: Avro's returns the schema, generic Protobuf's returns the parse
--- context. Both behave differently from the primary entry point on absent and invalid
--- bytes, so the entry point is part of the decoding contract, not a convenience overload.
+-- resolved against: Avro's returns the schema, generic Protobuf's returns a parse
+-- context that itself carries the resolved schema alongside the parsed descriptor. Both
+-- behave differently from the primary entry point on absent and invalid bytes, so the
+-- entry point is part of the decoding contract, not a convenience overload.
 enum DecodeEntryPoint { primary | extended }
 
 -- Where the schema identifier travels: prefixed onto the payload (the classic wire
