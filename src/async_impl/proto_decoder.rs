@@ -36,17 +36,21 @@ fn get_message_info<'a>(
     })
 }
 
-type SharedFutureSchema<'a> = Shared<BoxFuture<'a, Result<Arc<Vec<String>>, SRCError>>>;
+/// The root `RegisteredSchema` alongside the flattened schema texts
+/// used to build a `DecodeContext`.
+type CachedSchemas = (RegisteredSchema, Vec<String>);
+
+type SharedFutureSchema<'a> = Shared<BoxFuture<'a, Result<Arc<CachedSchemas>, SRCError>>>;
 
 #[derive(Debug)]
 pub struct ProtoDecoder<'a> {
     sr_settings: SrSettings,
-    direct_cache: DashMap<u32, Arc<Vec<String>>>,
+    direct_cache: DashMap<u32, Arc<CachedSchemas>>,
     cache: DashMap<u32, SharedFutureSchema<'a>>,
     /// Cache for schemas looked up by guid rather than id, used by
     /// [`ProtoDecoder::decode_with_header_id`]. Kept separate from `direct_cache`/`cache`
     /// (keyed by id) since a guid and an id are different keyspaces.
-    guid_direct_cache: DashMap<String, Arc<Vec<String>>>,
+    guid_direct_cache: DashMap<String, Arc<CachedSchemas>>,
     guid_cache: DashMap<String, SharedFutureSchema<'a>>,
 }
 
@@ -115,11 +119,11 @@ impl<'a> ProtoDecoder<'a> {
             None => self.decode(Some(payload)).await,
             Some(header) => {
                 let (schema_id, index_bytes) = parse_schema_id_header(header)?;
-                let vec_of_schemas = match schema_id {
+                let cached = match schema_id {
                     HeaderSchemaId::Id(id) => self.get_vec_of_schemas(id).await?,
                     HeaderSchemaId::Guid(guid) => self.get_vec_of_schemas_by_guid(guid).await?,
                 };
-                let context = into_decode_context(vec_of_schemas.to_vec())?;
+                let context = into_decode_context(cached.0.clone(), cached.1.clone())?;
                 let (index, _empty) = to_index_and_data(index_bytes)?;
                 let full_name = resolve_name(&context.resolver, &index)?;
                 let message_info = get_message_info(&context.context, &full_name)?;
@@ -132,8 +136,8 @@ impl<'a> ProtoDecoder<'a> {
     /// The actual deserialization trying to get the id from the bytes to retrieve the schema, and
     /// using a reader transforms the bytes to a value.
     async fn deserialize(&self, id: u32, bytes: &[u8]) -> Result<MessageValue, SRCError> {
-        let vec_of_schemas = self.get_vec_of_schemas(id).await?;
-        let context = into_decode_context(vec_of_schemas.to_vec())?;
+        let cached = self.get_vec_of_schemas(id).await?;
+        let context = into_decode_context(cached.0.clone(), cached.1.clone())?;
         let (index, data) = to_index_and_data(bytes)?;
         let full_name = resolve_name(&context.resolver, &index)?;
         let message_info = get_message_info(&context.context, &full_name)?;
@@ -166,8 +170,8 @@ impl<'a> ProtoDecoder<'a> {
         id: u32,
         bytes: &[u8],
     ) -> Result<DecodeResultWithContext, SRCError> {
-        let vec_of_schemas = self.get_vec_of_schemas(id).await?;
-        let context = into_decode_context(vec_of_schemas.to_vec())?;
+        let cached = self.get_vec_of_schemas(id).await?;
+        let context = into_decode_context(cached.0.clone(), cached.1.clone())?;
         let (index, data_bytes) = to_index_and_data(bytes)?;
         let full_name = resolve_name(&context.resolver, &index)?;
         let message_info = get_message_info(&context.context, &full_name)?;
@@ -181,7 +185,7 @@ impl<'a> ProtoDecoder<'a> {
     }
     /// Gets the vector of schema's directly of via a shared future. The direct cache main function
     /// is for performance.
-    async fn get_vec_of_schemas(&self, id: u32) -> Result<Arc<Vec<String>>, SRCError> {
+    async fn get_vec_of_schemas(&self, id: u32) -> Result<Arc<CachedSchemas>, SRCError> {
         match self.direct_cache.get(&id) {
             None => {
                 let result = self.get_vec_of_schemas_by_shared_future(id).await;
@@ -230,7 +234,7 @@ impl<'a> ProtoDecoder<'a> {
     /// Like [`ProtoDecoder::get_vec_of_schemas`], but looks the schema up by guid instead of id
     /// -- used by [`ProtoDecoder::decode_with_header_id`] when the header carries a guid rather
     /// than an id.
-    async fn get_vec_of_schemas_by_guid(&self, guid: String) -> Result<Arc<Vec<String>>, SRCError> {
+    async fn get_vec_of_schemas_by_guid(&self, guid: String) -> Result<Arc<CachedSchemas>, SRCError> {
         match self.guid_direct_cache.get(&guid) {
             None => {
                 let result = self
@@ -302,6 +306,7 @@ fn add_files<'a>(
 
 #[derive(Debug)]
 pub struct DecodeContext {
+    pub schema: RegisteredSchema,
     pub resolver: MessageResolver,
     pub context: Context,
 }
@@ -315,7 +320,10 @@ pub struct DecodeContext {
 /// https://github.com/gklijs/schema_registry_converter/issues/175 for the discussion. One
 /// consequence: a parse failure here is never cached, so `error.cached` is always `false` for
 /// it and it's retried on every call, unlike the equivalent blocking-decoder failure.
-fn into_decode_context(mut vec_of_schemas: Vec<String>) -> Result<DecodeContext, SRCError> {
+fn into_decode_context(
+    schema: RegisteredSchema,
+    mut vec_of_schemas: Vec<String>,
+) -> Result<DecodeContext, SRCError> {
     // The root schema is always pushed last by add_files, so pop it off rather than
     // re-parsing it below with the other, dependent schemas.
     let root_schema = vec_of_schemas.pop().unwrap();
@@ -329,7 +337,11 @@ fn into_decode_context(mut vec_of_schemas: Vec<String>) -> Result<DecodeContext,
     }
     files.insert(root_schema);
     match Context::parse(files) {
-        Ok(context) => Ok(DecodeContext { resolver, context }),
+        Ok(context) => Ok(DecodeContext {
+            schema,
+            resolver,
+            context,
+        }),
         Err(e) => Err(SRCError::non_retryable_with_cause(
             e,
             "Error creating proto context",
@@ -340,16 +352,18 @@ fn into_decode_context(mut vec_of_schemas: Vec<String>) -> Result<DecodeContext,
 async fn to_vec_of_schemas(
     sr_settings: &SrSettings,
     registered_schema: RegisteredSchema,
-) -> Result<Arc<Vec<String>>, SRCError> {
+) -> Result<Arc<CachedSchemas>, SRCError> {
+    let root_schema = registered_schema.clone();
     let mut vec_of_schemas = Vec::new();
     add_files(sr_settings, registered_schema, &mut vec_of_schemas).await?;
-    Ok(Arc::new(vec_of_schemas))
+    Ok(Arc::new((root_schema, vec_of_schemas)))
 }
 
 #[cfg(test)]
 mod tests {
     use crate::async_impl::proto_decoder::{into_decode_context, ProtoDecoder};
     use crate::async_impl::schema_registry::SrSettings;
+    use crate::schema_registry_common::{RegisteredSchema, SchemaType};
     use mockito::Server;
     use protofish::prelude::Value;
     use test_utils::{
@@ -357,6 +371,20 @@ mod tests {
         get_proto_hb_101, get_proto_hb_101_empty_payload, get_proto_hb_schema,
         get_proto_money_result, get_proto_result,
     };
+
+    fn dummy_registered_schema(schema: &str) -> RegisteredSchema {
+        RegisteredSchema {
+            id: 0,
+            schema_type: SchemaType::Protobuf,
+            schema: schema.to_owned(),
+            references: Vec::new(),
+            properties: None,
+            tags: None,
+            subject: None,
+            version: None,
+            guid: None,
+        }
+    }
 
     fn get_proto_body(schema: &str, id: u32) -> String {
         format!(
@@ -625,7 +653,7 @@ mod tests {
         let base_schema = "syntax = \"proto3\";\npackage a.b.c;\n\nimport \"google/protobuf/timestamp.proto\";\n\noption java_outer_classname = \"MetadataProto\";\n\nmessage Metadata {\n  string field1 = 1;\n  string field2 = 2;\n  .google.protobuf.Timestamp field3 = 3;\n}\n";
         let top_schema = "syntax = \"proto3\";\npackage a.b.c.d;\n\nimport \"a/b/c/metadata.proto\";\n\noption java_outer_classname = \"TopLevelProto\";\n\nmessage TopLevelMetadata {\n  uint64 field1 = 1;\n  .a.b.c.Metadata metadata = 3;\n\n}\n";
         let vec_of_schemas = vec![base_schema.to_string(), top_schema.to_string()];
-        let result = into_decode_context(vec_of_schemas);
+        let result = into_decode_context(dummy_registered_schema(top_schema), vec_of_schemas);
         assert!(result.is_ok())
     }
 
@@ -637,7 +665,7 @@ mod tests {
         // starting with an underscore. Fixed upstream in
         // https://github.com/Rantanen/protofish/pull/13, released in protofish 0.5.3.
         let schema = "syntax = \"proto3\";\n\npackage in.abc.event_entities;\n\noption java_outer_classname = \"EventSourceProto\";\n\nmessage EventSource {\n  message Actor {\n    enum UserEntity {\n      USER_ENTITY_UNSPECIFIED = 0;\n      USER_ENTITY_ADMIN = 1;\n    }\n\n    UserEntity entity = 1;\n    uint32 id = 2;\n  }\n  string system = 1;\n  optional Actor initiator = 2;\n  optional Actor proxy = 3;\n  optional string reason = 4;\n}\n";
-        let result = into_decode_context(vec![schema.to_string()]);
+        let result = into_decode_context(dummy_registered_schema(schema), vec![schema.to_string()]);
         assert!(result.is_ok())
     }
 }
