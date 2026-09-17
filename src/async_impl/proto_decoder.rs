@@ -133,6 +133,43 @@ impl<'a> ProtoDecoder<'a> {
             }
         }
     }
+    /// Like [`ProtoDecoder::decode_with_header_id`], but returns the resolved [`DecodeContext`]
+    /// (schema metadata, resolver, parsed `protofish::context::Context`) alongside the value and
+    /// full name, mirroring [`ProtoDecoder::decode_with_context`] for the header-aware path.
+    /// `header_value` present -> resolve the schema and message index from it and treat `bytes`
+    /// as the raw (unprefixed) payload; `header_value` absent -> falls straight through to
+    /// [`ProtoDecoder::decode_with_context`].
+    pub async fn decode_with_context_and_header_id(
+        &self,
+        header_value: Option<&[u8]>,
+        bytes: Option<&[u8]>,
+    ) -> Result<Option<DecodeResultWithContext>, SRCError> {
+        let payload = match bytes {
+            Some(v) => v,
+            None => return Ok(None),
+        };
+        match header_value {
+            None => self.decode_with_context(Some(payload)).await,
+            Some(header) => {
+                let (schema_id, index_bytes) = parse_schema_id_header(header)?;
+                let cached = match schema_id {
+                    HeaderSchemaId::Id(id) => self.get_vec_of_schemas(id).await?,
+                    HeaderSchemaId::Guid(guid) => self.get_vec_of_schemas_by_guid(guid).await?,
+                };
+                let context = into_decode_context(cached.0.clone(), cached.1.clone())?;
+                let (index, _empty) = to_index_and_data(index_bytes)?;
+                let full_name = resolve_name(&context.resolver, &index)?;
+                let message_info = get_message_info(&context.context, &full_name)?;
+                let value = message_info.decode(payload, &context.context);
+                Ok(Some(DecodeResultWithContext {
+                    value,
+                    context,
+                    full_name,
+                    data_bytes: payload.to_vec(),
+                }))
+            }
+        }
+    }
     /// The actual deserialization trying to get the id from the bytes to retrieve the schema, and
     /// using a reader transforms the bytes to a value.
     async fn deserialize(&self, id: u32, bytes: &[u8]) -> Result<MessageValue, SRCError> {
@@ -477,6 +514,59 @@ mod tests {
             v => panic!("Other value: {:?} than expected Message", v),
         };
         assert_eq!(Value::UInt64(101u64), message.fields[0].value);
+    }
+
+    #[tokio::test]
+    async fn test_decode_with_context_and_header_id() {
+        let mut server = Server::new_async().await;
+        let _m = server
+            .mock(
+                "GET",
+                "/schemas/guids/cc0e0e0e-53c1-4a1a-8f1a-000000000001?deleted=true",
+            )
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(get_proto_body(get_proto_hb_schema(), 1))
+            .create();
+
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
+        let decoder = ProtoDecoder::new(sr_settings);
+        // magic byte 0x01 + 16-byte guid + single-message index byte 0x00
+        let header_value = [
+            0x01, 0xcc, 0x0e, 0x0e, 0x0e, 0x53, 0xc1, 0x4a, 0x1a, 0x8f, 0x1a, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x01, 0x00,
+        ];
+        let payload = &get_proto_hb_101()[6..]; // data only, no prefix/index
+
+        let result = decoder
+            .decode_with_context_and_header_id(Some(&header_value), Some(payload))
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(Value::UInt64(101u64), result.value.fields[0].value);
+        assert_eq!(result.context.schema.id, 1);
+        assert_eq!(result.context.schema.schema_type, SchemaType::Protobuf);
+        assert_eq!(&*result.full_name, "nl.openweb.data.Heartbeat");
+
+        // header absent -> falls straight through to decode_with_context(), which expects the
+        // classic wire-format prefix
+        let _m2 = server
+            .mock("GET", "/schemas/ids/7?deleted=true")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(get_proto_body(get_proto_hb_schema(), 1))
+            .create();
+        let result = decoder
+            .decode_with_context_and_header_id(None, Some(get_proto_hb_101()))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(Value::UInt64(101u64), result.value.fields[0].value);
+        assert_eq!(result.context.schema.id, 7);
     }
 
     #[tokio::test]
