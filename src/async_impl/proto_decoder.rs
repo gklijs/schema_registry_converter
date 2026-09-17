@@ -521,9 +521,95 @@ mod tests {
 
         assert!(heartbeat.is_some());
 
-        let message = heartbeat.unwrap().value;
+        let result = heartbeat.unwrap();
 
-        assert_eq!(Value::UInt64(101u64), message.fields[0].value)
+        assert_eq!(Value::UInt64(101u64), result.value.fields[0].value);
+        // The registered schema's id reflects the id used to look it up (from the payload's
+        // prefix), not the (unrelated, in this mocked response) "id" field of the schema
+        // registry response body.
+        assert_eq!(result.context.schema.id, 7);
+        assert_eq!(result.context.schema.schema_type, SchemaType::Protobuf);
+        // get_proto_hb_schema() is pre-escaped for embedding in the mocked JSON body, so the
+        // schema string coming back out has those escapes resolved.
+        assert_eq!(
+            result.context.schema.schema,
+            get_proto_hb_schema().replace("\\\"", "\"")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_decode_with_context_complex_returns_top_level_schema() {
+        // The context's schema should be the top-level registered schema (id 2), not the
+        // referenced result.proto schema (id 1) pulled in along the way.
+        let mut server = Server::new_async().await;
+        let _m = server
+            .mock("GET", "/schemas/ids/6?deleted=true")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(get_proto_body_with_reference(
+                get_proto_complex(),
+                2,
+                get_proto_complex_references(),
+            ))
+            .create();
+
+        let _m = server
+            .mock("GET", "/subjects/result.proto/versions/1")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(get_proto_body(get_proto_result(), 1))
+            .create();
+
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
+        let decoder = ProtoDecoder::new(sr_settings);
+        let result = decoder
+            .decode_with_context(Some(get_proto_complex_proto_test_message()))
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(result.value.fields[1].value, Value::Int64(1));
+        assert_eq!(result.context.schema.id, 6);
+        assert_eq!(
+            result.context.schema.schema,
+            get_proto_complex().replace("\\\"", "\"")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_decode_with_context_uses_cached_schema_on_second_call() {
+        let mut server = Server::new_async().await;
+        let _m = server
+            .mock("GET", "/schemas/ids/7?deleted=true")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(get_proto_body(get_proto_hb_schema(), 1))
+            .expect(1)
+            .create();
+
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
+        let decoder = ProtoDecoder::new(sr_settings);
+
+        let first = decoder
+            .decode_with_context(Some(get_proto_hb_101()))
+            .await
+            .unwrap()
+            .unwrap();
+        let second = decoder
+            .decode_with_context(Some(get_proto_hb_101()))
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(first.context.schema.id, second.context.schema.id);
+        assert_eq!(first.context.schema.schema, second.context.schema.schema);
+        _m.assert_async().await;
     }
 
     #[tokio::test]
