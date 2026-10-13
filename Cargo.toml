@@ -1,6 +1,6 @@
 [package]
 name = "schema_registry_converter"
-version = "5.0.0"
+version = "5.1.0"
 authors = ["Gerard Klijs <g.klijs@gmail.com>"]
 include = ["src/**/*", "Cargo.toml"]
 description = "Encode/decode data from/to kafka using the Confluent Schema Registry"

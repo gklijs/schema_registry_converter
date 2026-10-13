@@ -1,5 +1,31 @@
 ## Release notes
 
+### 5.1.0
+
+New async APIs for getting at the schemas themselves, not just the decoded values:
+
+Expose a decoder's own schema lookup: `AvroDecoder::get_schema(id)` and
+`JsonDecoder::get_schema(id)` (async) are now public, returning the fully self-contained,
+reference-resolved `AvroSchema`/`JsonSchema` for an id, using (and populating) that decoder's
+cache.
+
+Add fetching a schema by an explicit subject and version, independent of any
+`SubjectNameStrategy`: `async_impl::schema_registry::get_schema_by_subject_and_version(sr_settings,
+subject, version)` (`None` for "latest") returns the `RegisteredSchema`, which can be resolved
+into a self-contained schema with the new `async_impl::avro::get_avro_schema` or
+`async_impl::json::get_json_schema`.
+
+Add `AvroDecoder::decode_with_schema_with_header_id` (async), the header-aware counterpart of
+`decode_with_schema`, returning the full `DecodeResultWithSchema` for a message that may carry
+its schema id/guid in a Kafka header. See #139.
+
+`ProtoDecoder` (async) now returns the root `RegisteredSchema` (id, version, properties, tags,
+...) as a new `schema` field on `DecodeContext`, and gains `decode_with_context_and_header_id`,
+the header-aware counterpart of `decode_with_context`. Note: `DecodeContext` gaining a public
+field is breaking if you construct one via struct-literal syntax, or destructure one exhaustively
+without `..`; normal usage, which only reads a `DecodeContext` returned by the decoder, is
+unaffected.
+
 ### 5.0.0
 
 Two breaking changes bump this to a major version:
