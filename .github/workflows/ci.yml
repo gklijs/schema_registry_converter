@@ -16,13 +16,9 @@ env:
   CARGO_MAKE_RUN_CODECOV: true
   # cargo-make's `codecov` task pipes `curl -s https://codecov.io/bash` straight into `bash` --
   # Codecov's now-deprecated bash uploader. It was intermittently hanging CI builds for 30+
-  # minutes until manually cancelled (observed on PR #189, unrelated to that PR's own changes).
-  # Skip just that sub-task; the rest of ci-coverage-flow (installing kcov and generating an
-  # actual coverage report) still runs as before -- verified locally with
-  # `cargo make --makefile make.toml ci-coverage-flow -v` that execution reaches
-  # `coverage-kcov` but the `codecov` task itself is never invoked with this flag set. Restoring
-  # a working upload (e.g. the codecov GitHub Action instead of the bash uploader) is a
-  # separate, deliberate piece of work.
+  # minutes until manually cancelled (observed on PR #189). So skip that task: ci-flow still
+  # generates the kcov report in target/coverage, which the "upload coverage" step below
+  # uploads with the Codecov GitHub Action instead.
   CARGO_MAKE_SKIP_CODECOV: true
 
 jobs:
@@ -55,6 +51,13 @@ jobs:
         run: cargo test --verbose --all-features -- --test-threads=1
       - name: ci-flow
         run: cargo make --makefile make.toml ci-flow
+      - name: upload coverage
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          directory: target/coverage
+          # Coverage is informative only, an unavailable Codecov shouldn't fail the build.
+          fail_ci_if_error: false
       - name: benchmarks
         # See https://github.com/gklijs/schema_registry_converter/issues/118. Shared runners are
         # too noisy for reliable pass/fail thresholds, so this just prints timings to the job log
