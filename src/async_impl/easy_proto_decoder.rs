@@ -1,7 +1,7 @@
 use crate::async_impl::proto_decoder::{DecodeResultWithContext, ProtoDecoder};
 use crate::async_impl::schema_registry::SrSettings;
 use crate::error::SRCError;
-use protofish::decode::Value;
+use prost_reflect::Value;
 use std::sync::Arc;
 
 /// A decoder used to transform bytes to a [Value], its much like [ProtoDecoder] but wrapped with an arc to make it easier.
@@ -34,8 +34,12 @@ mod tests {
     use crate::async_impl::schema_registry::SrSettings;
     use mockito::Server;
 
-    use protofish::decode::Value;
+    use prost_reflect::{DynamicMessage, Value};
     use test_utils::{get_proto_body, get_proto_hb_101, get_proto_hb_schema};
+
+    fn field(message: &DynamicMessage, name: &str) -> Value {
+        message.get_field_by_name(name).unwrap().into_owned()
+    }
 
     #[tokio::test]
     async fn test_decoder_default() {
@@ -55,11 +59,11 @@ mod tests {
         let heartbeat = decoder.decode(Some(get_proto_hb_101())).await.unwrap();
 
         let message = match heartbeat {
-            Value::Message(x) => *x,
+            Value::Message(x) => x,
             v => panic!("Other value: {:?} than expected Message", v),
         };
 
-        assert_eq!(Value::UInt64(101u64), message.fields[0].value)
+        assert_eq!(Value::U64(101u64), field(&message, "beat"))
     }
 
     #[tokio::test]
@@ -85,6 +89,6 @@ mod tests {
         assert!(heartbeat.is_some());
         let message = heartbeat.unwrap().value;
 
-        assert_eq!(Value::UInt64(101u64), message.fields[0].value)
+        assert_eq!(Value::U64(101u64), field(&message, "beat"))
     }
 }

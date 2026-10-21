@@ -1,8 +1,8 @@
-//! Benchmark for the blocking `protofish`-backed `ProtoDecoder`, see
+//! Benchmark for the blocking `prost-reflect`-backed `ProtoDecoder`, see
 //! https://github.com/gklijs/schema_registry_converter/issues/118.
 //!
 //! Kept separate from `proto_raw_bench`: `ProtoDecoder` fully parses the `.proto` schema and
-//! decodes the message through `protofish`, a materially heavier path than the raw decoder's
+//! decodes the message through `prost-reflect`, a materially heavier path than the raw decoder's
 //! index-based framing, so it's worth tracking on its own.
 
 use criterion::{criterion_group, criterion_main, Criterion};

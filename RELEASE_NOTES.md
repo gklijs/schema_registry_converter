@@ -1,5 +1,43 @@
 ## Release notes
 
+### 6.0.0
+
+The generic `ProtoDecoder` (both async and blocking, and `EasyProtoDecoder`) no longer uses
+`protofish`, but compiles the schemas with `protox` and decodes with `prost-reflect`. See #206.
+This is a breaking change for anyone using the `proto_decoder` feature:
+
+- `decode` and `decode_with_header_id` return a `prost_reflect::Value`, with the decoded
+  message as `Value::Message(DynamicMessage)` (no longer boxed). As before, a null payload gives
+  empty `Value::Bytes`, and bytes without the schema registry prefix are returned as-is as
+  `Value::Bytes`.
+- `DecodeResultWithContext.value` is a `prost_reflect::DynamicMessage`, and its `full_name` is
+  a `String`.
+- `DecodeContext` holds the compiled root schema as `file_descriptor`, a
+  `prost_reflect::FileDescriptor` (with everything it imports in its `parent_pool()`), instead of
+  the protofish `context` and the `resolver`.
+- The async `DecodeResultWithContext.context` is now an `Arc<DecodeContext>`, as it already was
+  for the blocking decoder.
+- The blocking `DecodeContext.registered_schema` is renamed to `schema`, matching the async
+  decoder and the `proto_raw` contexts.
+- `prost_reflect` is re-exported as `schema_registry_converter::prost_reflect`, so the decoded
+  values can be used without adding a dependency on a matching version.
+
+Behaviour changes:
+
+- Decoding bytes that aren't a valid message for the schema now gives a non-retriable
+  `SRCError`. Previously protofish returned a message containing whatever it could make of it.
+- Fields follow protobuf semantics: `map` fields are supported, enums can be looked up by name,
+  repeated values of a non-repeated field resolve to the last one, and unknown fields are kept.
+  With prost-reflect's `serde` feature a `DynamicMessage` serializes to the canonical protobuf
+  JSON mapping.
+- The message index is resolved against the compiled schema, instead of a lexer-based scan of
+  the schema text. Messages generated for `map` and `group` fields are skipped, as confluent does.
+- The async decoder now caches the compiled schema, instead of re-parsing it on every decode.
+  Like the blocking decoder, a schema that fails to compile is now cached as a non-retriable
+  error, cleared by `remove_errors_from_cache`. See #175.
+- The well-known `google/protobuf/*` types now come with protox, the `google/type/*` common
+  types are still bundled. Imports are resolved by the name a reference is registered with.
+
 ### 5.1.0
 
 New async APIs for getting at the schemas themselves, not just the decoded values:
