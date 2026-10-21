@@ -1,12 +1,9 @@
-use std::collections::hash_map::{Entry, RandomState};
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use dashmap::mapref::entry::Entry as DashEntry;
 use dashmap::DashMap;
 use serde_json::Value;
 use url::Url;
-use valico::json_schema::{Scope, ValidationState};
 
 use crate::blocking::schema_registry::{
     get_referenced_schema, get_schema_by_guid_and_type, get_schema_by_id_and_type,
@@ -14,26 +11,22 @@ use crate::blocking::schema_registry::{
 };
 use crate::error::SRCError;
 use crate::json_common::{
-    fetch_fallback, fetch_id, handle_validation, main_url, reference_base,
-    reference_depth_exceeded_error, reference_url, to_bytes, to_bytes_raw, to_value,
-    ValidationScope, MAX_REFERENCE_DEPTH,
+    main_url, reference_base, reference_depth_exceeded_error, reference_url, to_bytes,
+    to_bytes_raw, to_value, ValidatorCache, MAX_REFERENCE_DEPTH,
 };
 pub use crate::json_common::{validate, DecodeResult, JsonSchema};
 use crate::schema_registry_common::{
     get_bytes_result, invalid_bytes_error, parse_schema_id_header, schema_id_header_for,
-    BytesResult, HeaderSchemaId, RegisteredReference, RegisteredSchema, SchemaIdHeader, SchemaType,
-    SubjectNameStrategy,
+    BytesResult, HeaderSchemaId, RegisteredSchema, SchemaIdHeader, SchemaType, SubjectNameStrategy,
 };
 
-/// Encoder that works by prepending the correct bytes in order to make it valid schema registry
-/// bytes. Ideally you want to make sure the bytes are based on the exact schema used for encoding
-/// but you need a protobuf struct that has introspection to make that work, and both protobuf and
-/// prost don't support that at the moment.
+/// Encoder that validates the value against the schema the subject name strategy resolves to,
+/// and prefixes the JSON bytes with the schema id.
 #[derive(Debug)]
 pub struct JsonEncoder {
     sr_settings: SrSettings,
-    cache: HashMap<String, Result<EncodeContext, SRCError>, RandomState>,
-    scope: Scope,
+    cache: DashMap<String, Result<Arc<JsonSchema>, SRCError>>,
+    validators: ValidatorCache,
 }
 
 impl JsonEncoder {
@@ -41,71 +34,36 @@ impl JsonEncoder {
     pub fn new(sr_settings: SrSettings) -> JsonEncoder {
         JsonEncoder {
             sr_settings,
-            cache: HashMap::new(),
-            scope: Scope::new(),
+            cache: DashMap::new(),
+            validators: ValidatorCache::new(),
         }
     }
     /// Removes all non-retriable errors from the cache, useful to retry failed encodings once
     /// the underlying problem has been fixed. Retriable errors aren't cached in the first place.
-    pub fn remove_errors_from_cache(&mut self) {
+    pub fn remove_errors_from_cache(&self) {
         self.cache.retain(|_, v| v.is_ok());
     }
-    /// Encodes the bytes by adding a few bytes to the message with additional information. The full
-    /// names is the optional package followed with the message name, and optionally inner messages.
+    /// Validates the value against the schema, and returns it as bytes prefixed with the schema
+    /// id.
     pub fn encode(
-        &mut self,
+        &self,
         value: &Value,
         subject_name_strategy: &SubjectNameStrategy,
     ) -> Result<Vec<u8>, SRCError> {
-        let key = subject_name_strategy.get_subject()?;
-        let (validation, id) = self.validate(key, subject_name_strategy, value)?;
-        handle_validation(validation, value)?;
-        to_bytes(id, value)
+        let schema = self.get_schema(subject_name_strategy)?;
+        self.validators.validate(&schema, value)?;
+        to_bytes(schema.id, value)
     }
 
-    /// Validates the value as being correct according to the schema
+    /// Validates the value against the schema the subject name strategy resolves to, keeping
+    /// the compiled schema for the next validation.
     pub fn validate(
-        &mut self,
-        key: String,
-        subject_name_strategy: &SubjectNameStrategy,
+        &self,
         value: &Value,
-    ) -> Result<(ValidationState, u32), SRCError> {
-        let cached_context = match self.cache.entry(key) {
-            Entry::Occupied(entry) => entry.into_mut().as_ref(),
-            Entry::Vacant(entry) => {
-                let result = match get_schema_by_subject(&self.sr_settings, subject_name_strategy) {
-                    Ok(registered_schema) => match set_scoped_schema(
-                        &mut self.scope,
-                        &self.sr_settings,
-                        &registered_schema,
-                    ) {
-                        Ok(url) => Ok(EncodeContext {
-                            id: registered_schema.id,
-                            url,
-                            guid: registered_schema.guid,
-                        }),
-                        Err(e) => Err(e),
-                    },
-                    Err(e) => Err(e),
-                };
-                match result {
-                    // Retriable errors (transient network/HTTP issues) don't make sense to
-                    // cache, so the entry is left vacant and the next call issues a fresh
-                    // request rather than replaying a stale failure.
-                    Err(e) if e.retriable => return Err(e),
-                    result => entry.insert(result.map_err(SRCError::into_cache)).as_ref(),
-                }
-            }
-        };
-        match cached_context {
-            Ok(context) => match self.scope.resolve(&context.url) {
-                Some(schema) => Ok((schema.validate(value), context.id)),
-                None => Err(SRCError::non_retryable_without_cause(
-                    "could not get schema from scope",
-                )),
-            },
-            Err(e) => Err(e.clone()),
-        }
+        subject_name_strategy: &SubjectNameStrategy,
+    ) -> Result<(), SRCError> {
+        let schema = self.get_schema(subject_name_strategy)?;
+        self.validators.validate(&schema, value)
     }
 
     /// Like [`JsonEncoder::encode`], but instead of prefixing the payload with the schema id
@@ -119,60 +77,42 @@ impl JsonEncoder {
     /// Requires a schema registry that returns a `guid` (Confluent Schema Registry 8.0+); a
     /// registry that doesn't will make this return an error.
     pub fn encode_with_header_id(
-        &mut self,
+        &self,
         value: &Value,
         subject_name_strategy: &SubjectNameStrategy,
         is_key: bool,
     ) -> Result<(Vec<u8>, SchemaIdHeader), SRCError> {
-        let key = subject_name_strategy.get_subject()?;
-        let cached_context = match self.cache.entry(key) {
-            Entry::Occupied(entry) => entry.into_mut().as_ref(),
-            Entry::Vacant(entry) => {
-                let result = match get_schema_by_subject(&self.sr_settings, subject_name_strategy) {
-                    Ok(registered_schema) => match set_scoped_schema(
-                        &mut self.scope,
-                        &self.sr_settings,
-                        &registered_schema,
-                    ) {
-                        Ok(url) => Ok(EncodeContext {
-                            id: registered_schema.id,
-                            url,
-                            guid: registered_schema.guid,
-                        }),
-                        Err(e) => Err(e),
-                    },
-                    Err(e) => Err(e),
-                };
-                match result {
-                    Err(e) if e.retriable => return Err(e),
-                    result => entry.insert(result.map_err(SRCError::into_cache)).as_ref(),
-                }
-            }
-        };
-        let context = match cached_context {
-            Ok(c) => c.clone(),
-            Err(e) => return Err(e.clone()),
-        };
-        let validation = match self.scope.resolve(&context.url) {
-            Some(schema) => schema.validate(value),
-            None => {
-                return Err(SRCError::non_retryable_without_cause(
-                    "could not get schema from scope",
-                ))
-            }
-        };
-        handle_validation(validation, value)?;
+        let schema = self.get_schema(subject_name_strategy)?;
+        self.validators.validate(&schema, value)?;
         let bytes = to_bytes_raw(value)?;
-        let header = schema_id_header_for(context.guid.as_deref(), is_key, &[])?;
+        let header = schema_id_header_for(schema.guid.as_deref(), is_key, &[])?;
         Ok((bytes, header))
     }
-}
 
-#[derive(Debug, Clone)]
-struct EncodeContext {
-    id: u32,
-    url: Url,
-    guid: Option<String>,
+    fn get_schema(
+        &self,
+        subject_name_strategy: &SubjectNameStrategy,
+    ) -> Result<Arc<JsonSchema>, SRCError> {
+        let key = subject_name_strategy.get_subject()?;
+        match self.cache.entry(key) {
+            DashEntry::Occupied(entry) => entry.get().clone(),
+            DashEntry::Vacant(entry) => {
+                let result = get_schema_by_subject(&self.sr_settings, subject_name_strategy)
+                    .and_then(|r| get_json_schema(&self.sr_settings, r))
+                    .map(Arc::new);
+                match result {
+                    // Retriable errors (transient network/HTTP issues) don't make sense to
+                    // cache, so the entry is left vacant and the next call issues a fresh
+                    // request rather than replaying a stale failure.
+                    Err(e) if e.retriable => Err(e),
+                    result => entry
+                        .insert(result.map_err(SRCError::into_cache))
+                        .value()
+                        .clone(),
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -183,7 +123,7 @@ pub struct JsonDecoder {
     /// [`JsonDecoder::decode_with_header_id`]. Kept separate from `cache` (keyed by id) since a
     /// guid and an id are different keyspaces.
     guid_cache: DashMap<String, Result<Arc<JsonSchema>, SRCError>>,
-    validation_scope: ValidationScope,
+    validators: ValidatorCache,
 }
 
 impl JsonDecoder {
@@ -199,7 +139,7 @@ impl JsonDecoder {
             sr_settings,
             cache: DashMap::new(),
             guid_cache: DashMap::new(),
-            validation_scope: ValidationScope::new(),
+            validators: ValidatorCache::new(),
         }
     }
     /// Removes all non-retriable errors from the cache. You might need/want to run this when the
@@ -270,7 +210,7 @@ impl JsonDecoder {
     /// [`validate`], but keeps the compiled schemas, so validating against the same schema again
     /// is much faster. Validations through the same decoder happen one at a time.
     pub fn validate(&self, schema: &JsonSchema, value: &Value) -> Result<(), SRCError> {
-        self.validation_scope.validate(schema, value)
+        self.validators.validate(schema, value)
     }
     /// Resolves `id` into a fully self-contained, reference-resolved [`JsonSchema`], using (and
     /// populating) this decoder's own id-keyed cache.
@@ -369,98 +309,11 @@ fn to_json_schema(
     })
 }
 
-/// `base` is the url the referencing schema is compiled under -- a reference's `name` is
-/// resolved against it the same way a JSON Schema validator resolves a `$ref`, since that's
-/// exactly what `name` is used as inside the referencing schema. Confluent doesn't require
-/// `name` to be a fully qualified url itself (it's commonly just a bare file name like
-/// `result.json`), only that it resolves to one relative to `base`.
-fn add_refs_to_scope(
-    scope: &mut Scope,
-    sr_settings: &SrSettings,
-    base: &Url,
-    refs: &[RegisteredReference],
-    depth: usize,
-) -> Result<(), SRCError> {
-    if depth > MAX_REFERENCE_DEPTH {
-        return Err(reference_depth_exceeded_error());
-    }
-    for rr in refs.iter() {
-        let id = match Url::options().base_url(Some(base)).parse(&rr.name) {
-            Ok(v) => v,
-            Err(e) => return Err(SRCError::non_retryable_with_cause(e, &format!("reference schema with subject {} and version {} has invalid id {}, it has to be a fully qualified url or resolve against {}", rr.subject, rr.version, rr.name, base)))
-        };
-        // if it's already part of the scope, it's assumed any references are also already part of the scope.
-        if scope.resolve(&id).is_some() {
-            continue;
-        }
-        let rs = get_referenced_schema(sr_settings, rr)?;
-        let def: Value = to_value(&rs.schema)?;
-        // A referenced schema with its own `$id` establishes a new base for its own references;
-        // otherwise nested refs resolve against the url it was just compiled under.
-        let nested_base = fetch_id(&def).unwrap_or_else(|| id.clone());
-        add_refs_to_scope(scope, sr_settings, &nested_base, &rs.references, depth + 1)?;
-        scope.compile_with_id(&id, def, false).unwrap();
-    }
-    Ok(())
-}
-
-fn set_scoped_schema(
-    scope: &mut Scope,
-    sr_settings: &SrSettings,
-    registered_schema: &RegisteredSchema,
-) -> Result<Url, SRCError> {
-    let def: Value = match serde_json::from_str(&registered_schema.schema) {
-        Ok(v) => v,
-        Err(e) => {
-            return Err(SRCError::non_retryable_with_cause(
-                e,
-                &format!(
-                    "could not parse schema {} with id {} to a value",
-                    registered_schema.schema, registered_schema.id
-                ),
-            ))
-        }
-    };
-    let id = match fetch_id(&def) {
-        Some(url) => url,
-        None => {
-            // A schema resolved only by guid (`get_schema_by_guid`) never gets a real numeric
-            // id back from the registry -- `id` is a `0` placeholder in that case. Fall back to
-            // the guid instead so two different such schemas don't collide on the same url.
-            let label = match &registered_schema.guid {
-                Some(guid) if registered_schema.id == 0 => guid.clone(),
-                _ => registered_schema.id.to_string(),
-            };
-            fetch_fallback(sr_settings.url(), &label)
-        }
-    };
-    // Same schema can now be reached through two independent caches -- by id (`schema`) and by
-    // guid (`guid_schema`) -- sharing this one `scope`. If it's already compiled under this url
-    // (e.g. looked up by id first, now by guid, or vice versa) reuse that rather than trying to
-    // `compile_with_id` a second time, which `valico` rejects as an id conflict. See
-    // https://github.com/gklijs/schema_registry_converter/issues/139.
-    if scope.resolve(&id).is_some() {
-        return Ok(id);
-    }
-    add_refs_to_scope(scope, sr_settings, &id, &registered_schema.references, 0)?;
-    match scope.compile_with_id(&id, def, false) {
-        Ok(_) => (),
-        Err(e) => {
-            return Err(SRCError::non_retryable_with_cause(
-                e,
-                &format!("could not compile schema with id {}", registered_schema.id),
-            ))
-        }
-    };
-    Ok(id)
-}
-
 #[cfg(test)]
 mod tests {
     use std::fs::{read_to_string, File};
 
-    use serde_json::{from_str, to_string_pretty, Value};
-    use valico::json_dsl;
+    use serde_json::Value;
 
     use crate::blocking::json::{JsonDecoder, JsonEncoder};
     use crate::blocking::schema_registry::SrSettings;
@@ -473,25 +326,6 @@ mod tests {
         json_result_schema, json_result_schema_with_id, json_test_ref_schema,
         json_test_ref_schema_with_extra,
     };
-
-    #[test]
-    fn using_the_dsl_builder_might_be_used_after_decode_to_coerce() {
-        let params = json_dsl::Builder::build(|params| {
-            params.req_nested("user", json_dsl::array(), |params| {
-                params.req_typed("name", json_dsl::string());
-                params.req_typed("friend_ids", json_dsl::array_of(json_dsl::u64()))
-            });
-        });
-
-        let mut obj = from_str(r#"{"user": [{"name": "Frodo", "friend_ids": ["1223"]}]}"#).unwrap();
-
-        let state = params.process(&mut obj, None);
-        if state.is_valid() {
-            println!("Result object is {}", to_string_pretty(&obj).unwrap());
-        } else {
-            panic!("Errors during process: {:?}", state);
-        }
-    }
 
     #[test]
     fn test_encode_java_compatibility() {
@@ -507,7 +341,7 @@ mod tests {
             .no_proxy()
             .build()
             .unwrap();
-        let mut encoder = JsonEncoder::new(sr_settings);
+        let encoder = JsonEncoder::new(sr_settings);
         let strategy = SubjectNameStrategy::TopicNameStrategy(String::from("testresult"), false);
         let result_example: Value =
             serde_json::from_reader(File::open("tests/schema/result-example.json").unwrap())
@@ -532,7 +366,7 @@ mod tests {
             .no_proxy()
             .build()
             .unwrap();
-        let mut encoder = JsonEncoder::new(sr_settings.clone());
+        let encoder = JsonEncoder::new(sr_settings.clone());
         let strategy = SubjectNameStrategy::TopicNameStrategy(String::from("testresult"), false);
         let value: Value = serde_json::json!({"foo": "bar"});
 
@@ -665,7 +499,7 @@ mod tests {
             .no_proxy()
             .build()
             .unwrap();
-        let mut encoder = JsonEncoder::new(sr_settings);
+        let encoder = JsonEncoder::new(sr_settings);
         let strategy = SubjectNameStrategy::TopicNameStrategy(String::from("testresult"), false);
         let result_example: Value =
             serde_json::from_reader(File::open("tests/schema/result-example.json").unwrap())
@@ -684,7 +518,7 @@ mod tests {
             .no_proxy()
             .build()
             .unwrap();
-        let mut encoder = JsonEncoder::new(sr_settings);
+        let encoder = JsonEncoder::new(sr_settings);
         let strategy = SubjectNameStrategy::TopicNameStrategy(String::from("testresult"), false);
         let result_example: Value =
             serde_json::from_reader(File::open("tests/schema/result-example.json").unwrap())
@@ -1209,7 +1043,8 @@ mod tests {
         let sr_settings = SrSettings::new(String::from("http://127.0.0.1:1234"));
         let encoder = JsonEncoder::new(sr_settings);
         assert!(
-            format!("{:?}", encoder).starts_with("JsonEncoder { sr_settings: SrSettings { urls: [\"http://127.0.0.1:1234\"], client: Client, authorization: None }, cache: {}, scope: Scope {")
+            format!("{:?}", encoder)
+                == "JsonEncoder { sr_settings: SrSettings { urls: [\"http://127.0.0.1:1234\"], client: Client, authorization: None }, cache: {}, validators: ValidatorCache { .. } }"
         )
     }
 
@@ -1219,7 +1054,7 @@ mod tests {
         let decoder = JsonDecoder::new(sr_settings);
         assert_eq!(
             format!("{:?}", decoder),
-            "JsonDecoder { sr_settings: SrSettings { urls: [\"http://127.0.0.1:1234\"], client: Client, authorization: None }, cache: {}, guid_cache: {}, validation_scope: ValidationScope { .. } }"
+            "JsonDecoder { sr_settings: SrSettings { urls: [\"http://127.0.0.1:1234\"], client: Client, authorization: None }, cache: {}, guid_cache: {}, validators: ValidatorCache { .. } }"
         )
     }
 
@@ -1237,7 +1072,7 @@ mod tests {
             .no_proxy()
             .build()
             .unwrap();
-        let mut encoder = JsonEncoder::new(sr_settings);
+        let encoder = JsonEncoder::new(sr_settings);
         let strategy = SubjectNameStrategy::TopicNameStrategy(String::from("testresult"), false);
         let result_example: Value = Value::String(String::from("Foo"));
 
@@ -1246,7 +1081,7 @@ mod tests {
         assert_eq!(
             error.error,
             String::from(
-                r#"Value "Foo" was not valid according to the schema because [WrongType { path: "", detail: "The value must be object" }]"#
+                r#"Value "Foo" was not valid according to the schema because ["\"Foo\" is not of type \"object\""]"#
             )
         )
     }
@@ -1269,7 +1104,7 @@ mod tests {
             .no_proxy()
             .build()
             .unwrap();
-        let mut encoder = JsonEncoder::new(sr_settings);
+        let encoder = JsonEncoder::new(sr_settings);
         let strategy = SubjectNameStrategy::TopicNameStrategy(String::from("testresult"), false);
         let result_example: Value = Value::String(String::from("Foo"));
 
@@ -1280,7 +1115,7 @@ mod tests {
         assert_eq!(
             error.error,
             String::from(
-                r#"Value "Foo" was not valid according to the schema because [WrongType { path: "", detail: "The value must be object" }]"#
+                r#"Value "Foo" was not valid according to the schema because ["\"Foo\" is not of type \"object\""]"#
             )
         )
     }
@@ -1299,7 +1134,7 @@ mod tests {
             .no_proxy()
             .build()
             .unwrap();
-        let mut encoder = JsonEncoder::new(sr_settings);
+        let encoder = JsonEncoder::new(sr_settings);
         let strategy = SubjectNameStrategy::TopicNameStrategy(String::from("testresult"), false);
         let result_example: Value =
             serde_json::from_reader(File::open("tests/schema/jsontest-example.json").unwrap())
@@ -1307,9 +1142,11 @@ mod tests {
 
         let error = encoder.encode(&result_example, &strategy).unwrap_err();
 
+        assert_eq!(error.error, "error compiling schema");
         assert!(error
-            .error
-            .ends_with("was not valid because of missing references"))
+            .cause
+            .unwrap()
+            .contains("is not present in a registry"));
     }
 
     #[test]

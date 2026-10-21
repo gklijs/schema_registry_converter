@@ -34,7 +34,7 @@ fn json_benchmarks(c: &mut Criterion) {
         .no_proxy()
         .build()
         .unwrap();
-    let mut encoder = JsonEncoder::new(sr_settings.clone());
+    let encoder = JsonEncoder::new(sr_settings.clone());
     let strategy = SubjectNameStrategy::TopicNameStrategy(String::from("testresult"), false);
     let value = json!({"up": "some", "down": "other"});
 

@@ -3,17 +3,21 @@ name = "schema_registry_converter"
 version = "5.1.0"
 authors = ["Gerard Klijs <g.klijs@gmail.com>"]
 include = ["src/**/*", "Cargo.toml"]
-description = "Encode/decode data from/to kafka using the Confluent Schema Registry"
+description = "Encode/decode Avro, Protobuf and JSON Schema data from/to Kafka using the Confluent Schema Registry"
 homepage = "https://github.com/gklijs/schema_registry_converter"
 repository = "https://github.com/gklijs/schema_registry_converter"
 readme = "README.md"
-keywords = ["kafka", "schema", "avro", "protobuf", "jsonschema"]
-categories = ["encoding", "parsing"]
-license = "MIT/Apache-2.0"
+keywords = ["kafka", "confluent", "schema-registry", "avro", "protobuf"]
+categories = ["encoding", "api-bindings", "asynchronous"]
+license = "MIT OR Apache-2.0"
 edition = "2021"
+# The highest version the dependencies require, apache-avro needs 1.88. Checked by the msrv CI job.
+rust-version = "1.88"
 
 [workspace]
-resolver = "2"
+# Resolves dependencies to versions that support the rust-version above, see
+# https://doc.rust-lang.org/cargo/reference/resolver.html#rust-version
+resolver = "3"
 
 [features]
 native_tls = ["reqwest/native-tls"]
@@ -21,7 +25,7 @@ rustls_tls = ["reqwest/rustls"]
 
 avro = ["apache-avro"]
 blocking = ["reqwest/blocking"]
-json = ["url", "valico"]
+json = ["jsonschema", "url"]
 middleware = ["dep:reqwest-middleware"]
 proto_decoder = ["integer-encoding", "prost-reflect", "prost-types", "protox", "protox-parse"]
 proto_raw = ["integer-encoding", "prost-types", "protox-parse"]
@@ -68,6 +72,13 @@ optional = true
 version = "^0.3"
 optional = true
 
+[dependencies.jsonschema]
+version = "^0.59"
+# Referenced schemas come from the schema registry, so retrieving them over http or from files
+# isn't needed.
+default-features = false
+optional = true
+
 [dependencies.integer-encoding]
 version = "^4.0"
 optional = true
@@ -97,9 +108,6 @@ version = "^1.46"
 features = ["macros"]
 optional = true
 
-[dependencies.valico]
-version = "^4.0"
-optional = true
 
 [dev-dependencies]
 # `derive` is only needed for tests/doctests exercising `avro_common::get_supplied_schema_for`

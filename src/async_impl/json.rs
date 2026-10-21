@@ -17,7 +17,7 @@ use crate::async_impl::schema_registry::{
 use crate::error::SRCError;
 use crate::json_common::{
     main_url, reference_base, reference_depth_exceeded_error, reference_url, to_bytes,
-    to_bytes_raw, to_value, ValidationScope, MAX_REFERENCE_DEPTH,
+    to_bytes_raw, to_value, ValidatorCache, MAX_REFERENCE_DEPTH,
 };
 pub use crate::json_common::{validate, DecodeResult, JsonSchema};
 use crate::schema_registry_common::{
@@ -34,7 +34,7 @@ pub struct JsonEncoder {
     sr_settings: SrSettings,
     direct_cache: DashMap<String, Arc<JsonSchema>>,
     cache: DashMap<String, SharedFutureSchema>,
-    validation_scope: ValidationScope,
+    validators: ValidatorCache,
 }
 
 type SharedFutureSchema = Shared<BoxFuture<'static, Result<Arc<JsonSchema>, SRCError>>>;
@@ -46,7 +46,7 @@ impl JsonEncoder {
             sr_settings,
             direct_cache: DashMap::new(),
             cache: DashMap::new(),
-            validation_scope: ValidationScope::new(),
+            validators: ValidatorCache::new(),
         }
     }
     /// Removes all non-retriable errors from the cache, useful to retry failed encodings once
@@ -66,7 +66,7 @@ impl JsonEncoder {
     ) -> Result<Vec<u8>, SRCError> {
         let key = subject_name_strategy.get_subject()?;
         let schema = self.get_schema(key, subject_name_strategy).await?;
-        self.validation_scope.validate(&schema, value)?;
+        self.validators.validate(&schema, value)?;
         to_bytes(schema.id, value)
     }
 
@@ -88,7 +88,7 @@ impl JsonEncoder {
     ) -> Result<(Vec<u8>, SchemaIdHeader), SRCError> {
         let key = subject_name_strategy.get_subject()?;
         let schema = self.get_schema(key, subject_name_strategy).await?;
-        self.validation_scope.validate(&schema, value)?;
+        self.validators.validate(&schema, value)?;
         let bytes = to_bytes_raw(value)?;
         let header = schema_id_header_for(schema.guid.as_deref(), is_key, &[])?;
         Ok((bytes, header))
@@ -162,7 +162,7 @@ pub struct JsonDecoder {
     /// by id) since a guid and an id are different keyspaces.
     guid_direct_cache: DashMap<String, Arc<JsonSchema>>,
     guid_cache: DashMap<String, SharedFutureSchema>,
-    validation_scope: ValidationScope,
+    validators: ValidatorCache,
 }
 
 impl JsonDecoder {
@@ -180,7 +180,7 @@ impl JsonDecoder {
             cache: DashMap::new(),
             guid_direct_cache: DashMap::new(),
             guid_cache: DashMap::new(),
-            validation_scope: ValidationScope::new(),
+            validators: ValidatorCache::new(),
         }
     }
     /// Removes all non-retriable errors from the cache. You might need/want to run this when the
@@ -258,7 +258,7 @@ impl JsonDecoder {
     /// [`validate`], but keeps the compiled schemas, so validating against the same schema again
     /// is much faster. Validations through the same decoder happen one at a time.
     pub fn validate(&self, schema: &JsonSchema, value: &Value) -> Result<(), SRCError> {
-        self.validation_scope.validate(schema, value)
+        self.validators.validate(schema, value)
     }
 
     /// Resolves `id` into a fully self-contained, reference-resolved [`JsonSchema`], using (and
@@ -1120,7 +1120,7 @@ mod tests {
         assert_eq!(
             error.error,
             String::from(
-                r#"Value "Foo" was not valid according to the schema because [WrongType { path: "", detail: "The value must be object" }]"#
+                r#"Value "Foo" was not valid according to the schema because ["\"Foo\" is not of type \"object\""]"#
             )
         )
     }
@@ -1147,9 +1147,11 @@ mod tests {
 
         let error = encoder.encode(&result_example, strategy).await.unwrap_err();
 
+        assert_eq!(error.error, "error compiling schema");
         assert!(error
-            .error
-            .ends_with("was not valid because of missing references"))
+            .cause
+            .unwrap()
+            .contains("is not present in a registry"));
     }
 
     #[tokio::test]

@@ -33,6 +33,9 @@ titled [confluent Schema Registry and Rust](https://blog.openweb.nl/blog/conflue
 recommended to look there for the newest and more elaborate documentation. It has a couple of feature flags, be sure to
 set them correctly.
 
+The minimum supported Rust version is 1.88, as set by `rust-version` in `Cargo.toml`. It follows what the dependencies
+require.
+
 ### Avro
 
 To use it to convert using Avro async use:

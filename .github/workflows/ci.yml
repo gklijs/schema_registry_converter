@@ -32,7 +32,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v5
       - uses: Swatinem/rust-cache@v2
         # This job has never cached dependencies -- every push did a fully cold rebuild of the
         # whole tree, including cargo-make's own ci-flow (build/clippy/test all over again) and
@@ -64,3 +64,15 @@ jobs:
         # this step's cost reasonable; same values scripts/run_bench_pass.sh uses.
         run: cargo bench --all-features -- --sample-size 60 --measurement-time 3 --warm-up-time 2
         continue-on-error: true
+
+  msrv:
+    # Checks the library still builds with the `rust-version` from Cargo.toml. Only the library
+    # itself, as the tests and benches may need newer dev-dependencies.
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@1.88
+      - uses: Swatinem/rust-cache@v2
+      - name: Check with the minimum supported Rust version
+        run: cargo check --lib --all-features
