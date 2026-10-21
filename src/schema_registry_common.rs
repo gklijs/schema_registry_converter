@@ -826,4 +826,47 @@ mod test {
             result
         )
     }
+
+    #[test]
+    fn supplied_schema_and_reference_builders() {
+        use crate::schema_registry_common::SuppliedReference;
+        use std::collections::HashMap;
+
+        let properties = HashMap::from([(String::from("owner"), String::from("team"))]);
+        let tags = HashMap::from([(String::from("PII"), vec![String::from("name")])]);
+        let nested = SuppliedReference::new(
+            String::from("nested.proto"),
+            String::from("nested"),
+            String::from("syntax = \"proto3\";"),
+        );
+        let reference = SuppliedReference::new(
+            String::from("ref.proto"),
+            String::from("ref"),
+            String::from("syntax = \"proto3\";"),
+        )
+        .with_references(vec![nested])
+        .with_properties(properties.clone())
+        .with_tags(tags.clone());
+        assert_eq!(reference.references.len(), 1);
+        assert_eq!(reference.references[0].name, "nested.proto");
+        assert_eq!(reference.properties.as_ref(), Some(&properties));
+        assert_eq!(reference.tags.as_ref(), Some(&tags));
+
+        let schema = SuppliedSchema::new(
+            Some(String::from("a.B")),
+            SchemaType::Protobuf,
+            String::from("syntax = \"proto3\";"),
+        );
+        assert!(schema.references.is_empty());
+        assert!(schema.properties.is_none());
+        assert!(schema.tags.is_none());
+        let schema = schema
+            .with_references(vec![reference])
+            .with_properties(properties.clone())
+            .with_tags(tags.clone());
+        assert_eq!(schema.name.as_deref(), Some("a.B"));
+        assert_eq!(schema.references[0].subject, "ref");
+        assert_eq!(schema.properties, Some(properties));
+        assert_eq!(schema.tags, Some(tags));
+    }
 }

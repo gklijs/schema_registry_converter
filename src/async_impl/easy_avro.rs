@@ -143,6 +143,8 @@ impl EasyAvroEncoder {
 
 #[cfg(test)]
 mod tests {
+    use crate::schema_registry_common::{KEY_SCHEMA_ID_HEADER, VALUE_SCHEMA_ID_HEADER};
+
     use crate::async_impl::easy_avro::{EasyAvroDecoder, EasyAvroEncoder};
     use crate::async_impl::schema_registry::SrSettings;
     use crate::avro_common::get_supplied_schema;
@@ -274,5 +276,130 @@ mod tests {
                 0, 0, 0, 0, 4, 18, 107, 101, 121, 45, 118, 97, 108, 117, 101
             ])
         );
+    }
+
+    const HB_SCHEMA: &str = r#"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"#;
+    const GUID: &str = "cc0e0e0e-53c1-4a1a-8f1a-000000000001";
+
+    async fn header_id_server() -> mockito::ServerGuard {
+        let mut server = Server::new_async().await;
+        server
+            .mock("GET", "/subjects/heartbeat-value/versions/latest")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(format!(
+                r#"{{"subject":"heartbeat-value","version":1,"id":3,"guid":"{}","schema":"{}"}}"#,
+                GUID, HB_SCHEMA
+            ))
+            .create_async()
+            .await;
+        server
+            .mock("GET", "/subjects/heartbeat-key/versions/latest")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(format!(
+                r#"{{"subject":"heartbeat-key","version":1,"id":3,"guid":"{}","schema":"{}"}}"#,
+                GUID, HB_SCHEMA
+            ))
+            .create_async()
+            .await;
+        server
+            .mock(
+                "GET",
+                format!("/schemas/guids/{}?deleted=true", GUID).as_str(),
+            )
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(format!(r#"{{"schema":"{}"}}"#, HB_SCHEMA))
+            .create_async()
+            .await;
+        server
+    }
+
+    #[tokio::test]
+    async fn test_encode_and_decode_with_header_id() {
+        let server = header_id_server().await;
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
+        let encoder = EasyAvroEncoder::new(sr_settings.clone());
+        let decoder = EasyAvroDecoder::new(sr_settings);
+        let value_strategy =
+            SubjectNameStrategy::TopicNameStrategy(String::from("heartbeat"), false);
+        let key_strategy = SubjectNameStrategy::TopicNameStrategy(String::from("heartbeat"), true);
+        let expected = Value::Record(vec![("beat".to_string(), Value::Long(3))]);
+
+        let (bytes, header) = encoder
+            .encode_with_header_id(
+                vec![("beat", Value::Long(3))],
+                value_strategy.clone(),
+                false,
+            )
+            .await
+            .unwrap();
+        assert_eq!(bytes, vec![6]);
+        assert_eq!(header.name, VALUE_SCHEMA_ID_HEADER);
+        assert_eq!(
+            header.value,
+            vec![
+                0x01, 0xcc, 0x0e, 0x0e, 0x0e, 0x53, 0xc1, 0x4a, 0x1a, 0x8f, 0x1a, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x01,
+            ]
+        );
+
+        let (struct_bytes, struct_header) = encoder
+            .encode_struct_with_header_id(Heartbeat { beat: 3 }, &key_strategy, true)
+            .await
+            .unwrap();
+        assert_eq!(struct_bytes, bytes);
+        assert_eq!(struct_header.name, KEY_SCHEMA_ID_HEADER);
+
+        let (value_bytes, value_header) = encoder
+            .encode_value_with_header_id(expected.clone(), &value_strategy, false)
+            .await
+            .unwrap();
+        assert_eq!(value_bytes, bytes);
+        assert_eq!(value_header, header);
+
+        let decoded = decoder
+            .decode_with_header_id(Some(&header.value), Some(&bytes))
+            .await
+            .unwrap();
+        assert_eq!(decoded.value, expected);
+        let decoded = decoder
+            .decode_with_schema_with_header_id(Some(&header.value), Some(&bytes))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(decoded.value, expected);
+    }
+
+    #[tokio::test]
+    async fn test_encode_value_and_get_schema_and_id() {
+        let server = header_id_server().await;
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
+        let encoder = EasyAvroEncoder::new(sr_settings);
+        let value_strategy =
+            SubjectNameStrategy::TopicNameStrategy(String::from("heartbeat"), false);
+
+        let bytes = encoder
+            .encode_value(
+                Value::Record(vec![("beat".to_string(), Value::Long(3))]),
+                &value_strategy,
+            )
+            .await
+            .unwrap();
+        assert_eq!(bytes, vec![0, 0, 0, 0, 3, 6]);
+
+        let schema = encoder
+            .get_schema_and_id("heartbeat-value", value_strategy)
+            .await
+            .unwrap();
+        assert_eq!(schema.id, 3);
+        assert_eq!(schema.guid.as_deref(), Some(GUID));
     }
 }
