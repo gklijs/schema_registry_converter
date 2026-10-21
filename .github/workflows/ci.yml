@@ -24,7 +24,6 @@ env:
   # a working upload (e.g. the codecov GitHub Action instead of the bash uploader) is a
   # separate, deliberate piece of work.
   CARGO_MAKE_SKIP_CODECOV: true
-  CODECOV_TOKEN: ee9fe20a-5285-4805-b1a9-5af664534997
 
 jobs:
   build:
@@ -76,3 +75,16 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Check with the minimum supported Rust version
         run: cargo check --lib --all-features
+
+  docs:
+    # The documentation as docs.rs builds it, failing on broken links and other rustdoc
+    # warnings.
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+      - uses: Swatinem/rust-cache@v2
+      - name: Check the documentation
+        run: cargo doc --no-deps --all-features
+        env:
+          RUSTDOCFLAGS: "-D warnings"

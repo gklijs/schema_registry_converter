@@ -10,6 +10,8 @@ pub mod kafka_consumer;
 pub mod kafka_producer;
 #[cfg(feature = "proto_decoder")]
 mod proto_consumer;
+#[cfg(all(feature = "proto_decoder", feature = "proto_encoder"))]
+mod proto_encoder_tests;
 #[cfg(feature = "proto_decoder")]
 mod proto_tests;
 mod schema_registry_calls;

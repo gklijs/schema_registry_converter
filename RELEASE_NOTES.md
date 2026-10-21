@@ -2,6 +2,31 @@
 
 ### 6.0.0
 
+#### Upgrading from 5.x
+
+The details are below, but in short:
+
+- Rust 1.88 or later is needed.
+- The async encoders and decoders lost their lifetime parameter: `AvroDecoder<'a>` is now
+  `AvroDecoder`, likewise for the other async types.
+- Create a `SuppliedSchema` or `SuppliedReference` with `new` and the `with_` methods instead of a
+  struct expression, and add a wildcard arm when matching on `SchemaType` or
+  `SubjectNameStrategy`, as most public types are now `#[non_exhaustive]`.
+- `proto_decoder`: values are `prost_reflect` types instead of `protofish` ones, use
+  `schema_registry_converter::prost_reflect` to get the matching version. Bytes that aren't a
+  valid message are now an error.
+- `json`: the blocking `JsonDecoder` and `JsonEncoder` take `&self`, a decoded value has an owned
+  `Arc<JsonSchema>`, validate it with `decoder.validate(&result.schema, &result.value)`. The
+  blocking `JsonEncoder::validate` returns `Result<(), SRCError>`. Validation error messages
+  changed.
+- `proto_raw`: a schema that isn't valid protobuf is now an error, and `proto_resolver` is no
+  longer public.
+- `SRCError::retryable_with_cause` and `non_retryable_with_cause` take an error, or a `&str` or
+  `String`, instead of anything that's `Display`.
+- The `easy` feature no longer pulls in `tokio`, add it yourself if you relied on that. Optional
+  dependencies are no longer features of their own, so e.g. `features = ["url"]` or `["tokio"]`
+  doesn't work anymore; `futures` still is a feature, enabling the async implementations.
+
 The crate now declares its minimum supported Rust version, `rust-version = "1.88"`, the highest
 version its dependencies require (apache-avro 0.22 needs 1.88). With Cargo's Rust-version aware
 resolver (the default for edition 2024, or `resolver = "3"`), a project gets dependency versions
@@ -57,6 +82,15 @@ now share one implementation of confluent's index rules, skipping the messages g
   references.
 - `logos` is no longer a direct dependency; `proto_raw` now depends on `protox-parse` and
   `prost-types`.
+
+Features and dependencies:
+
+- The `easy` feature no longer enables `tokio`, which none of the `Easy*` wrappers used.
+- Optional dependencies are only enabled through the crate's features, using `dep:`, so they're
+  no longer features themselves, e.g. `jsonschema`, `url`, `prost-reflect` or `tokio`. `futures`
+  remains a feature, as it enables the async implementations.
+- `BytesResult`, `get_bytes_result` and `invalid_bytes_error` in `schema_registry_common` are
+  hidden from the documentation, as they're only used by the decoders. They're still public.
 
 Other breaking changes in this release, so later additions don't need another major version:
 

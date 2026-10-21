@@ -7,7 +7,7 @@ use crate::schema_registry_common::{get_payload, RegisteredSchema};
 /// a payload uses -- normally embedded in the payload right after the id, but for
 /// `_with_header_id` encoding it instead gets appended to the id/guid in the header (see
 /// [`crate::schema_registry_common::build_schema_id_header`]). See
-/// https://github.com/gklijs/schema_registry_converter/issues/139.
+/// <https://github.com/gklijs/schema_registry_converter/issues/139>.
 pub(crate) fn index_bytes(
     encode_context: &EncodeContext,
     full_name: &str,
