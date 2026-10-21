@@ -1934,4 +1934,128 @@ mod tests {
         };
         assert_eq!(&1i64, counter_value, "counter is 1");
     }
+
+    const HB_SCHEMA: &str = r#"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"#;
+    const GUID: &str = "cc0e0e0e-53c1-4a1a-8f1a-000000000001";
+
+    #[test]
+    fn test_encode_and_decode_with_header_id() {
+        use crate::schema_registry_common::{KEY_SCHEMA_ID_HEADER, VALUE_SCHEMA_ID_HEADER};
+
+        let mut server = mockito::Server::new();
+        let _m = server
+            .mock("GET", "/subjects/heartbeat-value/versions/latest")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(format!(
+                r#"{{"subject":"heartbeat-value","version":1,"id":3,"guid":"{}","schema":"{}"}}"#,
+                GUID, HB_SCHEMA
+            ))
+            .create();
+        let _m_guid = server
+            .mock(
+                "GET",
+                format!("/schemas/guids/{}?deleted=true", GUID).as_str(),
+            )
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(format!(r#"{{"schema":"{}"}}"#, HB_SCHEMA))
+            .expect(1)
+            .create();
+        let _m_id = server
+            .mock("GET", "/schemas/ids/3?deleted=true")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(format!(r#"{{"schema":"{}"}}"#, HB_SCHEMA))
+            .create();
+
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
+        let encoder = AvroEncoder::new(sr_settings.clone());
+        let decoder = AvroDecoder::new(sr_settings);
+        let strategy = SubjectNameStrategy::TopicNameStrategy(String::from("heartbeat"), false);
+        let expected = Value::Record(vec![("beat".to_string(), Value::Long(3))]);
+
+        let (bytes, header) = encoder
+            .encode_with_header_id(vec![("beat", Value::Long(3))], &strategy, false)
+            .unwrap();
+        assert_eq!(bytes, vec![6]);
+        assert_eq!(header.name, VALUE_SCHEMA_ID_HEADER);
+        assert_eq!(
+            header.value,
+            vec![
+                0x01, 0xcc, 0x0e, 0x0e, 0x0e, 0x53, 0xc1, 0x4a, 0x1a, 0x8f, 0x1a, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x01,
+            ]
+        );
+        let (struct_bytes, struct_header) = encoder
+            .encode_struct_with_header_id(Heartbeat { beat: 3 }, &strategy, true)
+            .unwrap();
+        assert_eq!(struct_bytes, bytes);
+        assert_eq!(struct_header.name, KEY_SCHEMA_ID_HEADER);
+        assert_eq!(struct_header.value, header.value);
+
+        // guid header, the schema is fetched once and then served from the guid cache
+        for _ in 0..2 {
+            let decoded = decoder
+                .decode_with_header_id(Some(&header.value), Some(&bytes))
+                .unwrap();
+            assert_eq!(decoded.value, expected);
+        }
+        let decoded = decoder
+            .decode_with_schema_with_header_id(Some(&header.value), Some(&bytes))
+            .unwrap()
+            .unwrap();
+        assert_eq!(decoded.value, expected);
+        assert_eq!(decoded.name.unwrap().name(), "Heartbeat");
+
+        // id header
+        let id_header = [0x00, 0, 0, 0, 3];
+        let decoded = decoder
+            .decode_with_header_id(Some(&id_header), Some(&bytes))
+            .unwrap();
+        assert_eq!(decoded.value, expected);
+        let decoded = decoder
+            .decode_with_schema_with_header_id(Some(&id_header), Some(&bytes))
+            .unwrap()
+            .unwrap();
+        assert_eq!(decoded.schema.id, 3);
+
+        // no header falls back to the prefixed payload, no payload is a null value
+        let prefixed = [0, 0, 0, 0, 3, 6];
+        let decoded = decoder
+            .decode_with_header_id(None, Some(&prefixed))
+            .unwrap();
+        assert_eq!(decoded.value, expected);
+        let decoded = decoder
+            .decode_with_schema_with_header_id(None, Some(&prefixed))
+            .unwrap()
+            .unwrap();
+        assert_eq!(decoded.value, expected);
+        assert_eq!(
+            decoder
+                .decode_with_header_id(Some(&header.value), None)
+                .unwrap()
+                .value,
+            Value::Null
+        );
+        assert!(decoder
+            .decode_with_schema_with_header_id(Some(&header.value), None)
+            .unwrap()
+            .is_none());
+
+        // an invalid header, or bytes that don't match the schema, are errors
+        assert!(decoder
+            .decode_with_header_id(Some(&[0x02]), Some(&bytes))
+            .is_err());
+        assert!(decoder
+            .decode_with_schema_with_header_id(Some(&[0x02]), Some(&bytes))
+            .is_err());
+        assert!(decoder
+            .decode_with_header_id(Some(&header.value), Some(&[0xff]))
+            .is_err());
+        _m_guid.assert();
+    }
 }

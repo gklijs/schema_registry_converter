@@ -90,6 +90,8 @@ impl EasyProtoRawEncoder {
 
 #[cfg(test)]
 mod tests {
+    use crate::schema_registry_common::{KEY_SCHEMA_ID_HEADER, VALUE_SCHEMA_ID_HEADER};
+
     use crate::async_impl::easy_proto_raw::{EasyProtoRawDecoder, EasyProtoRawEncoder};
     use crate::async_impl::schema_registry::SrSettings;
     use crate::schema_registry_common::SubjectNameStrategy;
@@ -178,5 +180,65 @@ mod tests {
             .unwrap();
 
         assert_eq!(encoded_data, get_proto_hb_101())
+    }
+
+    #[tokio::test]
+    async fn test_encode_and_decode_with_header_id() {
+        let mut server = Server::new_async().await;
+        let _m = server
+            .mock("GET", "/subjects/nl.openweb.data.Heartbeat/versions/latest")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(format!(
+                "{{\"schema\":\"{}\", \"schemaType\":\"PROTOBUF\", \"id\":7, \"guid\":\"cc0e0e0e-53c1-4a1a-8f1a-000000000001\"}}",
+                get_proto_hb_schema()
+            ))
+            .create();
+        let _m2 = server
+            .mock(
+                "GET",
+                "/schemas/guids/cc0e0e0e-53c1-4a1a-8f1a-000000000001?deleted=true",
+            )
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(get_proto_body(get_proto_hb_schema(), 7))
+            .create();
+
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
+        let encoder = EasyProtoRawEncoder::new(sr_settings.clone());
+        let strategy =
+            SubjectNameStrategy::RecordNameStrategy(String::from("nl.openweb.data.Heartbeat"));
+
+        let (bytes, header) = encoder
+            .encode_with_header_id(
+                get_proto_hb_101_only_data(),
+                "nl.openweb.data.Heartbeat",
+                strategy.clone(),
+                false,
+            )
+            .await
+            .unwrap();
+        assert_eq!(bytes, get_proto_hb_101_only_data());
+        assert_eq!(header.name, VALUE_SCHEMA_ID_HEADER);
+
+        let (single_bytes, single_header) = encoder
+            .encode_single_message_with_header_id(get_proto_hb_101_only_data(), strategy, true)
+            .await
+            .unwrap();
+        assert_eq!(single_bytes, bytes);
+        assert_eq!(single_header.name, KEY_SCHEMA_ID_HEADER);
+        assert_eq!(single_header.value, header.value);
+
+        let decoder = EasyProtoRawDecoder::new(sr_settings);
+        let decoded = decoder
+            .decode_with_header_id(Some(&header.value), Some(&bytes))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(decoded.bytes, get_proto_hb_101_only_data());
+        assert_eq!(decoded.full_name.as_str(), "nl.openweb.data.Heartbeat");
     }
 }

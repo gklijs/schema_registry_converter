@@ -75,6 +75,8 @@ impl EasyJsonEncoder {
 
 #[cfg(test)]
 mod tests {
+    use crate::schema_registry_common::VALUE_SCHEMA_ID_HEADER;
+
     use crate::async_impl::easy_json::{EasyJsonDecoder, EasyJsonEncoder};
     use crate::async_impl::json::validate;
     use crate::async_impl::schema_registry::SrSettings;
@@ -157,5 +159,52 @@ mod tests {
         let encoded_data = encoder.encode(&result_example, strategy).await.unwrap();
 
         assert_eq!(encoded_data, json_result_java_bytes())
+    }
+
+    #[tokio::test]
+    async fn test_encode_and_decode_with_header_id() {
+        let mut server = Server::new_async().await;
+        let _m = server
+            .mock("GET", "/subjects/testresult-value/versions/latest")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(r#"{"subject":"testresult-value","version":1,"id":10,"guid":"cc0e0e0e-53c1-4a1a-8f1a-000000000001","schema":"{\"type\":\"object\"}","schemaType":"JSON"}"#)
+            .create();
+        let _m2 = server
+            .mock(
+                "GET",
+                "/schemas/guids/cc0e0e0e-53c1-4a1a-8f1a-000000000001?deleted=true",
+            )
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(r#"{"schema":"{\"type\":\"object\"}","schemaType":"JSON"}"#)
+            .create();
+
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
+        let encoder = EasyJsonEncoder::new(sr_settings.clone());
+        let strategy = SubjectNameStrategy::TopicNameStrategy(String::from("testresult"), false);
+        let value: Value = serde_json::json!({"foo": "bar"});
+
+        let (bytes, header) = encoder
+            .encode_with_header_id(&value, strategy, false)
+            .await
+            .unwrap();
+        assert_eq!(bytes, serde_json::to_vec(&value).unwrap());
+        assert_eq!(header.name, VALUE_SCHEMA_ID_HEADER);
+
+        let decoder = EasyJsonDecoder::new(sr_settings);
+        let decoded = decoder
+            .decode_with_header_id(Some(&header.value), Some(&bytes))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(decoded.value, value);
+        decoder.validate(&decoded.schema, &decoded.value).unwrap();
+        assert!(decoder
+            .validate(&decoded.schema, &serde_json::json!("not an object"))
+            .is_err());
     }
 }
