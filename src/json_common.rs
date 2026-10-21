@@ -1,12 +1,11 @@
 use std::collections::HashMap;
 use std::fmt;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::Arc;
 
+use dashmap::DashMap;
+use jsonschema::{Draft, Registry, Resource, Validator};
 use serde_json::value::Value;
 use url::Url;
-use valico::json_schema::schema::ScopedSchema;
-use valico::json_schema::validators::ValidationState;
-use valico::json_schema::Scope;
 
 use crate::error::SRCError;
 use crate::schema_registry_common::{get_payload, RegisteredReference};
@@ -26,23 +25,24 @@ pub(crate) fn reference_depth_exceeded_error() -> SRCError {
     ))
 }
 
-pub(crate) fn handle_validation(
-    validation: ValidationState,
-    value: &Value,
-) -> Result<(), SRCError> {
-    if validation.is_strictly_valid() {
-        Ok(())
-    } else if validation.errors.is_empty() {
-        Err(SRCError::non_retryable_without_cause(&format!(
-            "Value {} was not valid because of missing references",
-            value
-        )))
-    } else {
-        Err(SRCError::non_retryable_without_cause(&format!(
-            "Value {} was not valid according to the schema because {:?}",
-            value, validation.errors
-        )))
+/// The draft of a schema that doesn't declare one with `$schema`.
+const DEFAULT_DRAFT: Draft = Draft::Draft7;
+
+fn validate_with(validator: &Validator, value: &Value) -> Result<(), SRCError> {
+    if validator.is_valid(value) {
+        return Ok(());
     }
+    let errors: Vec<String> = validator
+        .iter_errors(value)
+        .map(|e| match e.instance_path().to_string() {
+            path if path.is_empty() => e.to_string(),
+            path => format!("{} at {}", e, path),
+        })
+        .collect();
+    Err(SRCError::non_retryable_without_cause(&format!(
+        "Value {} was not valid according to the schema because {:?}",
+        value, errors
+    )))
 }
 
 pub(crate) fn to_bytes(id: u32, value: &Value) -> Result<Vec<u8>, SRCError> {
@@ -127,19 +127,47 @@ pub struct DecodeResult {
     pub value: Value,
 }
 
-fn add_refs_to_scope<'s>(
-    scope: &'s mut Scope,
-    schema: &JsonSchema,
-) -> Result<ScopedSchema<'s>, SRCError> {
+/// Compiles the schema with the schemas it references. A `$ref` is only resolved against those,
+/// so nothing is retrieved over the network or from files.
+fn compile(schema: &JsonSchema) -> Result<Validator, SRCError> {
+    let mut resources = HashMap::new();
+    add_resources(schema, &mut resources);
+    let compile_error = |e: String| SRCError::non_retryable_with_cause(e, "error compiling schema");
+    let registry = Registry::new()
+        .extend(resources)
+        .and_then(|registry| registry.prepare())
+        .map_err(|e| compile_error(e.to_string()))?;
+    jsonschema::options()
+        .with_draft(DEFAULT_DRAFT.detect(&schema.schema))
+        .with_base_uri(schema.url.as_str())
+        .with_registry(&registry)
+        .build(&schema.schema)
+        .map_err(|e| compile_error(e.to_string()))
+}
+
+/// Adds the schemas `schema` references, and the ones those reference, by their url.
+fn add_resources(schema: &JsonSchema, resources: &mut HashMap<String, Resource>) {
+    let base = reference_base(&schema.schema, &schema.url);
     for reference in &schema.references {
-        add_refs_to_scope(scope, reference)?;
-    }
-    match scope.compile_and_return_with_id(&schema.url, schema.schema.clone(), false) {
-        Ok(v) => Ok(v),
-        Err(e) => Err(SRCError::non_retryable_with_cause(
-            e,
-            "error compiling schema",
-        )),
+        let draft = DEFAULT_DRAFT.detect(&reference.schema);
+        resources.insert(
+            reference.url.to_string(),
+            draft.create_resource(reference.schema.clone()),
+        );
+        // The reference urls of a schema with its own `$id` are resolved against that `$id`,
+        // but jsonschema resolves its `$ref`s against the url the schema is found under, so the
+        // references are added under that url too.
+        if base != schema.url {
+            let alternative = base
+                .make_relative(&reference.url)
+                .and_then(|relative| schema.url.join(&relative).ok());
+            if let Some(alternative) = alternative {
+                resources
+                    .entry(alternative.to_string())
+                    .or_insert_with(|| draft.create_resource(reference.schema.clone()));
+            }
+        }
+        add_resources(reference, resources);
     }
 }
 
@@ -147,56 +175,37 @@ fn add_refs_to_scope<'s>(
 /// the schema each time, so when validating many values, use the `validate` method of a
 /// `JsonDecoder` instead, which keeps the compiled schemas.
 pub fn validate(schema: &JsonSchema, value: &Value) -> Result<(), SRCError> {
-    let mut scope = Scope::new();
-    let schema = add_refs_to_scope(&mut scope, schema)?;
-    let validation = schema.validate(value);
-    handle_validation(validation, value)
+    validate_with(&compile(schema)?, value)
 }
 
-/// Keeps the schemas it validated against compiled, so validating against the same schema again
-/// doesn't compile it again. A `Scope` can't be shared between threads, so it's behind a mutex,
-/// meaning validations through the same `ValidationScope` happen one at a time.
-pub(crate) struct ValidationScope(Mutex<Scope>);
+/// Keeps the schemas it validated against compiled, by their url, so validating against the
+/// same schema again doesn't compile it again. A url always holds the same schema, as a schema
+/// id or guid never changes in the registry. A schema that fails to compile isn't kept, so it's
+/// compiled again on the next validation.
+pub(crate) struct ValidatorCache(DashMap<Url, Arc<Validator>>);
 
-impl ValidationScope {
-    pub(crate) fn new() -> ValidationScope {
-        ValidationScope(Mutex::new(Scope::new()))
+impl ValidatorCache {
+    pub(crate) fn new() -> ValidatorCache {
+        ValidatorCache(DashMap::new())
     }
 
     pub(crate) fn validate(&self, schema: &JsonSchema, value: &Value) -> Result<(), SRCError> {
-        // A panic while validating leaves the scope usable, at worst with fewer schemas compiled.
-        let mut scope = self.0.lock().unwrap_or_else(PoisonError::into_inner);
-        compile_once(&mut scope, schema)?;
-        match scope.resolve(&schema.url) {
-            Some(compiled) => handle_validation(compiled.validate(value), value),
-            None => Err(SRCError::non_retryable_without_cause(
-                "could not get schema from scope",
-            )),
-        }
+        let cached = self.0.get(&schema.url).map(|v| v.value().clone());
+        let validator = match cached {
+            Some(validator) => validator,
+            None => {
+                let validator = Arc::new(compile(schema)?);
+                self.0.insert(schema.url.clone(), validator.clone());
+                validator
+            }
+        };
+        validate_with(&validator, value)
     }
 }
 
-impl fmt::Debug for ValidationScope {
+impl fmt::Debug for ValidatorCache {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ValidationScope").finish_non_exhaustive()
-    }
-}
-
-/// Compiles the schema and the schemas it references, unless it's already compiled. A url
-/// always holds the same schema, as a schema id or guid never changes in the registry.
-fn compile_once(scope: &mut Scope, schema: &JsonSchema) -> Result<(), SRCError> {
-    if scope.resolve(&schema.url).is_some() {
-        return Ok(());
-    }
-    for reference in &schema.references {
-        compile_once(scope, reference)?;
-    }
-    match scope.compile_with_id(&schema.url, schema.schema.clone(), false) {
-        Ok(_) => Ok(()),
-        Err(e) => Err(SRCError::non_retryable_with_cause(
-            e,
-            "error compiling schema",
-        )),
+        f.debug_struct("ValidatorCache").finish_non_exhaustive()
     }
 }
 
@@ -237,7 +246,7 @@ pub(crate) fn reference_base(schema: &Value, url: &Url) -> Url {
 
 #[cfg(test)]
 mod tests {
-    use crate::json_common::{reference_base, JsonSchema, ValidationScope};
+    use crate::json_common::{reference_base, validate, JsonSchema, ValidatorCache};
     use serde_json::{json, Value};
     use std::sync::Arc;
     use url::Url;
@@ -257,7 +266,7 @@ mod tests {
     }
 
     #[test]
-    fn test_validation_scope_compiles_once_and_resolves_references() {
+    fn test_validator_cache_compiles_once_and_resolves_references() {
         let result = json_schema(
             "http://example.com/result.json",
             json!({"type": "object", "properties": {"up": {"type": "string"}}, "required": ["up"]}),
@@ -274,7 +283,7 @@ mod tests {
             json!({"type": "array", "items": {"$ref": "result.json"}}),
             vec![result],
         );
-        let scope = ValidationScope::new();
+        let scope = ValidatorCache::new();
         scope.validate(&root, &json!({"r": {"up": "a"}})).unwrap();
         scope.validate(&root, &json!({"r": {"up": "b"}})).unwrap();
         assert!(scope.validate(&root, &json!({"r": {"up": 1}})).is_err());
@@ -284,12 +293,73 @@ mod tests {
     }
 
     #[test]
-    fn test_validation_scope_invalid_schema_gives_error() {
+    fn test_validator_cache_invalid_schema_gives_error() {
         let invalid = json_schema("http://example.com/x.json", json!({"type": 5}), vec![]);
-        let err = ValidationScope::new()
+        let err = ValidatorCache::new()
             .validate(&invalid, &json!({}))
             .unwrap_err();
         assert_eq!(err.error, "error compiling schema");
+    }
+
+    #[test]
+    fn test_reference_with_own_id_resolves_its_references() {
+        // nested.json declares its own `$id`, its reference item.json is resolved against that
+        // `$id`, while a validator might resolve it against where nested.json was found.
+        let item = json_schema(
+            "http://other.org/n/item.json",
+            json!({"type": "integer"}),
+            vec![],
+        );
+        let nested = json_schema(
+            "http://example.com/nested.json",
+            json!({"$id": "http://other.org/n/nested.json", "type": "array", "items": {"$ref": "item.json"}}),
+            vec![item],
+        );
+        let root = json_schema(
+            "http://example.com/root.json",
+            json!({"type": "object", "properties": {"n": {"$ref": "nested.json"}}}),
+            vec![nested],
+        );
+        validate(&root, &json!({"n": [1, 2]})).unwrap();
+        let err = validate(&root, &json!({"n": ["x"]})).unwrap_err();
+        assert_eq!(
+            err.error,
+            r#"Value {"n":["x"]} was not valid according to the schema because ["\"x\" is not of type \"integer\" at /n/0"]"#
+        );
+    }
+
+    #[test]
+    fn test_missing_reference_gives_error() {
+        let root = json_schema(
+            "http://example.com/root.json",
+            json!({"$ref": "missing.json"}),
+            vec![],
+        );
+        let err = validate(&root, &json!({})).unwrap_err();
+        assert_eq!(err.error, "error compiling schema");
+        assert!(err
+            .cause
+            .unwrap()
+            .contains("http://example.com/missing.json"));
+    }
+
+    #[test]
+    fn test_declared_draft_is_used() {
+        // `exclusiveMinimum` is a boolean in draft 4, and a number since draft 6
+        let draft4 = json_schema(
+            "http://example.com/d4.json",
+            json!({"$schema": "http://json-schema.org/draft-04/schema#", "minimum": 5, "exclusiveMinimum": true}),
+            vec![],
+        );
+        assert!(validate(&draft4, &json!(5)).is_err());
+        validate(&draft4, &json!(6)).unwrap();
+        let default_draft = json_schema(
+            "http://example.com/d7.json",
+            json!({"exclusiveMinimum": 5}),
+            vec![],
+        );
+        assert!(validate(&default_draft, &json!(5)).is_err());
+        validate(&default_draft, &json!(6)).unwrap();
     }
 
     #[test]

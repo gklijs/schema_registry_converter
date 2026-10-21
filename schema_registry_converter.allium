@@ -19,7 +19,7 @@
 --   * HTTP client internals (reqwest configuration, headers, TLS, proxy, timeout
 --     durations) -- implementation detail of SrSettings / SrSettingsBuilder.
 --   * The Avro / JSON Schema / Protobuf serialisation mechanics themselves -- black
---     boxes; this library only orchestrates around apache_avro, valico and prost-reflect.
+--     boxes; this library only orchestrates around apache_avro, jsonschema and prost-reflect.
 --   * Test utilities (test_utils/), UML diagrams (uml/) and the crate's test suite.
 --
 -- Terminology: the code's four-way split (SuppliedSchema, SuppliedReference,
@@ -245,7 +245,7 @@ contract FormatCodec {
     deserialize: (schema: Schema, payload: Bytes) -> Any
 
     @invariant SerialisationIsOpaque
-        -- How apache_avro, valico or prost-reflect turn a value into bytes given a parsed
+        -- How apache_avro, jsonschema or prost-reflect turn a value into bytes given a parsed
         -- schema is outside this specification. This library only orchestrates around
         -- them.
 

@@ -2,6 +2,11 @@
 
 ### 6.0.0
 
+The crate now declares its minimum supported Rust version, `rust-version = "1.88"`, the highest
+version its dependencies require (apache-avro 0.22 needs 1.88). With Cargo's Rust-version aware
+resolver (the default for edition 2024, or `resolver = "3"`), a project gets dependency versions
+that still support its toolchain, or a clear error when the toolchain is older than 1.88.
+
 The generic `ProtoDecoder` (both async and blocking, and `EasyProtoDecoder`) no longer uses
 `protofish`, but compiles the schemas with `protox` and decodes with `prost-reflect`. See #206.
 This is a breaking change for anyone using the `proto_decoder` feature:
@@ -78,13 +83,25 @@ Other breaking changes in this release, so later additions don't need another ma
   decoded message. Validate a decoded value with `decoder.validate(&result.schema,
   &result.value)`, on the blocking and async `JsonDecoder` (and `EasyJsonDecoder`), which keeps
   the compiled schemas, so validating against the same schema again doesn't compile it again.
-  Validations through the same decoder happen one at a time, as valico's compiled schemas can't
-  be shared between threads. There's also a free `validate` function in both `blocking::json`
-  and `async_impl::json`, which now takes the schema by reference; it compiles the schema on
-  every call, about 14µs instead of 1µs in the benchmark. The blocking decoder also gains
-  `get_schema`, and the blocking module `get_json_schema`, matching the async ones.
-- The async `JsonEncoder` keeps the compiled schemas too, instead of compiling the schema for
-  every encoded value.
+  There's also a free `validate` function in both `blocking::json` and `async_impl::json`, which
+  now takes the schema by reference; it compiles the schema on every call. The blocking decoder
+  also gains `get_schema`, and the blocking module `get_json_schema`, matching the async ones.
+- The JSON encoders keep the compiled schemas too. The async one compiled the schema for every
+  encoded value. The blocking `JsonEncoder` now takes `&self` instead of `&mut self`, and its
+  `validate` takes the value and the subject name strategy, returning `Result<(), SRCError>`
+  instead of valico's `ValidationState`.
+- JSON Schema validation uses `jsonschema` instead of `valico`, which is no longer maintained.
+  It supports drafts 4, 6, 7, 2019-09 and 2020-12, using the `$schema` of a schema, and draft 7
+  when a schema doesn't declare one, like before. Compiled schemas are shared between threads,
+  so validations no longer wait on each other. It's also faster: in the benchmark, validating a
+  decoded value with the cached schema went from about 1.9µs to 0.3µs, and encoding, which
+  validates, from about 2.3µs to 0.35µs. Behaviour changes:
+  - Validation error messages differ, e.g. `"Foo" is not of type "object"` instead of
+    `WrongType { path: "", detail: "The value must be object" }`, with the location of the error
+    in the value when it isn't the root.
+  - A `$ref` that can't be resolved from the schema's references now fails to compile, with
+    "error compiling schema" and the missing url as the cause, instead of the value being "not
+    valid because of missing references". Nothing is retrieved over the network or from files.
 - A referenced JSON schema with its own `$id` is now the base for its own relative references in
   the async encoder and decoder too, as the blocking ones already did.
 
