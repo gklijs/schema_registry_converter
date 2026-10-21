@@ -7,12 +7,16 @@ pub mod easy_avro;
 pub mod easy_json;
 #[cfg(all(feature = "easy", feature = "proto_decoder"))]
 pub mod easy_proto_decoder;
+#[cfg(all(feature = "easy", feature = "proto_encoder"))]
+pub mod easy_proto_encoder;
 #[cfg(all(feature = "easy", feature = "proto_raw"))]
 pub mod easy_proto_raw;
 #[cfg(feature = "json")]
 pub mod json;
 #[cfg(feature = "proto_decoder")]
 pub mod proto_decoder;
+#[cfg(feature = "proto_encoder")]
+pub mod proto_encoder;
 #[cfg(feature = "proto_raw")]
 pub mod proto_raw;
 pub mod schema_registry;

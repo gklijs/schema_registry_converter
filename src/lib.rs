@@ -30,16 +30,23 @@ pub mod blocking;
 pub mod error;
 #[cfg(feature = "json")]
 mod json_common;
-#[cfg(feature = "proto_decoder")]
+#[cfg(any(feature = "proto_decoder", feature = "proto_encoder"))]
 mod proto_common_types;
-#[cfg(feature = "proto_decoder")]
+#[cfg(any(feature = "proto_decoder", feature = "proto_encoder"))]
 mod proto_decoder_common;
-/// The version of `prost-reflect` the proto decoders return their values in, so the decoded
-/// [`prost_reflect::DynamicMessage`]s can be used without depending on a matching version.
-#[cfg(feature = "proto_decoder")]
+#[cfg(feature = "proto_encoder")]
+mod proto_encoder_common;
+/// The version of `prost-reflect` the proto decoders return, and the proto encoders take, their
+/// values in, so [`prost_reflect::DynamicMessage`]s can be used without depending on a matching
+/// version.
+#[cfg(any(feature = "proto_decoder", feature = "proto_encoder"))]
 pub use prost_reflect;
 #[cfg(feature = "proto_raw")]
 pub mod proto_raw_common;
-#[cfg(any(feature = "proto_decoder", feature = "proto_raw"))]
+#[cfg(any(
+    feature = "proto_decoder",
+    feature = "proto_encoder",
+    feature = "proto_raw"
+))]
 mod proto_resolver;
 pub mod schema_registry_common;

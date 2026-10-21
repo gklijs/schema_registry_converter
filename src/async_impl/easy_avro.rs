@@ -8,7 +8,7 @@
 use crate::async_impl::schema_registry::SrSettings;
 use crate::avro_common::{DecodeResult, DecodeResultWithSchema};
 use crate::error::SRCError;
-use crate::schema_registry_common::SubjectNameStrategy;
+use crate::schema_registry_common::{SchemaIdHeader, SubjectNameStrategy};
 use crate::{
     async_impl::avro::{AvroDecoder, AvroEncoder},
     avro_common::AvroSchema,
@@ -38,6 +38,26 @@ impl EasyAvroDecoder {
     ) -> Result<Option<DecodeResultWithSchema>, SRCError> {
         self.decoder.decode_with_schema(bytes).await
     }
+    /// See [`AvroDecoder::decode_with_header_id`].
+    pub async fn decode_with_header_id(
+        &self,
+        header_value: Option<&[u8]>,
+        bytes: Option<&[u8]>,
+    ) -> Result<DecodeResult, SRCError> {
+        self.decoder
+            .decode_with_header_id(header_value, bytes)
+            .await
+    }
+    /// See [`AvroDecoder::decode_with_schema_with_header_id`].
+    pub async fn decode_with_schema_with_header_id(
+        &self,
+        header_value: Option<&[u8]>,
+        bytes: Option<&[u8]>,
+    ) -> Result<Option<DecodeResultWithSchema>, SRCError> {
+        self.decoder
+            .decode_with_schema_with_header_id(header_value, bytes)
+            .await
+    }
 }
 
 /// An encoder used to transform a [Value] to bytes, its much like [AvroEncoder]
@@ -59,6 +79,17 @@ impl EasyAvroEncoder {
     ) -> Result<Vec<u8>, SRCError> {
         self.encoder.encode(values, subject_name_strategy).await
     }
+    /// See [`AvroEncoder::encode_with_header_id`].
+    pub async fn encode_with_header_id(
+        &self,
+        values: Vec<(&str, Value)>,
+        subject_name_strategy: SubjectNameStrategy,
+        is_key: bool,
+    ) -> Result<(Vec<u8>, SchemaIdHeader), SRCError> {
+        self.encoder
+            .encode_with_header_id(values, subject_name_strategy, is_key)
+            .await
+    }
     pub async fn encode_struct(
         &self,
         item: impl Serialize,
@@ -68,6 +99,17 @@ impl EasyAvroEncoder {
             .encode_struct(item, subject_name_strategy)
             .await
     }
+    /// See [`AvroEncoder::encode_struct_with_header_id`].
+    pub async fn encode_struct_with_header_id(
+        &self,
+        item: impl Serialize,
+        subject_name_strategy: &SubjectNameStrategy,
+        is_key: bool,
+    ) -> Result<(Vec<u8>, SchemaIdHeader), SRCError> {
+        self.encoder
+            .encode_struct_with_header_id(item, subject_name_strategy, is_key)
+            .await
+    }
 
     pub async fn encode_value(
         &self,
@@ -75,6 +117,17 @@ impl EasyAvroEncoder {
         subject_name_strategy: &SubjectNameStrategy,
     ) -> Result<Vec<u8>, SRCError> {
         self.encoder.encode_value(item, subject_name_strategy).await
+    }
+    /// See [`AvroEncoder::encode_value_with_header_id`].
+    pub async fn encode_value_with_header_id(
+        &self,
+        item: Value,
+        subject_name_strategy: &SubjectNameStrategy,
+        is_key: bool,
+    ) -> Result<(Vec<u8>, SchemaIdHeader), SRCError> {
+        self.encoder
+            .encode_value_with_header_id(item, subject_name_strategy, is_key)
+            .await
     }
 
     pub async fn get_schema_and_id(

@@ -1,7 +1,6 @@
 use crate::error::SRCError;
-use crate::proto_resolver::{IndexResolver, MessageResolver};
+use crate::proto_resolver::{to_index_bytes, IndexResolver, MessageResolver};
 use crate::schema_registry_common::{get_payload, RegisteredSchema};
-use integer_encoding::VarInt;
 
 /// The message-index bytes for `full_name` in `encode_context`'s schema. This is the confluent
 /// wire format's way of pointing at which message in a (possibly multi-message) `.proto` schema
@@ -14,14 +13,7 @@ pub(crate) fn index_bytes(
     full_name: &str,
 ) -> Result<Vec<u8>, SRCError> {
     match encode_context.resolver.find_index(full_name) {
-        Some(v) if v.len() == 1 && v[0] == 0i32 => Ok(vec![0u8]),
-        Some(v) => {
-            let mut result = (v.len() as i32).encode_var_vec();
-            for i in &*v {
-                result.append(&mut i.encode_var_vec())
-            }
-            Ok(result)
-        }
+        Some(v) => Ok(to_index_bytes(&v)),
         None => Err(SRCError::non_retryable_without_cause(&format!(
             "could not find name {} with resolver",
             full_name

@@ -5,7 +5,7 @@ use futures::FutureExt;
 use std::sync::Arc;
 
 use crate::async_impl::schema_registry::{
-    get_referenced_schema, get_schema_by_guid_and_type, get_schema_by_id_and_type, SrSettings,
+    get_referenced_schemas, get_schema_by_guid_and_type, get_schema_by_id_and_type, SrSettings,
 };
 use crate::error::SRCError;
 use crate::proto_decoder_common::{
@@ -293,27 +293,6 @@ pub struct DecodeResultWithContext {
     pub data_bytes: Vec<u8>,
 }
 
-/// Adds the schemas `registered_schema` references, and the ones those reference, keyed by the
-/// name they're imported by. A schema referenced via several paths is only fetched once.
-fn add_referenced_schemas<'a>(
-    sr_settings: &'a SrSettings,
-    registered_schema: &'a RegisteredSchema,
-    schemas: &'a mut ReferencedSchemas,
-) -> BoxFuture<'a, Result<(), SRCError>> {
-    async move {
-        for r in &registered_schema.references {
-            if schemas.contains_key(&r.name) {
-                continue;
-            }
-            let child_schema = get_referenced_schema(sr_settings, r).await?;
-            add_referenced_schemas(sr_settings, &child_schema, schemas).await?;
-            schemas.insert(r.name.clone(), child_schema.schema);
-        }
-        Ok(())
-    }
-    .boxed()
-}
-
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct DecodeContext {
@@ -346,8 +325,7 @@ async fn to_decode_context(
     sr_settings: &SrSettings,
     registered_schema: RegisteredSchema,
 ) -> Result<Arc<DecodeContext>, SRCError> {
-    let mut referenced_schemas = ReferencedSchemas::new();
-    add_referenced_schemas(sr_settings, &registered_schema, &mut referenced_schemas).await?;
+    let referenced_schemas = get_referenced_schemas(sr_settings, &registered_schema).await?;
     Ok(Arc::new(into_decode_context(
         registered_schema,
         referenced_schemas,

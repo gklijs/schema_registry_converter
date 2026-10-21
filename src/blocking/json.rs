@@ -16,7 +16,7 @@ use crate::error::SRCError;
 use crate::json_common::{
     fetch_fallback, fetch_id, handle_validation, main_url, reference_base,
     reference_depth_exceeded_error, reference_url, to_bytes, to_bytes_raw, to_value,
-    MAX_REFERENCE_DEPTH,
+    ValidationScope, MAX_REFERENCE_DEPTH,
 };
 pub use crate::json_common::{validate, DecodeResult, JsonSchema};
 use crate::schema_registry_common::{
@@ -183,6 +183,7 @@ pub struct JsonDecoder {
     /// [`JsonDecoder::decode_with_header_id`]. Kept separate from `cache` (keyed by id) since a
     /// guid and an id are different keyspaces.
     guid_cache: DashMap<String, Result<Arc<JsonSchema>, SRCError>>,
+    validation_scope: ValidationScope,
 }
 
 impl JsonDecoder {
@@ -198,6 +199,7 @@ impl JsonDecoder {
             sr_settings,
             cache: DashMap::new(),
             guid_cache: DashMap::new(),
+            validation_scope: ValidationScope::new(),
         }
     }
     /// Removes all non-retriable errors from the cache. You might need/want to run this when the
@@ -263,6 +265,12 @@ impl JsonDecoder {
                 "could not create value from bytes",
             )),
         }
+    }
+    /// Validates the value against the schema, including the schemas it references, like
+    /// [`validate`], but keeps the compiled schemas, so validating against the same schema again
+    /// is much faster. Validations through the same decoder happen one at a time.
+    pub fn validate(&self, schema: &JsonSchema, value: &Value) -> Result<(), SRCError> {
+        self.validation_scope.validate(schema, value)
     }
     /// Resolves `id` into a fully self-contained, reference-resolved [`JsonSchema`], using (and
     /// populating) this decoder's own id-keyed cache.
@@ -454,7 +462,7 @@ mod tests {
     use serde_json::{from_str, to_string_pretty, Value};
     use valico::json_dsl;
 
-    use crate::blocking::json::{validate, JsonDecoder, JsonEncoder};
+    use crate::blocking::json::{JsonDecoder, JsonEncoder};
     use crate::blocking::schema_registry::SrSettings;
     use crate::schema_registry_common::{
         build_schema_id_header, get_payload, SubjectNameStrategy, VALUE_SCHEMA_ID_HEADER,
@@ -629,18 +637,18 @@ mod tests {
             .unwrap()
             .unwrap();
         // Each message must validate against its own schema...
-        assert!(validate(&decoded_a.schema, &value_a).is_ok());
+        assert!(decoder.validate(&decoded_a.schema, &value_a).is_ok());
         // ...and fail against the other's, proving they're genuinely different compiled schemas
         // rather than both resolving to whichever was compiled first.
-        assert!(validate(&decoded_a.schema, &value_b).is_err());
+        assert!(decoder.validate(&decoded_a.schema, &value_b).is_err());
         drop(decoded_a);
 
         let decoded_b = decoder
             .decode_with_header_id(Some(&header_b.value), Some(&bytes_b))
             .unwrap()
             .unwrap();
-        assert!(validate(&decoded_b.schema, &value_b).is_ok());
-        assert!(validate(&decoded_b.schema, &value_a).is_err());
+        assert!(decoder.validate(&decoded_b.schema, &value_b).is_ok());
+        assert!(decoder.validate(&decoded_b.schema, &value_a).is_err());
     }
 
     #[test]
@@ -727,7 +735,7 @@ mod tests {
             Err(e) => panic!("Error: {:?}, while none expected", e),
             Ok(v) => panic!("Other value: {:?} than expected Message", v),
         };
-        validate(&message.schema, &message.value).unwrap();
+        decoder.validate(&message.schema, &message.value).unwrap();
         assert_eq!(
             "string",
             message
@@ -823,7 +831,7 @@ mod tests {
             Err(e) => panic!("Error: {:?}, while none expected", e),
             Ok(v) => panic!("Other value: {:?} than expected Message", v),
         };
-        validate(&message.schema, &message.value).unwrap();
+        decoder.validate(&message.schema, &message.value).unwrap();
         assert_eq!(
             "string",
             message
@@ -1193,7 +1201,7 @@ mod tests {
         });
         let bytes_id_8 = get_payload(8, serde_json::to_vec(&payload).unwrap());
         let result = decoder.decode(Some(&bytes_id_8)).unwrap().unwrap();
-        validate(&result.schema, &payload).unwrap();
+        decoder.validate(&result.schema, &payload).unwrap();
     }
 
     #[test]
@@ -1211,7 +1219,7 @@ mod tests {
         let decoder = JsonDecoder::new(sr_settings);
         assert_eq!(
             format!("{:?}", decoder),
-            "JsonDecoder { sr_settings: SrSettings { urls: [\"http://127.0.0.1:1234\"], client: Client, authorization: None }, cache: {}, guid_cache: {} }"
+            "JsonDecoder { sr_settings: SrSettings { urls: [\"http://127.0.0.1:1234\"], client: Client, authorization: None }, cache: {}, guid_cache: {}, validation_scope: ValidationScope { .. } }"
         )
     }
 

@@ -67,6 +67,7 @@ impl SrSettings {
         }
     }
 
+    #[cfg_attr(not(feature = "json"), allow(dead_code))]
     pub(crate) fn url(&self) -> &str {
         &self.urls[0]
     }
@@ -279,6 +280,33 @@ pub fn get_referenced_schema(
         SrCall::GetBySubjectAndVersion(&registered_reference.subject, registered_reference.version),
     )?;
     raw_to_registered_schema(raw_schema, None)
+}
+
+/// The schemas `registered_schema` references, and the ones those reference, keyed by the name
+/// they're imported by. A schema referenced via several paths is only fetched once.
+#[cfg(any(feature = "proto_decoder", feature = "proto_encoder"))]
+pub(crate) fn get_referenced_schemas(
+    sr_settings: &SrSettings,
+    registered_schema: &RegisteredSchema,
+) -> Result<crate::proto_decoder_common::ReferencedSchemas, SRCError> {
+    fn add(
+        sr_settings: &SrSettings,
+        registered_schema: &RegisteredSchema,
+        schemas: &mut crate::proto_decoder_common::ReferencedSchemas,
+    ) -> Result<(), SRCError> {
+        for r in &registered_schema.references {
+            if schemas.contains_key(&r.name) {
+                continue;
+            }
+            let child_schema = get_referenced_schema(sr_settings, r)?;
+            add(sr_settings, &child_schema, schemas)?;
+            schemas.insert(r.name.clone(), child_schema.schema);
+        }
+        Ok(())
+    }
+    let mut schemas = crate::proto_decoder_common::ReferencedSchemas::new();
+    add(sr_settings, registered_schema, &mut schemas)?;
+    Ok(schemas)
 }
 
 fn raw_to_registered_schema(

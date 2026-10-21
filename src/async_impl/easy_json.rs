@@ -5,10 +5,10 @@
 //! _easy_.
 //!
 //! **NOTE**: This module requires `easy` and `json` features to be enabled.
-use crate::async_impl::json::{DecodeResult, JsonDecoder, JsonEncoder};
+use crate::async_impl::json::{DecodeResult, JsonDecoder, JsonEncoder, JsonSchema};
 use crate::async_impl::schema_registry::SrSettings;
 use crate::error::SRCError;
-use crate::schema_registry_common::SubjectNameStrategy;
+use crate::schema_registry_common::{SchemaIdHeader, SubjectNameStrategy};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -25,6 +25,20 @@ impl EasyJsonDecoder {
     }
     pub async fn decode(&self, bytes: Option<&[u8]>) -> Result<Option<DecodeResult>, SRCError> {
         self.decoder.decode(bytes).await
+    }
+    /// See [`JsonDecoder::decode_with_header_id`].
+    pub async fn decode_with_header_id(
+        &self,
+        header_value: Option<&[u8]>,
+        bytes: Option<&[u8]>,
+    ) -> Result<Option<DecodeResult>, SRCError> {
+        self.decoder
+            .decode_with_header_id(header_value, bytes)
+            .await
+    }
+    /// See [`JsonDecoder::validate`].
+    pub fn validate(&self, schema: &JsonSchema, value: &Value) -> Result<(), SRCError> {
+        self.decoder.validate(schema, value)
     }
 }
 
@@ -45,6 +59,17 @@ impl EasyJsonEncoder {
         subject_name_strategy: SubjectNameStrategy,
     ) -> Result<Vec<u8>, SRCError> {
         self.encoder.encode(value, subject_name_strategy).await
+    }
+    /// See [`JsonEncoder::encode_with_header_id`].
+    pub async fn encode_with_header_id(
+        &self,
+        value: &Value,
+        subject_name_strategy: SubjectNameStrategy,
+        is_key: bool,
+    ) -> Result<(Vec<u8>, SchemaIdHeader), SRCError> {
+        self.encoder
+            .encode_with_header_id(value, subject_name_strategy, is_key)
+            .await
     }
 }
 

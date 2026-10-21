@@ -176,6 +176,7 @@ impl SrSettings {
         }
     }
 
+    #[cfg_attr(not(feature = "json"), allow(dead_code))]
     pub(crate) fn url(&self) -> &str {
         &self.urls[0]
     }
@@ -424,6 +425,37 @@ pub async fn get_referenced_schema(
     )
     .await?;
     raw_to_registered_schema(raw_schema, None).await
+}
+
+/// The schemas `registered_schema` references, and the ones those reference, keyed by the name
+/// they're imported by. A schema referenced via several paths is only fetched once.
+#[cfg(any(feature = "proto_decoder", feature = "proto_encoder"))]
+pub(crate) async fn get_referenced_schemas(
+    sr_settings: &SrSettings,
+    registered_schema: &RegisteredSchema,
+) -> Result<crate::proto_decoder_common::ReferencedSchemas, SRCError> {
+    fn add<'a>(
+        sr_settings: &'a SrSettings,
+        registered_schema: &'a RegisteredSchema,
+        schemas: &'a mut crate::proto_decoder_common::ReferencedSchemas,
+    ) -> futures::future::BoxFuture<'a, Result<(), SRCError>> {
+        use futures::FutureExt;
+        async move {
+            for r in &registered_schema.references {
+                if schemas.contains_key(&r.name) {
+                    continue;
+                }
+                let child_schema = get_referenced_schema(sr_settings, r).await?;
+                add(sr_settings, &child_schema, schemas).await?;
+                schemas.insert(r.name.clone(), child_schema.schema);
+            }
+            Ok(())
+        }
+        .boxed()
+    }
+    let mut schemas = crate::proto_decoder_common::ReferencedSchemas::new();
+    add(sr_settings, registered_schema, &mut schemas).await?;
+    Ok(schemas)
 }
 
 /// Gets the registered schema for an explicit subject and version (`None` for "latest"),

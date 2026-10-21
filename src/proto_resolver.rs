@@ -3,23 +3,29 @@ use std::io::BufReader;
 use std::sync::Arc;
 
 use crate::error::SRCError;
-use integer_encoding::VarIntReader;
+use integer_encoding::{VarInt, VarIntReader};
 use prost_types::field_descriptor_proto::Type;
 use prost_types::{DescriptorProto, FieldDescriptorProto, FileDescriptorProto};
 
 /// Resolves a confluent message index, the path to a message in the schema, to the full name of
 /// that message.
 #[derive(Debug, Clone)]
+#[cfg_attr(not(feature = "proto_raw"), allow(dead_code))]
 pub(crate) struct MessageResolver {
     map: HashMap<Vec<i32>, Arc<String>>,
 }
 
 /// Resolves the full name of a message to its confluent message index.
 #[derive(Debug, Clone)]
+#[cfg_attr(
+    not(any(feature = "proto_encoder", feature = "proto_raw")),
+    allow(dead_code)
+)]
 pub(crate) struct IndexResolver {
     map: HashMap<String, Arc<Vec<i32>>>,
 }
 
+#[cfg_attr(not(feature = "proto_raw"), allow(dead_code))]
 impl MessageResolver {
     /// Parses the schema text, without resolving its imports.
     pub(crate) fn new(schema: &str) -> Result<MessageResolver, SRCError> {
@@ -41,23 +47,38 @@ impl MessageResolver {
 
 impl IndexResolver {
     /// Parses the schema text, without resolving its imports.
+    #[cfg_attr(not(feature = "proto_raw"), allow(dead_code))]
     pub(crate) fn new(schema: &str) -> Result<IndexResolver, SRCError> {
-        let map = message_indexes(&parse_schema(schema)?)
+        Ok(IndexResolver::from_file(&parse_schema(schema)?))
+    }
+
+    #[cfg_attr(
+        not(any(feature = "proto_encoder", feature = "proto_raw")),
+        allow(dead_code)
+    )]
+    pub(crate) fn from_file(file: &FileDescriptorProto) -> IndexResolver {
+        let map = message_indexes(file)
             .into_iter()
             .map(|(index, name)| (name, Arc::new(index)))
             .collect();
-        Ok(IndexResolver { map })
+        IndexResolver { map }
     }
 
+    #[cfg_attr(
+        not(any(feature = "proto_encoder", feature = "proto_raw")),
+        allow(dead_code)
+    )]
     pub(crate) fn find_index(&self, name: &str) -> Option<Arc<Vec<i32>>> {
         self.map.get(name).cloned()
     }
 
+    #[cfg_attr(not(feature = "proto_raw"), allow(dead_code))]
     pub(crate) fn is_single_message(&self) -> bool {
         self.map.len() == 1
     }
 }
 
+#[cfg_attr(not(feature = "proto_raw"), allow(dead_code))]
 fn parse_schema(schema: &str) -> Result<FileDescriptorProto, SRCError> {
     protox_parse::parse("schema.proto", schema)
         .map_err(|e| SRCError::non_retryable_with_cause(e, "Could not parse protobuf schema"))
@@ -123,6 +144,27 @@ fn is_generated<'a>(
         })
 }
 
+/// The confluent wire format bytes of a message index: the number of indexes followed by the
+/// indexes, as zigzag varints, or just `0` for the common case of the first message.
+#[cfg_attr(
+    not(any(feature = "proto_encoder", feature = "proto_raw")),
+    allow(dead_code)
+)]
+pub(crate) fn to_index_bytes(index: &[i32]) -> Vec<u8> {
+    if index == [0] {
+        return vec![0u8];
+    }
+    let mut result = (index.len() as i32).encode_var_vec();
+    for i in index {
+        result.append(&mut i.encode_var_vec())
+    }
+    result
+}
+
+#[cfg_attr(
+    not(any(feature = "proto_decoder", feature = "proto_raw")),
+    allow(dead_code)
+)]
 pub(crate) fn to_index_and_data(bytes: &[u8]) -> Result<(Vec<i32>, Vec<u8>), SRCError> {
     if bytes.is_empty() {
         return Err(SRCError::non_retryable_without_cause(
@@ -147,6 +189,7 @@ pub(crate) fn to_index_and_data(bytes: &[u8]) -> Result<(Vec<i32>, Vec<u8>), SRC
     }
 }
 
+#[cfg_attr(not(feature = "proto_raw"), allow(dead_code))]
 pub(crate) fn resolve_name(
     resolver: &MessageResolver,
     index: &[i32],
