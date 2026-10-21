@@ -9,7 +9,7 @@ use crate::async_impl::schema_registry::{
 };
 use crate::error::SRCError;
 use crate::proto_decoder_common::{
-    decode_message, find_message, to_file_descriptor, ReferencedSchemas,
+    decode_message, to_file_descriptor, MessageIndex, ReferencedSchemas,
 };
 use crate::proto_resolver::to_index_and_data;
 use crate::schema_registry_common::{
@@ -101,7 +101,7 @@ impl<'a> ProtoDecoder<'a> {
                     HeaderSchemaId::Guid(guid) => self.get_context_by_guid(guid).await?,
                 };
                 let (index, _empty) = to_index_and_data(index_bytes)?;
-                let descriptor = find_message(&context.file_descriptor, &index)?;
+                let descriptor = context.messages.find(&index)?;
                 Ok(Value::Message(decode_message(descriptor, payload)?))
             }
         }
@@ -130,7 +130,7 @@ impl<'a> ProtoDecoder<'a> {
                     HeaderSchemaId::Guid(guid) => self.get_context_by_guid(guid).await?,
                 };
                 let (index, _empty) = to_index_and_data(index_bytes)?;
-                let descriptor = find_message(&context.file_descriptor, &index)?;
+                let descriptor = context.messages.find(&index)?;
                 let full_name = descriptor.full_name().to_owned();
                 let value = decode_message(descriptor, payload)?;
                 Ok(Some(DecodeResultWithContext {
@@ -147,7 +147,7 @@ impl<'a> ProtoDecoder<'a> {
     async fn deserialize(&self, id: u32, bytes: &[u8]) -> Result<DynamicMessage, SRCError> {
         let context = self.get_context(id).await?;
         let (index, data) = to_index_and_data(bytes)?;
-        let descriptor = find_message(&context.file_descriptor, &index)?;
+        let descriptor = context.messages.find(&index)?;
         decode_message(descriptor, &data)
     }
     /// Decodes bytes into a value.
@@ -179,7 +179,7 @@ impl<'a> ProtoDecoder<'a> {
     ) -> Result<DecodeResultWithContext, SRCError> {
         let context = self.get_context(id).await?;
         let (index, data_bytes) = to_index_and_data(bytes)?;
-        let descriptor = find_message(&context.file_descriptor, &index)?;
+        let descriptor = context.messages.find(&index)?;
         let full_name = descriptor.full_name().to_owned();
         let value = decode_message(descriptor, &data_bytes)?;
         Ok(DecodeResultWithContext {
@@ -319,6 +319,8 @@ pub struct DecodeContext {
     /// The compiled root schema, its imports can be reached via
     /// [`FileDescriptor::parent_pool`].
     pub file_descriptor: FileDescriptor,
+    /// The messages of the root schema by their confluent message index, see [`MessageIndex`].
+    pub(crate) messages: MessageIndex,
 }
 
 /// Compiles the schema texts into a `DecodeContext`. The result is cached per schema id/guid,
@@ -330,9 +332,11 @@ fn into_decode_context(
     referenced_schemas: ReferencedSchemas,
 ) -> Result<DecodeContext, SRCError> {
     let file_descriptor = to_file_descriptor(&schema.schema, referenced_schemas)?;
+    let messages = MessageIndex::new(&file_descriptor);
     Ok(DecodeContext {
         schema,
         file_descriptor,
+        messages,
     })
 }
 

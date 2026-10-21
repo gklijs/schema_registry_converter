@@ -7,7 +7,7 @@ use crate::blocking::schema_registry::{
 };
 use crate::error::SRCError;
 use crate::proto_decoder_common::{
-    decode_message, find_message, to_file_descriptor, ReferencedSchemas,
+    decode_message, to_file_descriptor, MessageIndex, ReferencedSchemas,
 };
 use crate::proto_resolver::to_index_and_data;
 use crate::schema_registry_common::{
@@ -87,7 +87,7 @@ impl ProtoDecoder {
                     HeaderSchemaId::Guid(guid) => self.guid_context(guid)?,
                 };
                 let (index, _empty) = to_index_and_data(index_bytes)?;
-                let descriptor = find_message(&context.file_descriptor, &index)?;
+                let descriptor = context.messages.find(&index)?;
                 Ok(Value::Message(decode_message(descriptor, payload)?))
             }
         }
@@ -97,7 +97,7 @@ impl ProtoDecoder {
     fn deserialize(&self, id: u32, bytes: &[u8]) -> Result<DynamicMessage, SRCError> {
         let context = self.context(id)?;
         let (index, data) = to_index_and_data(bytes)?;
-        let descriptor = find_message(&context.file_descriptor, &index)?;
+        let descriptor = context.messages.find(&index)?;
         decode_message(descriptor, &data)
     }
     /// Decodes bytes into a decode result.
@@ -129,7 +129,7 @@ impl ProtoDecoder {
     ) -> Result<DecodeResultWithContext, SRCError> {
         let context = self.context(id)?;
         let (index, data_bytes) = to_index_and_data(bytes)?;
-        let descriptor = find_message(&context.file_descriptor, &index)?;
+        let descriptor = context.messages.find(&index)?;
         let full_name = descriptor.full_name().to_owned();
         let value = decode_message(descriptor, &data_bytes)?;
         Ok(DecodeResultWithContext {
@@ -223,6 +223,8 @@ pub struct DecodeContext {
     /// The compiled root schema, its imports can be reached via
     /// [`FileDescriptor::parent_pool`].
     pub file_descriptor: FileDescriptor,
+    /// The messages of the root schema by their confluent message index, see [`MessageIndex`].
+    pub(crate) messages: MessageIndex,
 }
 
 fn to_resolve_context(
@@ -232,9 +234,11 @@ fn to_resolve_context(
     let mut referenced_schemas = ReferencedSchemas::new();
     add_referenced_schemas(sr_settings, &schema, &mut referenced_schemas)?;
     let file_descriptor = to_file_descriptor(&schema.schema, referenced_schemas)?;
+    let messages = MessageIndex::new(&file_descriptor);
     Ok(Arc::new(DecodeContext {
         schema,
         file_descriptor,
+        messages,
     }))
 }
 
