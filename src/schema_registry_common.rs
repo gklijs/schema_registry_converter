@@ -826,4 +826,69 @@ mod test {
             result
         )
     }
+
+    #[test]
+    fn supplied_schema_and_reference_builders() {
+        let mut properties = std::collections::HashMap::new();
+        properties.insert(String::from("owner"), String::from("team"));
+        let mut tags = std::collections::HashMap::new();
+        tags.insert(String::from("PII"), vec![String::from("ssn")]);
+
+        let nested = super::SuppliedReference::new(
+            String::from("nested"),
+            String::from("nested-subject"),
+            String::from("nested-schema"),
+        );
+        let reference = super::SuppliedReference::new(
+            String::from("ref"),
+            String::from("ref-subject"),
+            String::from("ref-schema"),
+        )
+        .with_references(vec![nested])
+        .with_properties(properties.clone())
+        .with_tags(tags.clone());
+        assert_eq!(reference.references.len(), 1);
+        assert_eq!(reference.references[0].name, "nested");
+        assert_eq!(reference.properties.as_ref(), Some(&properties));
+        assert_eq!(reference.tags.as_ref(), Some(&tags));
+
+        let schema = SuppliedSchema::new(
+            Some(String::from("Name")),
+            SchemaType::Json,
+            String::from("{}"),
+        )
+        .with_references(vec![reference])
+        .with_properties(properties.clone())
+        .with_tags(tags.clone());
+        assert_eq!(schema.name.as_deref(), Some("Name"));
+        assert_eq!(schema.references[0].subject, "ref-subject");
+        assert_eq!(schema.properties, Some(properties));
+        assert_eq!(schema.tags, Some(tags));
+    }
+
+    #[test]
+    fn schema_id_header_for_requires_guid() {
+        let err = super::schema_id_header_for(None, false, &[]).unwrap_err();
+        assert!(err.error.contains("did not include a guid"));
+
+        let header = super::schema_id_header_for(
+            Some("cc0e0e0e-53c1-4a1a-8f1a-000000000001"),
+            true,
+            &[0x00],
+        )
+        .unwrap();
+        assert_eq!(header.name, KEY_SCHEMA_ID_HEADER);
+        assert_eq!(header.value.len(), 18);
+    }
+
+    #[test]
+    fn invalid_guid_characters() {
+        let err =
+            super::schema_id_header_for(Some("zz0e0e0e-53c1-4a1a-8f1a-000000000001"), false, &[])
+                .unwrap_err();
+        assert_eq!(
+            err.error,
+            "Invalid schema guid 'zz0e0e0e-53c1-4a1a-8f1a-000000000001'"
+        );
+    }
 }

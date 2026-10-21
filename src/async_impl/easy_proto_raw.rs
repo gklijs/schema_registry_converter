@@ -179,4 +179,73 @@ mod tests {
 
         assert_eq!(encoded_data, get_proto_hb_101())
     }
+
+    const GUID: &str = "cc0e0e0e-53c1-4a1a-8f1a-000000000001";
+    const GUID_HEADER: [u8; 18] = [
+        0x01, 0xcc, 0x0e, 0x0e, 0x0e, 0x53, 0xc1, 0x4a, 0x1a, 0x8f, 0x1a, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x01, 0x00,
+    ];
+
+    #[tokio::test]
+    async fn test_header_id_round_trip() {
+        let mut server = Server::new_async().await;
+        let body = format!(
+            "{{\"schema\":\"{}\", \"schemaType\":\"PROTOBUF\", \"id\":7, \"guid\":\"{}\"}}",
+            get_proto_hb_schema(),
+            GUID
+        );
+        let _latest = server
+            .mock("GET", "/subjects/nl.openweb.data.Heartbeat/versions/latest")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(&body)
+            .create();
+        let _guid = server
+            .mock(
+                "GET",
+                format!("/schemas/guids/{GUID}?deleted=true").as_str(),
+            )
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(&body)
+            .create();
+
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
+        let encoder = EasyProtoRawEncoder::new(sr_settings.clone());
+        let decoder = EasyProtoRawDecoder::new(sr_settings);
+        let strategy =
+            SubjectNameStrategy::RecordNameStrategy(String::from("nl.openweb.data.Heartbeat"));
+
+        let (bytes, header) = encoder
+            .encode_with_header_id(
+                get_proto_hb_101_only_data(),
+                "nl.openweb.data.Heartbeat",
+                strategy.clone(),
+                false,
+            )
+            .await
+            .unwrap();
+        assert_eq!(bytes, get_proto_hb_101_only_data());
+        assert_eq!(header.name, "__value_schema_id");
+        assert_eq!(header.value, GUID_HEADER);
+
+        let (bytes, header) = encoder
+            .encode_single_message_with_header_id(get_proto_hb_101_only_data(), strategy, true)
+            .await
+            .unwrap();
+        assert_eq!(bytes, get_proto_hb_101_only_data());
+        assert_eq!(header.name, "__key_schema_id");
+        assert_eq!(header.value, GUID_HEADER);
+
+        let raw_result = decoder
+            .decode_with_header_id(Some(&header.value), Some(&bytes))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(raw_result.bytes, get_proto_hb_101_only_data());
+        assert_eq!(*raw_result.full_name, "nl.openweb.data.Heartbeat");
+    }
 }

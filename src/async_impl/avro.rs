@@ -2277,4 +2277,177 @@ mod tests {
             .into_cache())
         )
     }
+
+    const HB_GUID: &str = "cc0e0e0e-53c1-4a1a-8f1a-000000000001";
+    const HB_GUID_HEADER: [u8; 17] = [
+        0x01, 0xcc, 0x0e, 0x0e, 0x0e, 0x53, 0xc1, 0x4a, 0x1a, 0x8f, 0x1a, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x01,
+    ];
+    const HB_RESPONSE: &str = r#"{"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#;
+
+    #[tokio::test]
+    async fn decode_with_header_id_all_paths() {
+        let mut server = Server::new_async().await;
+        let _id = server
+            .mock("GET", "/schemas/ids/1?deleted=true")
+            .with_status(200)
+            .with_body(HB_RESPONSE)
+            .create();
+        let _guid = server
+            .mock(
+                "GET",
+                format!("/schemas/guids/{HB_GUID}?deleted=true").as_str(),
+            )
+            .with_status(200)
+            .with_body(HB_RESPONSE)
+            .create();
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
+        let decoder = AvroDecoder::new(sr_settings);
+        let expected = Value::Record(vec![("beat".to_string(), Value::Long(3))]);
+        let id_header = [0x00, 0x00, 0x00, 0x00, 0x01];
+
+        let result = decoder
+            .decode_with_header_id(Some(&id_header), None)
+            .await
+            .unwrap();
+        assert_eq!(result.value, Value::Null);
+        assert!(decoder
+            .decode_with_schema_with_header_id(Some(&id_header), None)
+            .await
+            .unwrap()
+            .is_none());
+
+        for (header, bytes) in [
+            (None, &[0u8, 0, 0, 0, 1, 6][..]),
+            (Some(&id_header[..]), &[6u8][..]),
+            (Some(&HB_GUID_HEADER[..]), &[6u8][..]),
+        ] {
+            let result = decoder
+                .decode_with_header_id(header, Some(bytes))
+                .await
+                .unwrap();
+            assert_eq!(result.value, expected);
+            assert_eq!(result.name.unwrap().name(), "Heartbeat");
+            let result = decoder
+                .decode_with_schema_with_header_id(header, Some(bytes))
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(result.value, expected);
+        }
+
+        let err = decoder
+            .decode_with_header_id(Some(&[0x02]), Some(&[6]))
+            .await
+            .unwrap_err();
+        assert!(err.error.starts_with("Invalid schema id header"));
+        let err = decoder
+            .decode_with_header_id(Some(&id_header), Some(&[]))
+            .await
+            .unwrap_err();
+        assert!(!err.retriable);
+        let err = decoder
+            .decode_with_schema(Some(&[1, 0, 0, 0, 1, 6]))
+            .await
+            .unwrap_err();
+        assert!(err.error.starts_with("Invalid bytes"));
+    }
+
+    #[tokio::test]
+    async fn decode_with_reference_errors() {
+        let mut server = Server::new_async().await;
+        let _missing = server
+            .mock("GET", "/schemas/ids/1?deleted=true")
+            .with_status(200)
+            .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"Outer\",\"fields\":[{\"name\":\"inner\",\"type\":\"Inner\"}]}","references":[{"name":"Inner","subject":"inner","version":1}]}"#)
+            .create();
+        let _invalid = server
+            .mock("GET", "/schemas/ids/2?deleted=true")
+            .with_status(200)
+            .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"Outer\",\"fields\":[{\"name\":\"inner\",\"type\":\"Inner\"}]}","references":[{"name":"Inner","subject":"invalid","version":1}]}"#)
+            .create();
+        let _not_json = server
+            .mock("GET", "/schemas/ids/3?deleted=true")
+            .with_status(200)
+            .with_body(r#"{"schema":"not json"}"#)
+            .create();
+        let _not_avro = server
+            .mock("GET", "/schemas/ids/4?deleted=true")
+            .with_status(200)
+            .with_body(r#"{"schema":"{}","schemaType":"JSON"}"#)
+            .create();
+        let _inner_missing = server
+            .mock("GET", "/subjects/inner/versions/1")
+            .with_status(404)
+            .with_body(r#"{"error_code":40401,"message":"Subject not found"}"#)
+            .create();
+        let _inner_invalid = server
+            .mock("GET", "/subjects/invalid/versions/1")
+            .with_status(200)
+            .with_body(r#"{"id":5,"schema":"not json"}"#)
+            .create();
+
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
+        let decoder = AvroDecoder::new(sr_settings);
+
+        let err = decoder.decode(Some(&[0, 0, 0, 0, 1, 6])).await.unwrap_err();
+        assert!(err.error.starts_with("problem with reference"));
+        let err = decoder.decode(Some(&[0, 0, 0, 0, 2, 6])).await.unwrap_err();
+        assert_eq!(err.error, "problem serializing not json");
+        let err = decoder.decode(Some(&[0, 0, 0, 0, 3, 6])).await.unwrap_err();
+        assert_eq!(err.error, "failed to parse Avro schema");
+        let err = decoder.decode(Some(&[0, 0, 0, 0, 4, 6])).await.unwrap_err();
+        assert!(!err.retriable);
+    }
+
+    #[tokio::test]
+    async fn encode_with_header_id_variants() {
+        let mut server = Server::new_async().await;
+        let _m = server.mock("GET", "/subjects/heartbeat-value/versions/latest")
+            .with_status(200)
+            .with_body(format!(r#"{{"subject":"heartbeat-value","version":1,"id":3,"guid":"{HB_GUID}","schema":"{{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{{\"name\":\"beat\",\"type\":\"long\"}}]}}"}}"#))
+            .expect(1)
+            .create();
+        let _old = server.mock("GET", "/subjects/old-value/versions/latest")
+            .with_status(200)
+            .with_body(r#"{"subject":"old-value","version":1,"id":4,"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
+            .create();
+
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
+        let encoder = AvroEncoder::new(sr_settings);
+        let strategy = SubjectNameStrategy::TopicNameStrategy(String::from("heartbeat"), false);
+
+        let (bytes, header) = encoder
+            .encode_with_header_id(vec![("beat", Value::Long(3))], strategy.clone(), true)
+            .await
+            .unwrap();
+        assert_eq!(bytes, vec![6]);
+        assert_eq!(header.name, "__key_schema_id");
+        assert_eq!(header.value, HB_GUID_HEADER);
+
+        let (bytes, header) = encoder
+            .encode_struct_with_header_id(Heartbeat { beat: 3 }, &strategy, false)
+            .await
+            .unwrap();
+        assert_eq!(bytes, vec![6]);
+        assert_eq!(header.name, "__value_schema_id");
+        assert_eq!(header.value, HB_GUID_HEADER);
+
+        let old = SubjectNameStrategy::TopicNameStrategy(String::from("old"), false);
+        let err = encoder
+            .encode_struct_with_header_id(Heartbeat { beat: 3 }, &old, false)
+            .await
+            .unwrap_err();
+        assert!(err.error.contains("did not include a guid"));
+        _m.assert_async().await;
+    }
 }

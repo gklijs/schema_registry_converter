@@ -275,4 +275,97 @@ mod tests {
             ])
         );
     }
+
+    const GUID: &str = "cc0e0e0e-53c1-4a1a-8f1a-000000000001";
+    const GUID_HEADER: [u8; 17] = [
+        0x01, 0xcc, 0x0e, 0x0e, 0x0e, 0x53, 0xc1, 0x4a, 0x1a, 0x8f, 0x1a, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x01,
+    ];
+
+    #[tokio::test]
+    async fn test_decode_with_header_id() {
+        let mut server = Server::new_async().await;
+        let _m = server.mock("GET", format!("/schemas/guids/{GUID}?deleted=true").as_str())
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
+            .expect(1)
+            .create();
+
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
+        let decoder = EasyAvroDecoder::new(sr_settings);
+        let expected = Value::Record(vec![("beat".to_string(), Value::Long(3))]);
+
+        let result = decoder
+            .decode_with_header_id(Some(&GUID_HEADER), Some(&[6]))
+            .await
+            .unwrap();
+        assert_eq!(result.value, expected);
+
+        let result = decoder
+            .decode_with_schema_with_header_id(Some(&GUID_HEADER), Some(&[6]))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.value, expected);
+        _m.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_encode_with_header_id() {
+        let mut server = Server::new_async().await;
+        let _m = server.mock("GET", "/subjects/heartbeat-value/versions/latest")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(format!(r#"{{"subject":"heartbeat-value","version":1,"id":3,"guid":"{GUID}","schema":"{{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{{\"name\":\"beat\",\"type\":\"long\"}}]}}"}}"#))
+            .expect(1)
+            .create();
+
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
+        let encoder = EasyAvroEncoder::new(sr_settings);
+        let strategy = SubjectNameStrategy::TopicNameStrategy(String::from("heartbeat"), false);
+
+        let schema = encoder
+            .get_schema_and_id("heartbeat-value", strategy.clone())
+            .await
+            .unwrap();
+        assert_eq!(schema.id, 3);
+
+        let (bytes, header) = encoder
+            .encode_with_header_id(vec![("beat", Value::Long(3))], strategy.clone(), false)
+            .await
+            .unwrap();
+        assert_eq!(bytes, vec![6]);
+        assert_eq!(header.name, "__value_schema_id");
+        assert_eq!(header.value, GUID_HEADER);
+
+        let (bytes, header) = encoder
+            .encode_struct_with_header_id(Heartbeat { beat: 3 }, &strategy, true)
+            .await
+            .unwrap();
+        assert_eq!(bytes, vec![6]);
+        assert_eq!(header.name, "__key_schema_id");
+        assert_eq!(header.value, GUID_HEADER);
+
+        let value = Value::Record(vec![("beat".to_string(), Value::Long(3))]);
+        let bytes = encoder
+            .encode_value(value.clone(), &strategy)
+            .await
+            .unwrap();
+        assert_eq!(bytes, vec![0, 0, 0, 0, 3, 6]);
+
+        let (bytes, header) = encoder
+            .encode_value_with_header_id(value, &strategy, false)
+            .await
+            .unwrap();
+        assert_eq!(bytes, vec![6]);
+        assert_eq!(header.value, GUID_HEADER);
+        _m.assert_async().await;
+    }
 }

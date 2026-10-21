@@ -787,8 +787,392 @@ mod tests {
     };
     use crate::schema_registry_common::{
         Metadata, RawRegisteredSchema, RegisteredReference, RegisteredSchema, SchemaType,
-        SuppliedSchema,
+        SuppliedReference, SuppliedSchema,
     };
+
+    const HEARTBEAT: &str = r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#;
+    const HEARTBEAT_RESPONSE: &str = r#"{"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#;
+
+    fn settings(url: String) -> SrSettings {
+        SrSettings::new_builder(url).no_proxy().build().unwrap()
+    }
+
+    #[test]
+    fn get_all_subjects_falls_back_to_second_url() {
+        let mut server = mockito::Server::new();
+        let _m = server
+            .mock("GET", "/subjects")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(r#"["a-value","b-value"]"#)
+            .create();
+
+        let sr_settings = SrSettings::new_builder(String::from("http://127.0.0.1:1"))
+            .add_url(server.url())
+            .set_token_authorization("token")
+            .no_proxy()
+            .build()
+            .unwrap();
+
+        let subjects = crate::blocking::schema_registry::get_all_subjects(&sr_settings).unwrap();
+        assert_eq!(subjects, vec!["a-value", "b-value"]);
+    }
+
+    #[test]
+    fn get_all_subjects_invalid_response() {
+        let mut server = mockito::Server::new();
+        let _m = server
+            .mock("GET", "/subjects")
+            .with_status(200)
+            .with_body(r#"{"not":"a list"}"#)
+            .create();
+
+        let err = crate::blocking::schema_registry::get_all_subjects(&settings(server.url()))
+            .unwrap_err();
+        assert_eq!(err.error, "could not parse to list of subjects");
+    }
+
+    #[test]
+    fn get_all_versions_falls_back_to_second_url() {
+        let mut server = mockito::Server::new();
+        let _m = server
+            .mock("GET", "/subjects/heartbeat-value/versions")
+            .with_status(200)
+            .with_body("[1,2,3]")
+            .create();
+
+        let sr_settings = SrSettings::new_builder(String::from("http://127.0.0.1:1"))
+            .add_url(server.url())
+            .set_basic_authorization("user", None)
+            .no_proxy()
+            .build()
+            .unwrap();
+
+        let versions = crate::blocking::schema_registry::get_all_versions(
+            &sr_settings,
+            String::from("heartbeat-value"),
+        )
+        .unwrap();
+        assert_eq!(versions, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn get_all_versions_invalid_response() {
+        let mut server = mockito::Server::new();
+        let _m = server
+            .mock("GET", "/subjects/heartbeat-value/versions")
+            .with_status(200)
+            .with_body(r#"["one"]"#)
+            .create();
+
+        let err = crate::blocking::schema_registry::get_all_versions(
+            &settings(server.url()),
+            String::from("heartbeat-value"),
+        )
+        .unwrap_err();
+        assert_eq!(err.error, "could not parse to list of versions, the http call failed, cause will give more information");
+    }
+
+    fn schema_with_reference(schema_type: SchemaType) -> SuppliedSchema {
+        let nested = SuppliedReference::new(
+            String::from("nested.avsc"),
+            String::from("nested-subject"),
+            String::from(r#"{"type":"fixed","name":"Nested","size":1}"#),
+        );
+        let reference = SuppliedReference::new(
+            String::from("ref.avsc"),
+            String::from("ref-subject"),
+            String::from(r#"{"type":"enum","name":"Ref","symbols":["A"]}"#),
+        )
+        .with_references(vec![nested]);
+        SuppliedSchema::new(None, schema_type, String::from(HEARTBEAT))
+            .with_references(vec![reference])
+    }
+
+    #[test]
+    fn is_compatible_schema_with_references() {
+        let mut server = mockito::Server::new();
+        let compatible = r#"{"is_compatible":true}"#;
+        let _nested_compat = server
+            .mock("POST", "/compatibility/subjects/nested-subject/versions")
+            .with_status(200)
+            .with_body(compatible)
+            .create();
+        let _nested_version = server
+            .mock("POST", "/subjects/nested-subject?deleted=false")
+            .with_status(200)
+            .with_body(r#"{"id":3,"version":1}"#)
+            .create();
+        let _ref_compat = server
+            .mock("POST", "/compatibility/subjects/ref-subject/versions")
+            .with_status(200)
+            .with_body(compatible)
+            .create();
+        let _ref_version = server
+            .mock("POST", "/subjects/ref-subject?deleted=false")
+            .with_status(200)
+            .with_body(r#"{"id":2,"version":4}"#)
+            .create();
+        let _compat = server
+            .mock("POST", "/compatibility/subjects/heartbeat-value/versions")
+            .match_body(mockito::Matcher::PartialJson(serde_json::json!({
+                "references": [{"name": "ref.avsc", "subject": "ref-subject", "version": 4}]
+            })))
+            .with_status(200)
+            .with_body(compatible)
+            .create();
+
+        let sr_settings = settings(server.url());
+        for schema_type in [
+            SchemaType::Avro,
+            SchemaType::Protobuf,
+            SchemaType::Json,
+            SchemaType::Other(String::from("CUSTOM")),
+        ] {
+            let result = crate::blocking::schema_registry::is_compatible_schema(
+                &sr_settings,
+                String::from("heartbeat-value"),
+                schema_with_reference(schema_type),
+            );
+            assert!(result.unwrap());
+        }
+    }
+
+    #[test]
+    fn is_compatible_schema_incompatible_reference() {
+        let mut server = mockito::Server::new();
+        let _nested_compat = server
+            .mock("POST", "/compatibility/subjects/nested-subject/versions")
+            .with_status(200)
+            .with_body(r#"{"is_compatible":false}"#)
+            .create();
+
+        let result = crate::blocking::schema_registry::is_compatible_schema(
+            &settings(server.url()),
+            String::from("heartbeat-value"),
+            schema_with_reference(SchemaType::Avro),
+        );
+        assert!(!result.unwrap());
+    }
+
+    #[test]
+    fn is_compatible_schema_incompatible_and_errors() {
+        let mut server = mockito::Server::new();
+        let _compat = server
+            .mock("POST", "/compatibility/subjects/heartbeat-value/versions")
+            .with_status(200)
+            .with_body(r#"{"is_compatible":false}"#)
+            .create();
+        let _invalid = server
+            .mock("POST", "/compatibility/subjects/invalid-value/versions")
+            .with_status(200)
+            .with_body(r#"{"compatible":"maybe"}"#)
+            .create();
+        let _error = server
+            .mock("POST", "/compatibility/subjects/error-value/versions")
+            .with_status(503)
+            .with_body(r#"{"error_code":50302,"message":"unavailable"}"#)
+            .create();
+
+        let sr_settings = settings(server.url());
+        let schema = SuppliedSchema::new(None, SchemaType::Avro, String::from(HEARTBEAT));
+        let result = crate::blocking::schema_registry::is_compatible_schema(
+            &sr_settings,
+            String::from("heartbeat-value"),
+            schema.clone(),
+        );
+        assert!(!result.unwrap());
+
+        let err = crate::blocking::schema_registry::is_compatible_schema(
+            &sr_settings,
+            String::from("invalid-value"),
+            schema.clone(),
+        )
+        .unwrap_err();
+        assert_eq!(err.error, "could not parse compatibility response");
+
+        let err = crate::blocking::schema_registry::is_compatible_schema(
+            &sr_settings,
+            String::from("error-value"),
+            schema,
+        )
+        .unwrap_err();
+        assert!(err.retriable);
+    }
+
+    #[test]
+    fn post_schema_with_nested_references() {
+        let mut server = mockito::Server::new();
+        let _nested_new = server
+            .mock("POST", "/subjects/nested-subject/versions")
+            .with_status(200)
+            .with_body(r#"{"id":3}"#)
+            .create();
+        let _nested_version = server
+            .mock("POST", "/subjects/nested-subject?deleted=false")
+            .with_status(200)
+            .with_body(r#"{"id":3,"version":1}"#)
+            .create();
+        let _ref_new = server
+            .mock("POST", "/subjects/ref-subject/versions")
+            .with_status(200)
+            .with_body(r#"{"id":2}"#)
+            .create();
+        let _ref_version = server
+            .mock("POST", "/subjects/ref-subject?deleted=false")
+            .with_status(200)
+            .with_body(r#"{"id":2,"version":4}"#)
+            .create();
+        let _new = server
+            .mock("POST", "/subjects/heartbeat-value/versions")
+            .with_status(200)
+            .with_body(r#"{"id":1}"#)
+            .create();
+
+        let result = post_schema(
+            &settings(server.url()),
+            String::from("heartbeat-value"),
+            schema_with_reference(SchemaType::Other(String::from("CUSTOM"))),
+        )
+        .unwrap();
+        assert_eq!(result.id, 1);
+        assert_eq!(result.references.len(), 1);
+        assert_eq!(result.references[0].version, 4);
+    }
+
+    #[test]
+    fn post_schema_reference_without_version() {
+        let mut server = mockito::Server::new();
+        let _nested_new = server
+            .mock("POST", "/subjects/nested-subject/versions")
+            .with_status(200)
+            .with_body(r#"{"id":3}"#)
+            .create();
+        let _nested_version = server
+            .mock("POST", "/subjects/nested-subject?deleted=false")
+            .with_status(200)
+            .with_body(r#"{"id":3}"#)
+            .create();
+
+        let err = post_schema(
+            &settings(server.url()),
+            String::from("heartbeat-value"),
+            schema_with_reference(SchemaType::Json),
+        )
+        .unwrap_err();
+        assert_eq!(err.error, "Error posting a reference");
+    }
+
+    #[test]
+    fn post_schema_without_id_in_response() {
+        let mut server = mockito::Server::new();
+        let _new = server
+            .mock("POST", "/subjects/heartbeat-value/versions")
+            .with_status(200)
+            .with_body(r#"{}"#)
+            .create();
+
+        let err = post_schema(
+            &settings(server.url()),
+            String::from("heartbeat-value"),
+            SuppliedSchema::new(
+                None,
+                SchemaType::Protobuf,
+                String::from("syntax = \"proto3\";"),
+            ),
+        )
+        .unwrap_err();
+        assert!(err.error.starts_with("Could not get id from response"));
+    }
+
+    #[test]
+    fn get_schema_by_id_and_type_wrong_type() {
+        let mut server = mockito::Server::new();
+        let _m = server
+            .mock("GET", "/schemas/ids/1?deleted=true")
+            .with_status(200)
+            .with_body(HEARTBEAT_RESPONSE)
+            .create();
+
+        let err = crate::blocking::schema_registry::get_schema_by_id_and_type(
+            1,
+            &settings(server.url()),
+            SchemaType::Json,
+        )
+        .unwrap_err();
+        assert_eq!(err.error, "type Avro, is not correct");
+    }
+
+    #[test]
+    fn get_schema_by_guid_and_type_checks_type() {
+        let mut server = mockito::Server::new();
+        let guid = "cc0e0e0e-53c1-4a1a-8f1a-000000000001";
+        let _m = server
+            .mock(
+                "GET",
+                format!("/schemas/guids/{guid}?deleted=true").as_str(),
+            )
+            .with_status(200)
+            .with_body(HEARTBEAT_RESPONSE)
+            .create();
+        let _missing = server
+            .mock("GET", "/schemas/guids/missing?deleted=true")
+            .with_status(404)
+            .with_body(r#"{"error_code":40403,"message":"Schema not found"}"#)
+            .create();
+
+        let sr_settings = settings(server.url());
+        let ok = crate::blocking::schema_registry::get_schema_by_guid_and_type(
+            guid,
+            &sr_settings,
+            SchemaType::Avro,
+        )
+        .unwrap();
+        assert_eq!(ok.schema, HEARTBEAT);
+
+        let err = crate::blocking::schema_registry::get_schema_by_guid_and_type(
+            guid,
+            &sr_settings,
+            SchemaType::Protobuf,
+        )
+        .unwrap_err();
+        assert_eq!(err.error, "type Avro, is not correct");
+
+        let err = crate::blocking::schema_registry::get_schema_by_guid_and_type(
+            "missing",
+            &sr_settings,
+            SchemaType::Avro,
+        )
+        .unwrap_err();
+        assert!(!err.retriable);
+    }
+
+    #[test]
+    fn build_fails_on_invalid_header_name() {
+        let err = SrSettings::new_builder(String::from("http://localhost"))
+            .add_header("invalid header", "value")
+            .build()
+            .unwrap_err();
+        assert_eq!(err.error, "could not create headername from invalid header");
+    }
+
+    #[test]
+    fn build_fails_on_invalid_proxy() {
+        let err = SrSettings::new_builder(String::from("http://localhost"))
+            .set_proxy("not a valid proxy url")
+            .build()
+            .unwrap_err();
+        assert_eq!(err.error, "invalid proxy value");
+    }
+
+    #[test]
+    fn build_with_valid_proxy() {
+        let sr_settings = SrSettings::new_builder(String::from("http://localhost"))
+            .set_proxy("http://localhost:3128")
+            .build()
+            .unwrap();
+        assert!(format!("{:?}", sr_settings).contains("http://localhost"));
+    }
 
     #[test]
     fn put_correct_url_as_second_check_header_set() {
