@@ -21,7 +21,7 @@ use std::sync::Arc;
 /// [AvroDecoder] but wrapped with an [`Arc`] to make it easier.
 #[derive(Clone, Debug)]
 pub struct EasyAvroDecoder {
-    decoder: Arc<AvroDecoder<'static>>,
+    decoder: Arc<AvroDecoder>,
 }
 
 impl EasyAvroDecoder {
@@ -44,7 +44,7 @@ impl EasyAvroDecoder {
 /// but wrapped with an [`Arc`] to make it easier.
 #[derive(Clone, Debug)]
 pub struct EasyAvroEncoder {
-    encoder: Arc<AvroEncoder<'static>>,
+    encoder: Arc<AvroEncoder>,
 }
 
 impl EasyAvroEncoder {

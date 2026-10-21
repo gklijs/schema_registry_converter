@@ -26,6 +26,7 @@ use crate::schema_registry_common::{get_payload, SchemaType, SuppliedSchema};
 /// registry: `tags` is keyed by schema path (e.g. `io.confluent.field.<name>`) with the list of
 /// tags on that path. Each is populated when the registry response includes it.
 #[derive(Debug, PartialEq)]
+#[non_exhaustive]
 pub struct AvroSchema {
     pub id: u32,
     pub raw: String,
@@ -105,12 +106,14 @@ pub(crate) fn decode_bytes(
 }
 
 #[derive(Debug, PartialEq)]
+#[non_exhaustive]
 pub struct DecodeResult {
     pub name: Option<Name>,
     pub value: Value,
 }
 
 #[derive(Debug, PartialEq)]
+#[non_exhaustive]
 pub struct DecodeResultWithSchema {
     pub name: Option<Name>,
     pub value: Value,

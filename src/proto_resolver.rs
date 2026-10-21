@@ -1,189 +1,129 @@
+use std::collections::HashMap;
 use std::io::BufReader;
 use std::sync::Arc;
 
 use crate::error::SRCError;
-use dashmap::DashMap;
 use integer_encoding::VarIntReader;
-use logos::Logos;
+use prost_types::field_descriptor_proto::Type;
+use prost_types::{DescriptorProto, FieldDescriptorProto, FileDescriptorProto};
 
+/// Resolves a confluent message index, the path to a message in the schema, to the full name of
+/// that message.
 #[derive(Debug, Clone)]
-pub struct MessageResolver {
-    pub map: DashMap<Vec<i32>, Arc<String>>,
-    pub imports: Vec<String>,
+pub(crate) struct MessageResolver {
+    map: HashMap<Vec<i32>, Arc<String>>,
 }
 
+/// Resolves the full name of a message to its confluent message index.
 #[derive(Debug, Clone)]
-pub struct IndexResolver {
-    map: DashMap<String, Arc<Vec<i32>>>,
+pub(crate) struct IndexResolver {
+    map: HashMap<String, Arc<Vec<i32>>>,
 }
 
 impl MessageResolver {
-    pub fn new(s: &str) -> MessageResolver {
-        let helper = ResolverHelper::new(s);
-        let map = DashMap::new();
-        for i in &helper.indexes {
-            map.insert(i.clone(), Arc::new(find_name(i, &helper)));
-        }
-        MessageResolver {
-            map,
-            imports: helper.imports,
-        }
+    /// Parses the schema text, without resolving its imports.
+    pub(crate) fn new(schema: &str) -> Result<MessageResolver, SRCError> {
+        Ok(MessageResolver::from_file(&parse_schema(schema)?))
     }
 
-    pub fn find_name(&self, index: &[i32]) -> Option<Arc<String>> {
-        self.map.get(index).map(|e| e.value().clone())
+    pub(crate) fn from_file(file: &FileDescriptorProto) -> MessageResolver {
+        let map = message_indexes(file)
+            .into_iter()
+            .map(|(index, name)| (index, Arc::new(name)))
+            .collect();
+        MessageResolver { map }
     }
-    pub fn imports(&self) -> &Vec<String> {
-        &self.imports
+
+    pub(crate) fn find_name(&self, index: &[i32]) -> Option<Arc<String>> {
+        self.map.get(index).cloned()
     }
 }
 
 impl IndexResolver {
-    pub fn new(s: &str) -> IndexResolver {
-        let helper = ResolverHelper::new(s);
-        let map = DashMap::new();
-        for i in &helper.indexes {
-            map.insert(find_name(i, &helper), Arc::new(i.clone()));
-        }
-        IndexResolver { map }
+    /// Parses the schema text, without resolving its imports.
+    pub(crate) fn new(schema: &str) -> Result<IndexResolver, SRCError> {
+        let map = message_indexes(&parse_schema(schema)?)
+            .into_iter()
+            .map(|(index, name)| (name, Arc::new(index)))
+            .collect();
+        Ok(IndexResolver { map })
     }
 
-    pub fn find_index(&self, name: &str) -> Option<Arc<Vec<i32>>> {
-        self.map.get(name).map(|e| e.value().clone())
+    pub(crate) fn find_index(&self, name: &str) -> Option<Arc<Vec<i32>>> {
+        self.map.get(name).cloned()
     }
 
-    pub fn is_single_message(&self) -> bool {
+    pub(crate) fn is_single_message(&self) -> bool {
         self.map.len() == 1
     }
 }
 
-pub struct ResolverHelper {
-    package: Option<String>,
-    indexes: Vec<Vec<i32>>,
-    names: Vec<String>,
-    imports: Vec<String>,
+fn parse_schema(schema: &str) -> Result<FileDescriptorProto, SRCError> {
+    protox_parse::parse("schema.proto", schema)
+        .map_err(|e| SRCError::non_retryable_with_cause(e, "Could not parse protobuf schema"))
 }
 
-#[derive(Logos, Debug, PartialEq)]
-enum Token {
-    #[regex(r"/\*[^/]+\*/", logos::skip, priority = 20)]
-    BlockComment,
-
-    #[regex(r"//[\w\s]+\n", logos::skip, priority = 20)]
-    LineComment,
-
-    // Field/option string literals (e.g. a `[default = "{"]`) can contain brace characters.
-    // These need to be skipped as a whole, with higher priority than Open/Close below, so such
-    // braces aren't mistaken for message nesting and don't desync the index bookkeeping.
-    #[regex(r#""(\\.|[^"\\])*""#, logos::skip, priority = 20)]
-    DoubleQuotedString,
-
-    #[regex(r"'(\\.|[^'\\])*'", logos::skip, priority = 20)]
-    SingleQuotedString,
-
-    #[regex(r"package\s+[a-zA-Z0-9\\.\\_]+;", priority = 10)]
-    Package,
-
-    #[regex(r"message\s+[a-zA-Z0-9\\_]+", priority = 10)]
-    Message,
-
-    #[regex(r#"import\s+"[a-zA-Z0-9\\.\\_/]+";"#, priority = 10)]
-    Import,
-
-    #[token("{", priority = 10)]
-    Open,
-
-    #[token("}", priority = 10)]
-    Close,
-
-    #[regex(r"\S", logos::skip, priority = 1)]
-    #[regex(r"[\s]+", logos::skip, priority = 1)]
-    Ignorable,
-}
-
-impl ResolverHelper {
-    pub fn new(s: &str) -> ResolverHelper {
-        let mut index: Vec<i32> = vec![0];
-        let mut package: Option<String> = None;
-        let mut indexes: Vec<Vec<i32>> = Vec::new();
-        let mut names: Vec<String> = Vec::new();
-        let mut imports: Vec<String> = Vec::new();
-
-        let mut lex = Token::lexer(s);
-        let mut next: Option<Result<Token, _>> = lex.next();
-
-        while let Some(token) = next {
-            match token {
-                Ok(Token::Package) => {
-                    let slice = lex.slice();
-                    package = Some(String::from(slice[8..slice.len() - 1].trim()));
-                }
-                Ok(Token::Message) => {
-                    let slice = lex.slice();
-                    let message = String::from(slice[8..slice.len()].trim());
-                    for i in &indexes {
-                        if *i == index {
-                            *index.last_mut().unwrap() += 1;
-                        }
-                    }
-                    indexes.push(index.clone());
-                    names.push(message);
-                }
-                Ok(Token::Import) => {
-                    let slice = lex.slice();
-                    let import = String::from(slice[8..slice.len() - 2].trim());
-                    imports.push(import);
-                }
-                Ok(Token::Open) => {
-                    index.push(0);
-                }
-                Ok(Token::Close) => {
-                    index.pop();
-                }
-                Err(_)
-                | Ok(Token::Ignorable)
-                | Ok(Token::BlockComment)
-                | Ok(Token::LineComment)
-                | Ok(Token::DoubleQuotedString)
-                | Ok(Token::SingleQuotedString) => (),
-            };
-            next = lex.next()
-        }
-
-        ResolverHelper {
-            package,
-            indexes,
-            names,
-            imports,
-        }
-    }
-}
-
-fn find_part<'a>(index: &'a [i32], helper: &'a ResolverHelper) -> &'a str {
-    for i in 0..helper.indexes.len() {
-        if index == helper.indexes[i] {
-            return &helper.names[i];
-        }
-    }
-    unreachable!()
-}
-
-fn find_name(index: &[i32], helper: &ResolverHelper) -> String {
-    let mut result = match &helper.package {
-        None => String::new(),
-        Some(v) => String::from(v),
-    };
-    for i in 1..index.len() + 1 {
-        let part = find_part(&index[..i], helper);
-        if !result.is_empty() {
-            result.push('.')
-        }
-        result.push_str(part)
-    }
+/// The index and full name of every message declared in the schema. An index is the position
+/// among the messages declared at that level of nesting, so the messages protobuf generates for
+/// `map` and `group` fields don't count, like confluent doesn't count them. Works on both a
+/// parsed schema and a compiled one.
+pub(crate) fn message_indexes(file: &FileDescriptorProto) -> Vec<(Vec<i32>, String)> {
+    let mut result = Vec::new();
+    add_declared_messages(
+        &file.message_type,
+        &file.extension,
+        &[],
+        file.package(),
+        &mut Vec::new(),
+        &mut result,
+    );
     result
 }
 
-pub fn to_index_and_data(bytes: &[u8]) -> Result<(Vec<i32>, Vec<u8>), SRCError> {
+fn add_declared_messages(
+    messages: &[DescriptorProto],
+    extensions: &[FieldDescriptorProto],
+    fields: &[FieldDescriptorProto],
+    prefix: &str,
+    index: &mut Vec<i32>,
+    result: &mut Vec<(Vec<i32>, String)>,
+) {
+    let declared = messages
+        .iter()
+        .filter(|m| !is_generated(m, fields.iter().chain(extensions)));
+    for (i, message) in declared.enumerate() {
+        let full_name = if prefix.is_empty() {
+            message.name().to_owned()
+        } else {
+            format!("{}.{}", prefix, message.name())
+        };
+        index.push(i as i32);
+        result.push((index.clone(), full_name.clone()));
+        add_declared_messages(
+            &message.nested_type,
+            &message.extension,
+            &message.field,
+            &full_name,
+            index,
+            result,
+        );
+        index.pop();
+    }
+}
+
+/// Whether the message is generated for a `map` field, or for one of the `group` fields (a type
+/// name that's either relative, when only parsed, or fully qualified, when compiled).
+fn is_generated<'a>(
+    message: &DescriptorProto,
+    mut fields: impl Iterator<Item = &'a FieldDescriptorProto>,
+) -> bool {
+    message.options.as_ref().is_some_and(|o| o.map_entry())
+        || fields.any(|f| {
+            f.r#type() == Type::Group && f.type_name().rsplit('.').next() == Some(message.name())
+        })
+}
+
+pub(crate) fn to_index_and_data(bytes: &[u8]) -> Result<(Vec<i32>, Vec<u8>), SRCError> {
     if bytes.is_empty() {
         return Err(SRCError::non_retryable_without_cause(
             "Empty bytes given to decode the message index from",
@@ -207,7 +147,10 @@ pub fn to_index_and_data(bytes: &[u8]) -> Result<(Vec<i32>, Vec<u8>), SRCError> 
     }
 }
 
-pub fn resolve_name(resolver: &MessageResolver, index: &[i32]) -> Result<Arc<String>, SRCError> {
+pub(crate) fn resolve_name(
+    resolver: &MessageResolver,
+    index: &[i32],
+) -> Result<Arc<String>, SRCError> {
     match resolver.find_name(index) {
         Some(n) => Ok(n),
         None => Err(SRCError::non_retryable_without_cause(&format!(
@@ -230,31 +173,6 @@ mod tests {
         r#"syntax = "proto3"; import "result.proto"; message A {bytes id = 1;} message B {bytes id = 1;} message C {bytes id = 1; D d = 2; message D {int64 counter = 1;}} package org.schema_registry_test_app.proto; message ProtoTest {bytes id = 1; enum Language {Java = 0;Rust = 1;} Language by = 2;int64 counter = 3;string input = 4;repeated A results = 5;}"#
     }
 
-    fn get_three_complex() -> &'static str {
-        r#"syntax = "proto3";
-package org.schema_registry_test_app.proto;
-
-import "google/type/color.proto";
-import "google/type/datetime.proto";
-import "google/type/money.proto";
-
-message GoogleTest {
-  google.type.Color color = 1;
-  google.type.DateTime dateTime = 2;
-  google.type.Money money = 3;
-  Language by = 4;
-  int64 counter = 5;
-
-  enum Language {
-    Java = 0;
-    Rust = 1;
-    Js = 2;
-    Python = 3;
-    Go = 4;
-    C = 5;
-  }
-}"#
-    }
     fn get_including_optional() -> &'static str {
         r#"syntax = "proto3";
 
@@ -280,6 +198,7 @@ message EventSource {
     }
     fn get_with_comment_line() -> &'static str {
         r#"// Main message
+syntax = "proto3";
 message Receipts {
   string company_id = 1;
   string created = 2;
@@ -292,6 +211,7 @@ message Receipts {
         r#"/* some
         block
         comment */
+syntax = "proto3";
 message Receipts {
   string company_id = 1;
   string created = 2;
@@ -304,19 +224,18 @@ message Receipts {
 
     #[test]
     fn test_simple_schema_message_resolver() {
-        let resolver = MessageResolver::new(get_proto_simple());
+        let resolver = MessageResolver::new(get_proto_simple()).unwrap();
 
         assert_eq!(
             resolver.find_name(&[0]),
             Some(Arc::new(String::from("nl.openweb.data.Heartbeat")))
         );
         assert_eq!(resolver.find_name(&[1]), None);
-        assert_eq!(resolver.imports.len(), 0)
     }
 
     #[test]
     fn test_simple_schema_index_resolver() {
-        let resolver = IndexResolver::new(get_proto_simple());
+        let resolver = IndexResolver::new(get_proto_simple()).unwrap();
 
         assert_eq!(
             resolver.find_index("nl.openweb.data.Heartbeat"),
@@ -327,7 +246,7 @@ message Receipts {
 
     #[test]
     fn test_complex_schema_message_resolver() {
-        let resolver = MessageResolver::new(get_proto_complex());
+        let resolver = MessageResolver::new(get_proto_complex()).unwrap();
 
         assert_eq!(
             resolver.find_name(&[0]),
@@ -347,36 +266,21 @@ message Receipts {
                 "org.schema_registry_test_app.proto.ProtoTest"
             )))
         );
-        assert_eq!(resolver.imports.len(), 1);
-        assert_eq!(resolver.imports[0], String::from("result.proto"))
-    }
-
-    #[test]
-    fn test_schema_with_three_imports() {
-        let resolver = MessageResolver::new(get_three_complex());
-        assert_eq!(resolver.imports.len(), 3);
-        assert_eq!(resolver.imports[0], String::from("google/type/color.proto"));
-        assert_eq!(
-            resolver.imports[1],
-            String::from("google/type/datetime.proto")
-        );
-        assert_eq!(resolver.imports[2], String::from("google/type/money.proto"));
     }
 
     #[test]
     fn test_schema_with_optional_fields() {
-        let resolver = MessageResolver::new(get_including_optional());
+        let resolver = MessageResolver::new(get_including_optional()).unwrap();
         assert_eq!(
             resolver.find_name(&[0]),
             Some(Arc::new(String::from("in.abc.event_entities.EventSource")))
         );
         assert_eq!(resolver.find_name(&[1]), None);
-        assert_eq!(resolver.imports.len(), 0)
     }
 
     #[test]
     fn test_complex_schema_index_resolver() {
-        let resolver = IndexResolver::new(get_proto_complex());
+        let resolver = IndexResolver::new(get_proto_complex()).unwrap();
 
         assert_eq!(
             resolver.find_index("org.schema_registry_test_app.proto.A"),
@@ -394,24 +298,22 @@ message Receipts {
 
     #[test]
     fn test_schema_with_comment_line() {
-        let resolver = MessageResolver::new(get_with_comment_line());
+        let resolver = MessageResolver::new(get_with_comment_line()).unwrap();
         assert_eq!(
             resolver.find_name(&[0]),
             Some(Arc::new(String::from("Receipts")))
         );
         assert_eq!(resolver.find_name(&[1]), None);
-        assert_eq!(resolver.imports.len(), 0)
     }
 
     #[test]
     fn test_schema_with_two_block_comments() {
-        let resolver = MessageResolver::new(get_with_two_block_comments());
+        let resolver = MessageResolver::new(get_with_two_block_comments()).unwrap();
         assert_eq!(
             resolver.find_name(&[0]),
             Some(Arc::new(String::from("Receipts")))
         );
         assert_eq!(resolver.find_name(&[1]), None);
-        assert_eq!(resolver.imports.len(), 0)
     }
 
     #[test]
@@ -419,8 +321,8 @@ message Receipts {
         // A brace character inside a string literal (e.g. a default/option value) used to be
         // mistaken for message nesting, desyncing the index bookkeeping for anything declared
         // after it.
-        let schema = r#"syntax = "proto3"; message Outer { string weird = 1 [default = "{"]; } message Inner { int32 x = 1; }"#;
-        let resolver = MessageResolver::new(schema);
+        let schema = r#"syntax = "proto2"; message Outer { optional string weird = 1 [default = "{"]; } message Inner { optional int32 x = 1; }"#;
+        let resolver = MessageResolver::new(schema).unwrap();
         assert_eq!(
             resolver.find_name(&[0]),
             Some(Arc::new(String::from("Outer")))
@@ -433,8 +335,8 @@ message Receipts {
 
     #[test]
     fn test_schema_with_brace_in_single_quoted_string() {
-        let schema = r#"syntax = "proto3"; message Outer { string weird = 1 [default = '}']; } message Inner { int32 x = 1; }"#;
-        let resolver = MessageResolver::new(schema);
+        let schema = r#"syntax = "proto2"; message Outer { optional string weird = 1 [default = '}']; } message Inner { optional int32 x = 1; }"#;
+        let resolver = MessageResolver::new(schema).unwrap();
         assert_eq!(
             resolver.find_name(&[0]),
             Some(Arc::new(String::from("Outer")))
@@ -449,8 +351,8 @@ message Receipts {
     fn test_schema_with_escaped_quote_in_string() {
         // an escaped quote inside the string shouldn't be mistaken for the closing quote, which
         // would otherwise leave the rest of the literal (including its brace) unprotected.
-        let schema = r#"syntax = "proto3"; message Outer { string weird = 1 [default = "a\"{"]; } message Inner { int32 x = 1; }"#;
-        let resolver = MessageResolver::new(schema);
+        let schema = r#"syntax = "proto2"; message Outer { optional string weird = 1 [default = "a\"{"]; } message Inner { optional int32 x = 1; }"#;
+        let resolver = MessageResolver::new(schema).unwrap();
         assert_eq!(
             resolver.find_name(&[0]),
             Some(Arc::new(String::from("Outer")))
@@ -459,6 +361,40 @@ message Receipts {
             resolver.find_name(&[1]),
             Some(Arc::new(String::from("Inner")))
         );
+    }
+
+    #[test]
+    fn test_schema_with_braces_in_comments() {
+        // A brace in a comment used to be mistaken for message nesting.
+        let schema = "syntax = \"proto3\"; message A { int32 x = 1; } // a {b}\n/* c } */ message B { int32 y = 1; }";
+        let resolver = MessageResolver::new(schema).unwrap();
+        assert_eq!(resolver.find_name(&[0]), Some(Arc::new(String::from("A"))));
+        assert_eq!(resolver.find_name(&[1]), Some(Arc::new(String::from("B"))));
+    }
+
+    #[test]
+    fn test_map_and_group_messages_are_skipped() {
+        // `counts` and `Grp` make protobuf generate the nested `CountsEntry` and `Grp`
+        // messages, which confluent doesn't count, since they aren't declared as a `message`.
+        let schema = "syntax = \"proto2\"; package p; message A { map<string, int64> counts = 1; optional group Grp = 2 { optional int32 g = 3; } message B { optional int32 x = 1; } }";
+        let resolver = MessageResolver::new(schema).unwrap();
+        assert_eq!(
+            resolver.find_name(&[0, 0]),
+            Some(Arc::new(String::from("p.A.B")))
+        );
+        assert_eq!(resolver.find_name(&[0, 1]), None);
+        let resolver = IndexResolver::new(schema).unwrap();
+        assert_eq!(resolver.find_index("p.A.B"), Some(Arc::new(vec![0, 0])));
+        assert_eq!(resolver.find_index("p.A.CountsEntry"), None);
+        assert_eq!(resolver.find_index("p.A.Grp"), None);
+    }
+
+    #[test]
+    fn test_invalid_schema_gives_error() {
+        let err = MessageResolver::new("message A { int32 x = 1; }").unwrap_err();
+        assert_eq!(err.error, "Could not parse protobuf schema");
+        assert!(!err.retriable);
+        assert!(IndexResolver::new("message A {").is_err());
     }
 
     #[test]

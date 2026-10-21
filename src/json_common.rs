@@ -1,9 +1,14 @@
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use serde_json::value::Value;
 use url::Url;
+use valico::json_schema::schema::ScopedSchema;
 use valico::json_schema::validators::ValidationState;
+use valico::json_schema::Scope;
 
 use crate::error::SRCError;
-use crate::schema_registry_common::get_payload;
+use crate::schema_registry_common::{get_payload, RegisteredReference};
 
 /// Cap on how deep a chain of JSON schema `references` is followed before giving up with an
 /// `SRCError`. Without a cap, a circular reference chain (a schema that references itself,
@@ -84,4 +89,118 @@ pub(crate) fn to_value(str: &str) -> Result<Value, SRCError> {
         }
     };
     Ok(value)
+}
+
+/// Schema as retrieved from the schema registry. It's close to the json received and doesn't do
+/// type specific transformations.
+///
+/// `subject` and `version` are populated when the registry response includes them. See
+/// [`crate::schema_registry_common::RegisteredSchema`] for the caveats — a schema id can be
+/// registered against multiple subjects.
+///
+/// `properties` and `tags` carry the Confluent `metadata` block verbatim as returned by the
+/// registry: `tags` is keyed by schema path (e.g. `io.confluent.field.<name>`) with the list of
+/// tags on that path. Each is populated when the registry response includes it.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub struct JsonSchema {
+    pub id: u32,
+    pub url: Url,
+    pub schema: Value,
+    pub references: Vec<JsonSchema>,
+    pub subject: Option<String>,
+    pub version: Option<u32>,
+    pub properties: Option<HashMap<String, String>>,
+    pub tags: Option<HashMap<String, Vec<String>>>,
+    /// The schema's UUID, as returned by Confluent Schema Registry 8.0+. `None` against an older
+    /// registry. Used by the `_with_header_id` encode methods to build a
+    /// [`crate::schema_registry_common::SchemaIdHeader`].
+    pub guid: Option<String>,
+}
+
+/// This decode result is not validated yet, if you want to validate it use [`validate`].
+#[derive(Debug)]
+#[non_exhaustive]
+pub struct DecodeResult {
+    pub schema: Arc<JsonSchema>,
+    pub value: Value,
+}
+
+fn add_refs_to_scope<'s>(
+    scope: &'s mut Scope,
+    schema: &JsonSchema,
+) -> Result<ScopedSchema<'s>, SRCError> {
+    for reference in &schema.references {
+        add_refs_to_scope(scope, reference)?;
+    }
+    match scope.compile_and_return_with_id(&schema.url, schema.schema.clone(), false) {
+        Ok(v) => Ok(v),
+        Err(e) => Err(SRCError::non_retryable_with_cause(
+            e,
+            "error compiling schema",
+        )),
+    }
+}
+
+/// Validates the value against the schema, including the schemas it references. This compiles
+/// the schema each time, so when validating many values against the same schema it might be
+/// better to compile it once with `valico` directly.
+pub fn validate(schema: &JsonSchema, value: &Value) -> Result<(), SRCError> {
+    let mut scope = Scope::new();
+    let schema = add_refs_to_scope(&mut scope, schema)?;
+    let validation = schema.validate(value);
+    handle_validation(validation, value)
+}
+
+/// `base` is the url the referencing schema is compiled under -- a reference's `name` is
+/// resolved against it the same way a JSON Schema validator resolves a `$ref`, since that's
+/// exactly what `name` is used as inside the referencing schema. Confluent doesn't require
+/// `name` to be a fully qualified url itself (it's commonly just a bare file name like
+/// `result.json`), only that it resolves to one relative to `base`.
+pub(crate) fn reference_url(rr: &RegisteredReference, base: &Url) -> Result<Url, SRCError> {
+    match Url::options().base_url(Some(base)).parse(&rr.name) {
+        Ok(v) => Ok(v),
+        Err(e) => Err(SRCError::non_retryable_with_cause(e, &format!("reference schema with subject {} and version {} has invalid id {}, it has to be a fully qualified url or resolve against {}", rr.subject, rr.version, rr.name, base)))
+    }
+}
+
+/// `guid` is used as the fallback label instead of `id` when `id` is the `0` placeholder
+/// `get_schema_by_guid` returns for a schema that has no
+/// real numeric id in the registry's response -- without this, every such schema without its own
+/// `$id` would collide on the same fallback url and silently share one compiled schema.
+pub(crate) fn main_url(schema: &Value, registry_url: &str, id: u32, guid: Option<&str>) -> Url {
+    match fetch_id(schema) {
+        Some(url) => url,
+        None => {
+            let label = match guid {
+                Some(guid) if id == 0 => guid.to_string(),
+                _ => id.to_string(),
+            };
+            fetch_fallback(registry_url, &label)
+        }
+    }
+}
+
+/// The url the references of a schema compiled under `url` are resolved against: the schema's
+/// own `$id` when it has one, like a JSON Schema validator resolves a relative `$ref`.
+pub(crate) fn reference_base(schema: &Value, url: &Url) -> Url {
+    fetch_id(schema).unwrap_or_else(|| url.clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::json_common::reference_base;
+    use serde_json::json;
+    use url::Url;
+
+    #[test]
+    fn test_reference_base_prefers_own_id() {
+        let url = Url::parse("http://registry/id/1.json").unwrap();
+        let with_id = json!({"$id": "http://example.com/schemas/a.json"});
+        assert_eq!(
+            reference_base(&with_id, &url).as_str(),
+            "http://example.com/schemas/a.json"
+        );
+        assert_eq!(reference_base(&json!({}), &url), url);
+    }
 }

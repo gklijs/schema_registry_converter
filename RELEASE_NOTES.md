@@ -38,6 +38,51 @@ Behaviour changes:
 - The well-known `google/protobuf/*` types now come with protox, the `google/type/*` common
   types are still bundled. Imports are resolved by the name a reference is registered with.
 
+The `logos`-based scan of the schema text, which mapped message indexes to message names and
+back, is replaced by parsing the schema with `protox-parse`, for `proto_raw` as well as for the
+generic decoder. The scan miscounted messages after a brace in a comment (e.g. `// a {b}`); both
+now share one implementation of confluent's index rules, skipping the messages generated for
+`map` and `group` fields. For `proto_raw` this means:
+
+- The `proto_resolver` module is no longer public, as `MessageResolver` and `IndexResolver` were
+  only meant for the crate's own encoders and decoders.
+- A schema that isn't valid protobuf, e.g. proto2 fields without a label, now gives a
+  non-retriable `SRCError` ("Could not parse protobuf schema") when it's first used, instead of
+  being scanned leniently. Imports still aren't resolved, so `proto_raw` keeps not fetching
+  references.
+- `logos` is no longer a direct dependency; `proto_raw` now depends on `protox-parse` and
+  `prost-types`.
+
+Other breaking changes in this release, so later additions don't need another major version:
+
+- Public structs and enums that might gain fields or variants are now `#[non_exhaustive]`:
+  `SchemaType`, `SubjectNameStrategy`, `SuppliedSchema`, `SuppliedReference`, `RegisteredSchema`,
+  `RegisteredReference`, `RawRegisteredSchema`, `Metadata`, `RawError`, `SchemaIdHeader`,
+  `AvroSchema`, the `DecodeResult*`, `DecodeContext` and `RawDecodeResult` structs, `JsonSchema`
+  and `SRCError`. Matching on the enums needs a wildcard arm, and the structs can't be created
+  with a struct expression outside this crate. Create a `SuppliedSchema` or `SuppliedReference`
+  with the new `new` function, and the `with_references`, `with_properties` and `with_tags`
+  methods; their fields stay public.
+- The async encoders and decoders no longer have a lifetime parameter, e.g. `AvroDecoder<'a>` is
+  now `AvroDecoder`. They already owned everything they cache, and are `Send + Sync + 'static`.
+- `SRCError` keeps the error that caused it, available via `std::error::Error::source`, so it can
+  be downcast, e.g. to a `reqwest::Error`, or to a `RawError` (which now implements `Error`) to
+  read the schema registry's `error_code`. `cause` still holds its message. The
+  `retryable_with_cause` and `non_retryable_with_cause` functions now take the cause as
+  `Into<Box<dyn Error + Send + Sync>>` instead of `Display`; any error type, or a `&str` or
+  `String`, can still be passed. `PartialEq` ignores the source.
+- The blocking JSON `DecodeResult` is now the same as the async one: the schema is an owned
+  `Arc<JsonSchema>` instead of a `ScopedSchema` borrowing from the decoder, so the blocking
+  `JsonDecoder` methods take `&self` instead of `&mut self`, like the other decoders. The async
+  `DecodeResult` also holds an `Arc<JsonSchema>`, instead of a clone of the schema for every
+  decoded message. Validate a decoded value with `validate(&result.schema, &result.value)`,
+  available from both `blocking::json` and `async_impl::json`, which now takes the schema by
+  reference. Note this compiles the schema on every call: validating after a blocking decode
+  went from about 1µs to about 15µs in the benchmark. The blocking decoder also gains
+  `get_schema`, and the blocking module `get_json_schema`, matching the async ones.
+- A referenced JSON schema with its own `$id` is now the base for its own relative references in
+  the async encoder and decoder too, as the blocking ones already did.
+
 ### 5.1.0
 
 New async APIs for getting at the schemas themselves, not just the decoded values:

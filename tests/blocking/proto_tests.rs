@@ -41,18 +41,24 @@ fn assert_java_proto_test_record(rec: DeserializedProtoRecord, topic: &str) {
         field(&message, "input"),
         "Optional string is string"
     );
+    // `results` is a `repeated Result`, the Java test app sets a single one.
     let results = match field(&message, "results") {
+        Value::List(v) => v,
+        _ => panic!("Not a list value for results while that was expected"),
+    };
+    assert_eq!(1, results.len(), "Expect one result");
+    let results = match &results[0] {
         Value::Message(v) => v,
-        _ => panic!("Not a message value for results while that was expected"),
+        _ => panic!("Not a message value for the result while that was expected"),
     };
     assert_eq!(
         Value::String(String::from("STRING")),
-        field(&results, "up"),
+        field(results, "up"),
         "Optional string is STRING"
     );
     assert_eq!(
         Value::String(String::from("string")),
-        field(&results, "down"),
+        field(results, "down"),
         "Optional string is string"
     );
     assert_eq!(

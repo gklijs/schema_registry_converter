@@ -1,7 +1,6 @@
 //! Implementations for JSON based Schemas.
 //!
 //! **NOTE**: Requires the `json` feature
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use dashmap::mapref::entry::Entry;
@@ -10,8 +9,6 @@ use futures::future::{BoxFuture, FutureExt, Shared};
 use futures::stream::{self, StreamExt};
 use serde_json::Value;
 use url::Url;
-use valico::json_schema::schema::ScopedSchema;
-use valico::json_schema::Scope;
 
 use crate::async_impl::schema_registry::{
     get_referenced_schema, get_schema_by_guid_and_type, get_schema_by_id_and_type,
@@ -19,13 +16,13 @@ use crate::async_impl::schema_registry::{
 };
 use crate::error::SRCError;
 use crate::json_common::{
-    fetch_fallback, fetch_id, handle_validation, reference_depth_exceeded_error, to_bytes,
+    main_url, reference_base, reference_depth_exceeded_error, reference_url, to_bytes,
     to_bytes_raw, to_value, MAX_REFERENCE_DEPTH,
 };
+pub use crate::json_common::{validate, DecodeResult, JsonSchema};
 use crate::schema_registry_common::{
     get_bytes_result, invalid_bytes_error, parse_schema_id_header, schema_id_header_for,
-    BytesResult, HeaderSchemaId, RegisteredReference, RegisteredSchema, SchemaIdHeader, SchemaType,
-    SubjectNameStrategy,
+    BytesResult, HeaderSchemaId, RegisteredSchema, SchemaIdHeader, SchemaType, SubjectNameStrategy,
 };
 
 /// Encoder that works by prepending the correct bytes in order to make it valid schema registry
@@ -33,17 +30,17 @@ use crate::schema_registry_common::{
 /// but you need a protobuf struct that has introspection to make that work, and both protobuf and
 /// prost don't support that at the moment.
 #[derive(Debug)]
-pub struct JsonEncoder<'a> {
+pub struct JsonEncoder {
     sr_settings: SrSettings,
     direct_cache: DashMap<String, Arc<JsonSchema>>,
-    cache: DashMap<String, SharedFutureSchema<'a>>,
+    cache: DashMap<String, SharedFutureSchema>,
 }
 
-type SharedFutureSchema<'a> = Shared<BoxFuture<'a, Result<Arc<JsonSchema>, SRCError>>>;
+type SharedFutureSchema = Shared<BoxFuture<'static, Result<Arc<JsonSchema>, SRCError>>>;
 
-impl<'a> JsonEncoder<'a> {
+impl JsonEncoder {
     /// Creates a new json encoder
-    pub fn new(sr_settings: SrSettings) -> JsonEncoder<'a> {
+    pub fn new(sr_settings: SrSettings) -> JsonEncoder {
         JsonEncoder {
             sr_settings,
             direct_cache: DashMap::new(),
@@ -66,10 +63,9 @@ impl<'a> JsonEncoder<'a> {
         subject_name_strategy: SubjectNameStrategy,
     ) -> Result<Vec<u8>, SRCError> {
         let key = subject_name_strategy.get_subject()?;
-        let schema = &*self.get_schema(key, subject_name_strategy).await?;
-        let id = schema.id;
-        validate(schema.clone(), value)?;
-        to_bytes(id, value)
+        let schema = self.get_schema(key, subject_name_strategy).await?;
+        validate(&schema, value)?;
+        to_bytes(schema.id, value)
     }
 
     /// Like [`JsonEncoder::encode`], but instead of prefixing the payload with the schema id
@@ -90,7 +86,7 @@ impl<'a> JsonEncoder<'a> {
     ) -> Result<(Vec<u8>, SchemaIdHeader), SRCError> {
         let key = subject_name_strategy.get_subject()?;
         let schema = self.get_schema(key, subject_name_strategy).await?;
-        validate((*schema).clone(), value)?;
+        validate(&schema, value)?;
         let bytes = to_bytes_raw(value)?;
         let header = schema_id_header_for(schema.guid.as_deref(), is_key, &[])?;
         Ok((bytes, header))
@@ -132,7 +128,7 @@ impl<'a> JsonEncoder<'a> {
         &self,
         key: String,
         subject_name_strategy: SubjectNameStrategy,
-    ) -> SharedFutureSchema<'a> {
+    ) -> SharedFutureSchema {
         match self.cache.entry(key) {
             Entry::Occupied(e) => e.get().clone(),
             Entry::Vacant(e) => {
@@ -154,65 +150,19 @@ impl<'a> JsonEncoder<'a> {
     }
 }
 
-fn add_refs_to_scope(scope: &mut Scope, schema: JsonSchema) -> Result<ScopedSchema<'_>, SRCError> {
-    for reference in schema.references.into_iter() {
-        add_refs_to_scope(scope, reference)?;
-    }
-    match scope.compile_and_return_with_id(&schema.url, schema.schema, false) {
-        Ok(v) => Ok(v),
-        Err(e) => Err(SRCError::non_retryable_with_cause(
-            e,
-            "error compiling schema",
-        )),
-    }
-}
-
-pub fn validate(schema: JsonSchema, value: &Value) -> Result<(), SRCError> {
-    let mut scope = Scope::new();
-    let schema = add_refs_to_scope(&mut scope, schema)?;
-    let validation = schema.validate(value);
-    handle_validation(validation, value)
-}
-
-/// Schema as retrieved from the schema registry. It's close to the json received and doesn't do
-/// type specific transformations.
-///
-/// `subject` and `version` are populated when the registry response includes them. See
-/// [`crate::schema_registry_common::RegisteredSchema`] for the caveats — a schema id can be
-/// registered against multiple subjects.
-///
-/// `properties` and `tags` carry the Confluent `metadata` block verbatim as returned by the
-/// registry: `tags` is keyed by schema path (e.g. `io.confluent.field.<name>`) with the list of
-/// tags on that path. Each is populated when the registry response includes it.
-#[derive(Clone, Debug)]
-pub struct JsonSchema {
-    pub id: u32,
-    pub url: Url,
-    pub schema: Value,
-    pub references: Vec<JsonSchema>,
-    pub subject: Option<String>,
-    pub version: Option<u32>,
-    pub properties: Option<HashMap<String, String>>,
-    pub tags: Option<HashMap<String, Vec<String>>>,
-    /// The schema's UUID, as returned by Confluent Schema Registry 8.0+. `None` against an older
-    /// registry. Used by the `_with_header_id` encode methods to build a
-    /// [`crate::schema_registry_common::SchemaIdHeader`].
-    pub guid: Option<String>,
-}
-
 #[derive(Debug)]
-pub struct JsonDecoder<'a> {
+pub struct JsonDecoder {
     sr_settings: SrSettings,
     direct_cache: DashMap<u32, Arc<JsonSchema>>,
-    cache: DashMap<u32, SharedFutureSchema<'a>>,
+    cache: DashMap<u32, SharedFutureSchema>,
     /// Cache for schemas looked up by guid rather than id, used by
     /// [`JsonDecoder::decode_with_header_id`]. Kept separate from `direct_cache`/`cache` (keyed
     /// by id) since a guid and an id are different keyspaces.
     guid_direct_cache: DashMap<String, Arc<JsonSchema>>,
-    guid_cache: DashMap<String, SharedFutureSchema<'a>>,
+    guid_cache: DashMap<String, SharedFutureSchema>,
 }
 
-impl<'a> JsonDecoder<'a> {
+impl JsonDecoder {
     /// Creates a new decoder which will use the supplied url to fetch the schema's since the schema
     /// needed is encoded in the binary, independent of the SubjectNameStrategy we don't need any
     /// additional data. Retriable errors (e.g. a transient network/HTTP failure) are never cached,
@@ -220,7 +170,7 @@ impl<'a> JsonDecoder<'a> {
     /// doesn't exist or can't be parsed) are cached to avoid repeatedly retrying a lookup that
     /// isn't going to succeed; if the underlying problem gets fixed you can use
     /// remove_errors_from_cache to clean those out.
-    pub fn new(sr_settings: SrSettings) -> JsonDecoder<'a> {
+    pub fn new(sr_settings: SrSettings) -> JsonDecoder {
         JsonDecoder {
             sr_settings,
             direct_cache: DashMap::new(),
@@ -278,10 +228,7 @@ impl<'a> JsonDecoder<'a> {
                     HeaderSchemaId::Guid(guid) => self.get_schema_by_guid(guid).await?,
                 };
                 match serde_json::from_slice(payload) {
-                    Ok(value) => Ok(Some(DecodeResult {
-                        schema: (*schema).clone(),
-                        value,
-                    })),
+                    Ok(value) => Ok(Some(DecodeResult { schema, value })),
                     Err(e) => Err(SRCError::non_retryable_with_cause(
                         e,
                         "could not create value from bytes",
@@ -293,12 +240,9 @@ impl<'a> JsonDecoder<'a> {
     /// The actual deserialization trying to get the id from the bytes to retrieve the schema, and
     /// using a reader transforms the bytes to a value.
     async fn deserialize(&self, id: u32, bytes: &[u8]) -> Result<DecodeResult, SRCError> {
-        let schema = &*self.get_schema(id).await?;
+        let schema = self.get_schema(id).await?;
         match serde_json::from_slice(bytes) {
-            Ok(value) => Ok(DecodeResult {
-                schema: schema.clone(),
-                value,
-            }),
+            Ok(value) => Ok(DecodeResult { schema, value }),
             Err(e) => Err(SRCError::non_retryable_with_cause(
                 e,
                 "could not create value from bytes",
@@ -336,7 +280,7 @@ impl<'a> JsonDecoder<'a> {
 
     /// Gets the Context object, either from the cache, or from the schema registry and then putting
     /// it into the cache.
-    fn get_schema_by_shared_future(&self, id: u32) -> SharedFutureSchema<'a> {
+    fn get_schema_by_shared_future(&self, id: u32) -> SharedFutureSchema {
         match self.cache.entry(id) {
             Entry::Occupied(e) => e.get().clone(),
             Entry::Vacant(e) => {
@@ -383,7 +327,7 @@ impl<'a> JsonDecoder<'a> {
         }
     }
 
-    fn get_schema_by_guid_shared_future(&self, guid: String) -> SharedFutureSchema<'a> {
+    fn get_schema_by_guid_shared_future(&self, guid: String) -> SharedFutureSchema {
         match self.guid_cache.entry(guid.clone()) {
             Entry::Occupied(e) => e.get().clone(),
             Entry::Vacant(e) => {
@@ -401,35 +345,6 @@ impl<'a> JsonDecoder<'a> {
                 .shared();
                 e.insert(v).value().clone()
             }
-        }
-    }
-}
-
-/// `base` is the url the referencing schema is compiled under -- a reference's `name` is
-/// resolved against it the same way a JSON Schema validator resolves a `$ref`, since that's
-/// exactly what `name` is used as inside the referencing schema. Confluent doesn't require
-/// `name` to be a fully qualified url itself (it's commonly just a bare file name like
-/// `result.json`), only that it resolves to one relative to `base`.
-fn reference_url(rr: &RegisteredReference, base: &Url) -> Result<Url, SRCError> {
-    match Url::options().base_url(Some(base)).parse(&rr.name) {
-        Ok(v) => Ok(v),
-        Err(e) => Err(SRCError::non_retryable_with_cause(e, &format!("reference schema with subject {} and version {} has invalid id {}, it has to be a fully qualified url or resolve against {}", rr.subject, rr.version, rr.name, base)))
-    }
-}
-
-/// `guid` is used as the fallback label instead of `id` when `id` is the `0` placeholder
-/// [`crate::async_impl::schema_registry::get_schema_by_guid`] returns for a schema that has no
-/// real numeric id in the registry's response -- without this, every such schema without its own
-/// `$id` would collide on the same fallback url and silently share one compiled schema.
-fn main_url(schema: &Value, sr_settings: &SrSettings, id: u32, guid: Option<&str>) -> Url {
-    match fetch_id(schema) {
-        Some(url) => url,
-        None => {
-            let label = match guid {
-                Some(guid) if id == 0 => guid.to_string(),
-                _ => id.to_string(),
-            };
-            fetch_fallback(sr_settings.url(), &label)
         }
     }
 }
@@ -460,14 +375,15 @@ fn to_json_schema(
             Some(v) => v,
             None => main_url(
                 &schema,
-                sr_settings,
+                sr_settings.url(),
                 registered_schema.id,
                 registered_schema.guid.as_deref(),
             ),
         };
+        let base = reference_base(&schema, &url);
         let refs: Result<Vec<JsonSchema>, SRCError> = stream::iter(registered_schema.references)
             .then(|rr| {
-                let base = url.clone();
+                let base = base.clone();
                 async move {
                     let ref_url = reference_url(&rr, &base)?;
                     let rs = get_referenced_schema(sr_settings, &rr).await?;
@@ -492,14 +408,6 @@ fn to_json_schema(
         })
     }
     .boxed()
-}
-
-/// This decode result is not validated yet, if you want to validate you need to call the validate
-/// function.
-#[derive(Debug)]
-pub struct DecodeResult {
-    pub schema: JsonSchema,
-    pub value: Value,
 }
 
 #[cfg(test)]
@@ -777,7 +685,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        validate(message.schema, &message.value).unwrap();
+        validate(&message.schema, &message.value).unwrap();
         assert_eq!(
             "string",
             message
@@ -844,7 +752,7 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(message.value.is_object());
-        validate(message.schema, &message.value).unwrap();
+        validate(&message.schema, &message.value).unwrap();
     }
 
     #[tokio::test]
@@ -867,7 +775,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        validate(message.schema, &message.value).unwrap();
+        validate(&message.schema, &message.value).unwrap();
         assert_eq!(
             "string",
             message

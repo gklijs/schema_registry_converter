@@ -1,9 +1,11 @@
 use std::collections::hash_map::{Entry, RandomState};
 use std::collections::HashMap;
+use std::sync::Arc;
 
+use dashmap::mapref::entry::Entry as DashEntry;
+use dashmap::DashMap;
 use serde_json::Value;
 use url::Url;
-use valico::json_schema::schema::ScopedSchema;
 use valico::json_schema::{Scope, ValidationState};
 
 use crate::blocking::schema_registry::{
@@ -12,9 +14,11 @@ use crate::blocking::schema_registry::{
 };
 use crate::error::SRCError;
 use crate::json_common::{
-    fetch_fallback, fetch_id, handle_validation, reference_depth_exceeded_error, to_bytes,
-    to_bytes_raw, to_value, MAX_REFERENCE_DEPTH,
+    fetch_fallback, fetch_id, handle_validation, main_url, reference_base,
+    reference_depth_exceeded_error, reference_url, to_bytes, to_bytes_raw, to_value,
+    MAX_REFERENCE_DEPTH,
 };
+pub use crate::json_common::{validate, DecodeResult, JsonSchema};
 use crate::schema_registry_common::{
     get_bytes_result, invalid_bytes_error, parse_schema_id_header, schema_id_header_for,
     BytesResult, HeaderSchemaId, RegisteredReference, RegisteredSchema, SchemaIdHeader, SchemaType,
@@ -174,12 +178,11 @@ struct EncodeContext {
 #[derive(Debug)]
 pub struct JsonDecoder {
     sr_settings: SrSettings,
-    cache: HashMap<u32, Result<Url, SRCError>, RandomState>,
+    cache: DashMap<u32, Result<Arc<JsonSchema>, SRCError>>,
     /// Cache for schemas looked up by guid rather than id, used by
     /// [`JsonDecoder::decode_with_header_id`]. Kept separate from `cache` (keyed by id) since a
     /// guid and an id are different keyspaces.
-    guid_cache: HashMap<String, Result<Url, SRCError>, RandomState>,
-    scope: Scope,
+    guid_cache: DashMap<String, Result<Arc<JsonSchema>, SRCError>>,
 }
 
 impl JsonDecoder {
@@ -193,21 +196,20 @@ impl JsonDecoder {
     pub fn new(sr_settings: SrSettings) -> JsonDecoder {
         JsonDecoder {
             sr_settings,
-            cache: HashMap::new(),
-            guid_cache: HashMap::new(),
-            scope: Scope::new(),
+            cache: DashMap::new(),
+            guid_cache: DashMap::new(),
         }
     }
     /// Removes all non-retriable errors from the cache. You might need/want to run this when the
     /// underlying problem has been fixed (e.g. a schema was missing and has since been
     /// registered) and want the next call to try again immediately. Retriable errors aren't
     /// stored in the cache in the first place, so there's nothing to remove for those.
-    pub fn remove_errors_from_cache(&mut self) {
+    pub fn remove_errors_from_cache(&self) {
         self.cache.retain(|_, v| v.is_ok());
         self.guid_cache.retain(|_, v| v.is_ok());
     }
     /// Reads the bytes to get the name, and gives back the data bytes.
-    pub fn decode(&mut self, bytes: Option<&[u8]>) -> Result<Option<DecodeResult<'_>>, SRCError> {
+    pub fn decode(&self, bytes: Option<&[u8]>) -> Result<Option<DecodeResult>, SRCError> {
         match get_bytes_result(bytes) {
             BytesResult::Null => Ok(None),
             BytesResult::Valid(id, bytes) => Ok(Some(self.deserialize(id, bytes)?)),
@@ -224,10 +226,10 @@ impl JsonDecoder {
     /// overhead for a caller who always passes `None` is this one check. See
     /// https://github.com/gklijs/schema_registry_converter/issues/139.
     pub fn decode_with_header_id(
-        &mut self,
+        &self,
         header_value: Option<&[u8]>,
         bytes: Option<&[u8]>,
-    ) -> Result<Option<DecodeResult<'_>>, SRCError> {
+    ) -> Result<Option<DecodeResult>, SRCError> {
         let payload = match bytes {
             Some(v) => v,
             None => return Ok(None),
@@ -237,8 +239,8 @@ impl JsonDecoder {
             Some(header) => {
                 let (schema_id, _rest) = parse_schema_id_header(header)?;
                 let schema = match schema_id {
-                    HeaderSchemaId::Id(id) => self.schema(id)?,
-                    HeaderSchemaId::Guid(guid) => self.guid_schema(guid)?,
+                    HeaderSchemaId::Id(id) => self.get_schema(id)?,
+                    HeaderSchemaId::Guid(guid) => self.get_schema_by_guid(guid)?,
                 };
                 match serde_json::from_slice(payload) {
                     Ok(value) => Ok(Some(DecodeResult { schema, value })),
@@ -252,8 +254,8 @@ impl JsonDecoder {
     }
     /// The actual deserialization trying to get the id from the bytes to retrieve the schema, and
     /// using a reader transforms the bytes to a value.
-    fn deserialize(&mut self, id: u32, bytes: &[u8]) -> Result<DecodeResult<'_>, SRCError> {
-        let schema = self.schema(id)?;
+    fn deserialize(&self, id: u32, bytes: &[u8]) -> Result<DecodeResult, SRCError> {
+        let schema = self.get_schema(id)?;
         match serde_json::from_slice(bytes) {
             Ok(value) => Ok(DecodeResult { schema, value }),
             Err(e) => Err(SRCError::non_retryable_with_cause(
@@ -262,70 +264,101 @@ impl JsonDecoder {
             )),
         }
     }
-    /// Gets the Context object, either from the cache, or from the schema registry and then putting
-    /// it into the cache.
-    fn schema(&mut self, id: u32) -> Result<ScopedSchema<'_>, SRCError> {
-        let url = match self.cache.entry(id) {
-            Entry::Occupied(entry) => &*entry.into_mut(),
-            Entry::Vacant(entry) => {
-                let result =
-                    match get_schema_by_id_and_type(id, &self.sr_settings, SchemaType::Json) {
-                        Ok(r) => match set_scoped_schema(&mut self.scope, &self.sr_settings, &r) {
-                            Ok(schema) => Ok(schema),
-                            Err(e) => Err(e),
-                        },
-                        Err(e) => Err(e),
-                    };
+    /// Resolves `id` into a fully self-contained, reference-resolved [`JsonSchema`], using (and
+    /// populating) this decoder's own id-keyed cache.
+    pub fn get_schema(&self, id: u32) -> Result<Arc<JsonSchema>, SRCError> {
+        match self.cache.entry(id) {
+            DashEntry::Occupied(entry) => entry.get().clone(),
+            DashEntry::Vacant(entry) => {
+                let result = get_schema_by_id_and_type(id, &self.sr_settings, SchemaType::Json)
+                    .and_then(|r| get_json_schema(&self.sr_settings, r))
+                    .map(Arc::new);
                 match result {
                     // Retriable errors (transient network/HTTP issues) don't make sense to
                     // cache, so the entry is left vacant and the next call issues a fresh
                     // request rather than replaying a stale failure.
-                    Err(e) if e.retriable => return Err(e),
-                    result => &*entry.insert(result.map_err(SRCError::into_cache)),
+                    Err(e) if e.retriable => Err(e),
+                    result => entry
+                        .insert(result.map_err(SRCError::into_cache))
+                        .value()
+                        .clone(),
                 }
             }
-        };
-        match url {
-            Ok(id) => match self.scope.resolve(id) {
-                Some(schema) => Ok(schema),
-                None => Err(SRCError::non_retryable_without_cause(
-                    "could not get schema from scope",
-                )),
-            },
-            Err(e) => Err(e.clone()),
         }
     }
 
-    /// Like [`JsonDecoder::schema`], but looks the schema up by guid instead of id -- used by
+    /// Like [`JsonDecoder::get_schema`], but looks the schema up by guid instead of id -- used by
     /// [`JsonDecoder::decode_with_header_id`] when the header carries a guid rather than an id.
-    fn guid_schema(&mut self, guid: String) -> Result<ScopedSchema<'_>, SRCError> {
-        let url = match self.guid_cache.entry(guid.clone()) {
-            Entry::Occupied(entry) => &*entry.into_mut(),
-            Entry::Vacant(entry) => {
+    fn get_schema_by_guid(&self, guid: String) -> Result<Arc<JsonSchema>, SRCError> {
+        match self.guid_cache.entry(guid.clone()) {
+            DashEntry::Occupied(entry) => entry.get().clone(),
+            DashEntry::Vacant(entry) => {
                 let result =
-                    match get_schema_by_guid_and_type(&guid, &self.sr_settings, SchemaType::Json) {
-                        Ok(r) => match set_scoped_schema(&mut self.scope, &self.sr_settings, &r) {
-                            Ok(schema) => Ok(schema),
-                            Err(e) => Err(e),
-                        },
-                        Err(e) => Err(e),
-                    };
+                    get_schema_by_guid_and_type(&guid, &self.sr_settings, SchemaType::Json)
+                        .and_then(|r| get_json_schema(&self.sr_settings, r))
+                        .map(Arc::new);
                 match result {
-                    Err(e) if e.retriable => return Err(e),
-                    result => &*entry.insert(result.map_err(SRCError::into_cache)),
+                    Err(e) if e.retriable => Err(e),
+                    result => entry
+                        .insert(result.map_err(SRCError::into_cache))
+                        .value()
+                        .clone(),
                 }
             }
-        };
-        match url {
-            Ok(id) => match self.scope.resolve(id) {
-                Some(schema) => Ok(schema),
-                None => Err(SRCError::non_retryable_without_cause(
-                    "could not get schema from scope",
-                )),
-            },
-            Err(e) => Err(e.clone()),
         }
     }
+}
+
+/// Resolves `registered_schema` into a fully self-contained [`JsonSchema`].
+pub fn get_json_schema(
+    sr_settings: &SrSettings,
+    registered_schema: RegisteredSchema,
+) -> Result<JsonSchema, SRCError> {
+    to_json_schema(sr_settings, None, registered_schema, 0)
+}
+
+fn to_json_schema(
+    sr_settings: &SrSettings,
+    optional_url: Option<Url>,
+    registered_schema: RegisteredSchema,
+    depth: usize,
+) -> Result<JsonSchema, SRCError> {
+    // A circular reference chain (a schema that references itself, directly or transitively)
+    // would otherwise recurse here without bound.
+    if depth > MAX_REFERENCE_DEPTH {
+        return Err(reference_depth_exceeded_error());
+    }
+    let schema: Value = to_value(&registered_schema.schema)?;
+    let url = match optional_url {
+        Some(v) => v,
+        None => main_url(
+            &schema,
+            sr_settings.url(),
+            registered_schema.id,
+            registered_schema.guid.as_deref(),
+        ),
+    };
+    let base = reference_base(&schema, &url);
+    let references = registered_schema
+        .references
+        .iter()
+        .map(|rr| {
+            let ref_url = reference_url(rr, &base)?;
+            let rs = get_referenced_schema(sr_settings, rr)?;
+            to_json_schema(sr_settings, Some(ref_url), rs, depth + 1)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(JsonSchema {
+        id: registered_schema.id,
+        url,
+        schema,
+        references,
+        subject: registered_schema.subject,
+        version: registered_schema.version,
+        properties: registered_schema.properties,
+        tags: registered_schema.tags,
+        guid: registered_schema.guid,
+    })
 }
 
 /// `base` is the url the referencing schema is compiled under -- a reference's `name` is
@@ -414,12 +447,6 @@ fn set_scoped_schema(
     Ok(id)
 }
 
-#[derive(Debug)]
-pub struct DecodeResult<'a> {
-    pub schema: ScopedSchema<'a>,
-    pub value: Value,
-}
-
 #[cfg(test)]
 mod tests {
     use std::fs::{read_to_string, File};
@@ -427,9 +454,8 @@ mod tests {
     use serde_json::{from_str, to_string_pretty, Value};
     use valico::json_dsl;
 
-    use crate::blocking::json::{JsonDecoder, JsonEncoder};
+    use crate::blocking::json::{validate, JsonDecoder, JsonEncoder};
     use crate::blocking::schema_registry::SrSettings;
-    use crate::json_common::handle_validation;
     use crate::schema_registry_common::{
         build_schema_id_header, get_payload, SubjectNameStrategy, VALUE_SCHEMA_ID_HEADER,
     };
@@ -527,7 +553,7 @@ mod tests {
             .with_body(r#"{"schema":"{\"type\":\"object\"}","schemaType":"JSON"}"#)
             .create();
 
-        let mut decoder = JsonDecoder::new(sr_settings);
+        let decoder = JsonDecoder::new(sr_settings);
         let decoded = decoder
             .decode_with_header_id(Some(&header.value), Some(&bytes))
             .unwrap()
@@ -561,7 +587,7 @@ mod tests {
             .no_proxy()
             .build()
             .unwrap();
-        let mut decoder = JsonDecoder::new(sr_settings);
+        let decoder = JsonDecoder::new(sr_settings);
 
         let schema_a = r#"{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"additionalProperties\":false,\"properties\":{\"a\":{\"type\":\"string\"}},\"required\":[\"a\"]}"#;
         let schema_b = r#"{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"additionalProperties\":false,\"properties\":{\"b\":{\"type\":\"string\"}},\"required\":[\"b\"]}"#;
@@ -603,18 +629,18 @@ mod tests {
             .unwrap()
             .unwrap();
         // Each message must validate against its own schema...
-        assert!(decoded_a.schema.validate(&value_a).is_strictly_valid());
+        assert!(validate(&decoded_a.schema, &value_a).is_ok());
         // ...and fail against the other's, proving they're genuinely different compiled schemas
         // rather than both resolving to whichever was compiled first.
-        assert!(!decoded_a.schema.validate(&value_b).is_strictly_valid());
+        assert!(validate(&decoded_a.schema, &value_b).is_err());
         drop(decoded_a);
 
         let decoded_b = decoder
             .decode_with_header_id(Some(&header_b.value), Some(&bytes_b))
             .unwrap()
             .unwrap();
-        assert!(decoded_b.schema.validate(&value_b).is_strictly_valid());
-        assert!(!decoded_b.schema.validate(&value_a).is_strictly_valid());
+        assert!(validate(&decoded_b.schema, &value_b).is_ok());
+        assert!(validate(&decoded_b.schema, &value_a).is_err());
     }
 
     #[test]
@@ -693,7 +719,7 @@ mod tests {
             .no_proxy()
             .build()
             .unwrap();
-        let mut decoder = JsonDecoder::new(sr_settings);
+        let decoder = JsonDecoder::new(sr_settings);
         let result = decoder.decode(Some(&*get_payload(7, result_value.into_bytes())));
 
         let message = match result {
@@ -701,9 +727,7 @@ mod tests {
             Err(e) => panic!("Error: {:?}, while none expected", e),
             Ok(v) => panic!("Other value: {:?} than expected Message", v),
         };
-        let validation = message.schema.validate(&message.value);
-        assert!(validation.is_strictly_valid());
-        assert!(validation.errors.is_empty());
+        validate(&message.schema, &message.value).unwrap();
         assert_eq!(
             "string",
             message
@@ -742,7 +766,7 @@ mod tests {
             .no_proxy()
             .build()
             .unwrap();
-        let mut decoder = JsonDecoder::new(sr_settings);
+        let decoder = JsonDecoder::new(sr_settings);
         let error = decoder
             .decode(Some(&*get_payload(7, bytes.clone())))
             .unwrap_err();
@@ -791,7 +815,7 @@ mod tests {
             .no_proxy()
             .build()
             .unwrap();
-        let mut decoder = JsonDecoder::new(sr_settings);
+        let decoder = JsonDecoder::new(sr_settings);
         let result = decoder.decode(Some(json_result_java_bytes()));
 
         let message = match result {
@@ -799,9 +823,7 @@ mod tests {
             Err(e) => panic!("Error: {:?}, while none expected", e),
             Ok(v) => panic!("Other value: {:?} than expected Message", v),
         };
-        let validation = message.schema.validate(&message.value);
-        assert!(validation.is_strictly_valid());
-        assert!(validation.errors.is_empty());
+        validate(&message.schema, &message.value).unwrap();
         assert_eq!(
             "string",
             message
@@ -840,7 +862,7 @@ mod tests {
             .no_proxy()
             .build()
             .unwrap();
-        let mut decoder = JsonDecoder::new(sr_settings);
+        let decoder = JsonDecoder::new(sr_settings);
         let result = decoder.decode(Some(json_incorrect_bytes())).unwrap_err();
         assert_eq!(
             String::from("could not create value from bytes"),
@@ -855,7 +877,7 @@ mod tests {
             .no_proxy()
             .build()
             .unwrap();
-        let mut decoder = JsonDecoder::new(sr_settings);
+        let decoder = JsonDecoder::new(sr_settings);
         let bytes = [
             0, 0, 0, 0, 5, 123, 34, 105, 100, 34, 58, 91, 52, 53, 44, 45, 55, 57, 44, 57, 51, 44,
             49, 49, 50, 44, 52, 54, 44, 56, 55, 44, 55, 57, 44, 45, 50, 44, 45, 49, 48, 55, 44, 45,
@@ -909,7 +931,7 @@ mod tests {
             .no_proxy()
             .build()
             .unwrap();
-        let mut decoder = JsonDecoder::new(sr_settings);
+        let decoder = JsonDecoder::new(sr_settings);
 
         let schema = r#"{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"additionalProperties\":false,\"properties\":{\"result\":{\"$ref\":\"result.json\"}},\"required\":[\"result\"]}"#;
         let reference = r#"{"name": "result.json", "subject": "result.json", "version": 1}"#;
@@ -944,7 +966,7 @@ mod tests {
             .no_proxy()
             .build()
             .unwrap();
-        let mut decoder = JsonDecoder::new(sr_settings);
+        let decoder = JsonDecoder::new(sr_settings);
         let bytes = [
             0, 0, 0, 0, 5, 123, 34, 105, 100, 34, 58, 91, 52, 53, 44, 45, 55, 57, 44, 57, 51, 44,
             49, 49, 50, 44, 52, 54, 44, 56, 55, 44, 55, 57, 44, 45, 50, 44, 45, 49, 48, 55, 44, 45,
@@ -987,7 +1009,7 @@ mod tests {
             .no_proxy()
             .build()
             .unwrap();
-        let mut decoder = JsonDecoder::new(sr_settings);
+        let decoder = JsonDecoder::new(sr_settings);
 
         let schema = r#"{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{\"self\":{\"$ref\":\"self.json\"}}}"#;
         let reference = r#"{"name": "self.json", "subject": "circular", "version": 1}"#;
@@ -1023,7 +1045,7 @@ mod tests {
             .no_proxy()
             .build()
             .unwrap();
-        let mut decoder = JsonDecoder::new(sr_settings);
+        let decoder = JsonDecoder::new(sr_settings);
         let bytes_id_5 = [
             0, 0, 0, 0, 5, 123, 34, 105, 100, 34, 58, 91, 52, 53, 44, 45, 55, 57, 44, 57, 51, 44,
             49, 49, 50, 44, 52, 54, 44, 56, 55, 44, 55, 57, 44, 45, 50, 44, 45, 49, 48, 55, 44, 45,
@@ -1104,7 +1126,7 @@ mod tests {
             .no_proxy()
             .build()
             .unwrap();
-        let mut decoder = JsonDecoder::new(sr_settings);
+        let decoder = JsonDecoder::new(sr_settings);
 
         let _m = server
             .mock("GET", "/schemas/ids/5?deleted=true")
@@ -1171,8 +1193,7 @@ mod tests {
         });
         let bytes_id_8 = get_payload(8, serde_json::to_vec(&payload).unwrap());
         let result = decoder.decode(Some(&bytes_id_8)).unwrap().unwrap();
-        let validation = result.schema.validate(&payload);
-        handle_validation(validation, &payload).unwrap();
+        validate(&result.schema, &payload).unwrap();
     }
 
     #[test]
@@ -1188,8 +1209,9 @@ mod tests {
     fn display_decode() {
         let sr_settings = SrSettings::new(String::from("http://127.0.0.1:1234"));
         let decoder = JsonDecoder::new(sr_settings);
-        assert!(
-                   format!("{:?}", decoder).starts_with("JsonDecoder { sr_settings: SrSettings { urls: [\"http://127.0.0.1:1234\"], client: Client, authorization: None }, cache: {}, guid_cache: {}, scope: Scope {")
+        assert_eq!(
+            format!("{:?}", decoder),
+            "JsonDecoder { sr_settings: SrSettings { urls: [\"http://127.0.0.1:1234\"], client: Client, authorization: None }, cache: {}, guid_cache: {} }"
         )
     }
 
@@ -1285,7 +1307,7 @@ mod tests {
     #[test]
     fn decode_invalid_bytes() {
         let sr_settings = SrSettings::new(String::from("http://127.0.0.1:1234"));
-        let mut decoder = JsonDecoder::new(sr_settings);
+        let decoder = JsonDecoder::new(sr_settings);
         let result = decoder.decode(Some(&[1, 0])).unwrap_err();
         assert_eq!(String::from("Invalid bytes: payload too short (2 bytes), expected at least 5 bytes for confluent schema registry wire format"), result.error)
     }

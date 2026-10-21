@@ -15,7 +15,7 @@ use std::sync::Arc;
 /// A decoder used to transform bytes to a [DecodeResult], its much like [JsonDecoder] but wrapped with an arc to make it easier.
 #[derive(Clone, Debug)]
 pub struct EasyJsonDecoder {
-    decoder: Arc<JsonDecoder<'static>>,
+    decoder: Arc<JsonDecoder>,
 }
 
 impl EasyJsonDecoder {
@@ -31,7 +31,7 @@ impl EasyJsonDecoder {
 /// An encoder used to transform a [Value] to bytes, its much like [JsonEncoder] but wrapped with an arc to make it easier.
 #[derive(Clone, Debug)]
 pub struct EasyJsonEncoder {
-    encoder: Arc<JsonEncoder<'static>>,
+    encoder: Arc<JsonEncoder>,
 }
 
 impl EasyJsonEncoder {
@@ -84,7 +84,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        validate(message.schema, &message.value).unwrap();
+        validate(&message.schema, &message.value).unwrap();
         assert_eq!(
             "string",
             message

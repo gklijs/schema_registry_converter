@@ -4,9 +4,9 @@ use crate::async_impl::schema_registry::{
 use crate::error::SRCError;
 use crate::proto_raw_common::{
     index_bytes, index_bytes_single_message, to_bytes, to_bytes_single_message, to_decode_context,
-    DecodeContext, EncodeContext,
+    to_encode_context, DecodeContext, EncodeContext,
 };
-use crate::proto_resolver::{resolve_name, to_index_and_data, IndexResolver};
+use crate::proto_resolver::{resolve_name, to_index_and_data};
 use crate::schema_registry_common::{
     get_bytes_result, invalid_bytes_error, parse_schema_id_header, schema_id_header_for,
     BytesResult, HeaderSchemaId, RegisteredSchema, SchemaIdHeader, SchemaType, SubjectNameStrategy,
@@ -24,17 +24,17 @@ use std::sync::Arc;
 /// This wil just add the magic byte, schema reference, and message reference. The bytes should already be valid proto bytes for the schema used.
 /// When a schema with multiple messages is used the full_name needs to be supplied to properly encode the message reference.
 #[derive(Debug)]
-pub struct ProtoRawEncoder<'a> {
+pub struct ProtoRawEncoder {
     sr_settings: SrSettings,
     direct_cache: DashMap<String, Arc<EncodeContext>>,
-    cache: DashMap<String, SharedFutureEncodeContext<'a>>,
+    cache: DashMap<String, SharedFutureEncodeContext>,
 }
 
-type SharedFutureEncodeContext<'a> = Shared<BoxFuture<'a, Result<Arc<EncodeContext>, SRCError>>>;
+type SharedFutureEncodeContext = Shared<BoxFuture<'static, Result<Arc<EncodeContext>, SRCError>>>;
 
-impl<'a> ProtoRawEncoder<'a> {
+impl ProtoRawEncoder {
     /// Creates a new encoder
-    pub fn new(sr_settings: SrSettings) -> ProtoRawEncoder<'a> {
+    pub fn new(sr_settings: SrSettings) -> ProtoRawEncoder {
         ProtoRawEncoder {
             sr_settings,
             direct_cache: DashMap::new(),
@@ -146,18 +146,16 @@ impl<'a> ProtoRawEncoder<'a> {
         &self,
         key: String,
         subject_name_strategy: SubjectNameStrategy,
-    ) -> SharedFutureEncodeContext<'a> {
+    ) -> SharedFutureEncodeContext {
         match self.cache.entry(key) {
             Entry::Occupied(e) => e.get().clone(),
             Entry::Vacant(e) => {
                 let sr_settings = self.sr_settings.clone();
                 let v = async move {
                     match get_schema_by_subject(&sr_settings, &subject_name_strategy).await {
-                        Ok(registered_schema) => Ok(Arc::new(EncodeContext {
-                            id: registered_schema.id,
-                            guid: registered_schema.guid,
-                            resolver: IndexResolver::new(&registered_schema.schema),
-                        })),
+                        Ok(registered_schema) => to_encode_context(registered_schema)
+                            .map(Arc::new)
+                            .map_err(SRCError::into_cache),
                         Err(e) => Err(e.into_cache()),
                     }
                 }
@@ -170,26 +168,26 @@ impl<'a> ProtoRawEncoder<'a> {
 }
 
 #[derive(Debug)]
-pub struct ProtoRawDecoder<'a> {
+pub struct ProtoRawDecoder {
     sr_settings: SrSettings,
     direct_cache: DashMap<u32, Arc<DecodeContext>>,
-    cache: DashMap<u32, SharedFutureDecodeContext<'a>>,
+    cache: DashMap<u32, SharedFutureDecodeContext>,
     /// Cache for schemas looked up by guid rather than id, used by
     /// [`ProtoRawDecoder::decode_with_header_id`]. Kept separate from `direct_cache`/`cache`
     /// (keyed by id) since a guid and an id are different keyspaces.
     guid_direct_cache: DashMap<String, Arc<DecodeContext>>,
-    guid_cache: DashMap<String, SharedFutureDecodeContext<'a>>,
+    guid_cache: DashMap<String, SharedFutureDecodeContext>,
 }
 
-type SharedFutureDecodeContext<'a> = Shared<BoxFuture<'a, Result<Arc<DecodeContext>, SRCError>>>;
+type SharedFutureDecodeContext = Shared<BoxFuture<'static, Result<Arc<DecodeContext>, SRCError>>>;
 
-impl<'a> ProtoRawDecoder<'a> {
+impl ProtoRawDecoder {
     /// Creates a new decoder which will use the supplied url to fetch the schema's since the schema
     /// needed is encoded in the binary, independent of the SubjectNameStrategy we don't need any
     /// additional data. It's possible for recoverable errors to stay in the cache, when a result
     /// comes back as an error you can use remove_errors_from_cache to clean the cache, keeping the
     /// correctly fetched schema's
-    pub fn new(sr_settings: SrSettings) -> ProtoRawDecoder<'a> {
+    pub fn new(sr_settings: SrSettings) -> ProtoRawDecoder {
         ProtoRawDecoder {
             sr_settings,
             direct_cache: DashMap::new(),
@@ -295,14 +293,14 @@ impl<'a> ProtoRawDecoder<'a> {
     }
     /// Gets the Context object, either from the cache, or from the schema registry and then putting
     /// it into the cache.
-    fn get_context_by_shared_future(&self, id: u32) -> SharedFutureDecodeContext<'a> {
+    fn get_context_by_shared_future(&self, id: u32) -> SharedFutureDecodeContext {
         match self.cache.entry(id) {
             Entry::Occupied(e) => e.get().clone(),
             Entry::Vacant(e) => {
                 let sr_settings = self.sr_settings.clone();
                 let v = async move {
                     match get_schema_by_id_and_type(id, &sr_settings, SchemaType::Protobuf).await {
-                        Ok(r) => Ok(Arc::new(to_decode_context(r))),
+                        Ok(r) => to_decode_context(r).map(Arc::new),
                         Err(e) => Err(e),
                     }
                 }
@@ -339,7 +337,7 @@ impl<'a> ProtoRawDecoder<'a> {
         }
     }
 
-    fn get_context_by_guid_shared_future(&self, guid: String) -> SharedFutureDecodeContext<'a> {
+    fn get_context_by_guid_shared_future(&self, guid: String) -> SharedFutureDecodeContext {
         match self.guid_cache.entry(guid.clone()) {
             Entry::Occupied(e) => e.get().clone(),
             Entry::Vacant(e) => {
@@ -348,7 +346,7 @@ impl<'a> ProtoRawDecoder<'a> {
                     match get_schema_by_guid_and_type(&guid, &sr_settings, SchemaType::Protobuf)
                         .await
                     {
-                        Ok(r) => Ok(Arc::new(to_decode_context(r))),
+                        Ok(r) => to_decode_context(r).map(Arc::new),
                         Err(e) => Err(e),
                     }
                 }
@@ -361,6 +359,7 @@ impl<'a> ProtoRawDecoder<'a> {
 }
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct RawDecodeResult {
     pub schema: RegisteredSchema,
     pub full_name: Arc<String>,
@@ -676,7 +675,7 @@ mod tests {
         let result_reference = SuppliedReference {
             name: String::from("result.proto"),
             subject: String::from("result.proto"),
-            schema: String::from(get_proto_result()),
+            schema: get_proto_result().replace("\\\"", "\""),
             references: vec![],
             properties: None,
             tags: None,
@@ -684,7 +683,7 @@ mod tests {
         let supplied_schema = SuppliedSchema {
             name: Some(String::from("test.proto")),
             schema_type: SchemaType::Protobuf,
-            schema: String::from(get_proto_complex()),
+            schema: get_proto_complex().replace("\\\"", "\""),
             references: vec![result_reference],
             properties: None,
             tags: None,

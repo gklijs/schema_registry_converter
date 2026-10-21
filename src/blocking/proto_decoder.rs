@@ -192,6 +192,7 @@ impl ProtoDecoder {
 }
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct DecodeResultWithContext {
     pub value: DynamicMessage,
     pub context: Arc<DecodeContext>,
@@ -218,6 +219,7 @@ fn add_referenced_schemas(
 }
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct DecodeContext {
     pub schema: RegisteredSchema,
     /// The compiled root schema, its imports can be reached via

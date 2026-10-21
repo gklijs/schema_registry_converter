@@ -41,5 +41,5 @@ pub use prost_reflect;
 #[cfg(feature = "proto_raw")]
 pub mod proto_raw_common;
 #[cfg(any(feature = "proto_decoder", feature = "proto_raw"))]
-pub mod proto_resolver;
+mod proto_resolver;
 pub mod schema_registry_common;

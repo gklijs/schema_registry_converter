@@ -416,14 +416,11 @@ impl AvroEncoder {
     /// let sr_settings = SrSettings::new_builder(server.url()).no_proxy().build().unwrap();
     /// let encoder = AvroEncoder::new(sr_settings);
     ///
-    /// let strategy = SubjectNameStrategy::TopicRecordNameStrategyWithSchema(String::from("hb"), SuppliedSchema {
-    ///                 name: Some(String::from("nl.openweb.data.Heartbeat")),
-    ///                 schema_type: SchemaType::Avro,
-    ///                 schema: String::from(r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#),
-    ///                 references: vec![],
-    ///                 properties: None,
-    ///                 tags: None,
-    ///             });
+    /// let strategy = SubjectNameStrategy::TopicRecordNameStrategyWithSchema(String::from("hb"), SuppliedSchema::new(
+    ///                 Some(String::from("nl.openweb.data.Heartbeat")),
+    ///                 SchemaType::Avro,
+    ///                 String::from(r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#),
+    ///             ));
     /// let bytes = encoder.encode(vec![("beat", Value::Long(3))], &strategy);
     /// assert_eq!(bytes, Ok(vec![0, 0, 0, 0, 23, 6]))
     /// ```

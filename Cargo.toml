@@ -23,8 +23,8 @@ avro = ["apache-avro"]
 blocking = ["reqwest/blocking"]
 json = ["url", "valico"]
 middleware = ["dep:reqwest-middleware"]
-proto_decoder = ["integer-encoding", "logos", "prost-reflect", "protox"]
-proto_raw = ["integer-encoding", "logos"]
+proto_decoder = ["integer-encoding", "prost-reflect", "prost-types", "protox", "protox-parse"]
+proto_raw = ["integer-encoding", "prost-types", "protox-parse"]
 easy = ["tokio"]
 kafka_test = []
 default = ["futures", "native_tls"]
@@ -64,15 +64,19 @@ optional = true
 version = "^4.0"
 optional = true
 
-[dependencies.logos]
-version = "^0.16"
-optional = true
-
 [dependencies.prost-reflect]
 version = "^0.16"
 optional = true
 
+[dependencies.prost-types]
+version = "^0.14"
+optional = true
+
 [dependencies.protox]
+version = "^0.10"
+optional = true
+
+[dependencies.protox-parse]
 version = "^0.10"
 optional = true
 

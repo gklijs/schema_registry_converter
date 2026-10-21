@@ -5,6 +5,7 @@ use protox::file::{ChainFileResolver, File, FileResolver, GoogleFileResolver};
 
 use crate::error::SRCError;
 use crate::proto_common_types::CommonTypesResolver;
+use crate::proto_resolver::message_indexes;
 
 /// The file name the root schema is compiled under. The schema registry only names the schemas
 /// a schema references (by the path they're imported with), not the root schema itself, so it
@@ -63,12 +64,11 @@ pub(crate) struct MessageIndex(HashMap<Vec<i32>, MessageDescriptor>);
 
 impl MessageIndex {
     pub(crate) fn new(file: &FileDescriptor) -> MessageIndex {
-        let mut messages = HashMap::new();
-        let top_level = declared(file.messages(), |m| {
-            file.extensions()
-                .any(|e| e.is_group() && e.kind().as_message() == Some(m))
-        });
-        add_declared(top_level, &mut Vec::new(), &mut messages);
+        let pool = file.parent_pool();
+        let messages = message_indexes(file.file_descriptor_proto())
+            .into_iter()
+            .filter_map(|(index, name)| Some((index, pool.get_message_by_name(&name)?)))
+            .collect();
         MessageIndex(messages)
     }
 
@@ -83,36 +83,6 @@ impl MessageIndex {
             ))
         })
     }
-}
-
-fn add_declared(
-    messages: Vec<MessageDescriptor>,
-    path: &mut Vec<i32>,
-    index: &mut HashMap<Vec<i32>, MessageDescriptor>,
-) {
-    for (i, message) in messages.into_iter().enumerate() {
-        path.push(i as i32);
-        let children = declared(message.child_messages(), |m| {
-            message
-                .fields()
-                .any(|f| f.is_group() && f.kind().as_message() == Some(m))
-                || message
-                    .child_extensions()
-                    .any(|e| e.is_group() && e.kind().as_message() == Some(m))
-        });
-        add_declared(children, path, index);
-        index.insert(path.clone(), message);
-        path.pop();
-    }
-}
-
-fn declared(
-    messages: impl Iterator<Item = MessageDescriptor>,
-    is_group_type: impl Fn(&MessageDescriptor) -> bool,
-) -> Vec<MessageDescriptor> {
-    messages
-        .filter(|m| !m.is_map_entry() && !is_group_type(m))
-        .collect()
 }
 
 /// Decodes the data bytes, the payload without the id and message index, as the given message.
