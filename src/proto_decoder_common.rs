@@ -50,59 +50,69 @@ pub(crate) fn to_file_descriptor(
         })
 }
 
-/// Finds the message the confluent message index points at. Each index is the position among
-/// the messages declared in the schema text at that level, so the messages protobuf generates
-/// for `map` fields and `group` fields don't count, as they aren't declared as a `message`.
-/// The index comes from the payload or a header a producer controls, so one that doesn't match
-/// the schema is an error rather than a panic.
-pub(crate) fn find_message(
-    file: &FileDescriptor,
-    index: &[i32],
-) -> Result<MessageDescriptor, SRCError> {
-    let not_found = || {
-        SRCError::non_retryable_without_cause(&format!(
-            "could not find a message with index {:?} in the resolved protobuf schema",
-            index
-        ))
-    };
-    let (first, rest) = index.split_first().ok_or_else(not_found)?;
-    let mut message = nth_declared(
-        file.messages(),
-        |m| {
+/// Every message declared in a schema, keyed by its confluent message index. Each index is the
+/// position among the messages declared in the schema text at that level, so the messages
+/// protobuf generates for `map` fields and `group` fields don't count, as they aren't declared
+/// as a `message`.
+///
+/// Built once per schema, when it's compiled, so decoding a message is a single map lookup
+/// instead of walking the descriptors again, which for a message further down a schema took
+/// several microseconds per decode.
+#[derive(Debug)]
+pub(crate) struct MessageIndex(HashMap<Vec<i32>, MessageDescriptor>);
+
+impl MessageIndex {
+    pub(crate) fn new(file: &FileDescriptor) -> MessageIndex {
+        let mut messages = HashMap::new();
+        let top_level = declared(file.messages(), |m| {
             file.extensions()
                 .any(|e| e.is_group() && e.kind().as_message() == Some(m))
-        },
-        *first,
-    )
-    .ok_or_else(not_found)?;
-    for i in rest {
-        let parent = message;
-        message = nth_declared(
-            parent.child_messages(),
-            |m| {
-                parent
-                    .fields()
-                    .any(|f| f.is_group() && f.kind().as_message() == Some(m))
-                    || parent
-                        .child_extensions()
-                        .any(|e| e.is_group() && e.kind().as_message() == Some(m))
-            },
-            *i,
-        )
-        .ok_or_else(not_found)?;
+        });
+        add_declared(top_level, &mut Vec::new(), &mut messages);
+        MessageIndex(messages)
     }
-    Ok(message)
+
+    /// Finds the message the confluent message index points at. The index comes from the
+    /// payload or a header a producer controls, so one that doesn't match the schema is an
+    /// error rather than a panic.
+    pub(crate) fn find(&self, index: &[i32]) -> Result<MessageDescriptor, SRCError> {
+        self.0.get(index).cloned().ok_or_else(|| {
+            SRCError::non_retryable_without_cause(&format!(
+                "could not find a message with index {:?} in the resolved protobuf schema",
+                index
+            ))
+        })
+    }
 }
 
-fn nth_declared(
+fn add_declared(
+    messages: Vec<MessageDescriptor>,
+    path: &mut Vec<i32>,
+    index: &mut HashMap<Vec<i32>, MessageDescriptor>,
+) {
+    for (i, message) in messages.into_iter().enumerate() {
+        path.push(i as i32);
+        let children = declared(message.child_messages(), |m| {
+            message
+                .fields()
+                .any(|f| f.is_group() && f.kind().as_message() == Some(m))
+                || message
+                    .child_extensions()
+                    .any(|e| e.is_group() && e.kind().as_message() == Some(m))
+        });
+        add_declared(children, path, index);
+        index.insert(path.clone(), message);
+        path.pop();
+    }
+}
+
+fn declared(
     messages: impl Iterator<Item = MessageDescriptor>,
     is_group_type: impl Fn(&MessageDescriptor) -> bool,
-    index: i32,
-) -> Option<MessageDescriptor> {
-    let index = usize::try_from(index).ok()?;
+) -> Vec<MessageDescriptor> {
     messages
         .filter(|m| !m.is_map_entry() && !is_group_type(m))
-        .nth(index)
+        .collect()
 }
 
 /// Decodes the data bytes, the payload without the id and message index, as the given message.
@@ -124,11 +134,18 @@ pub(crate) fn decode_message(
 #[cfg(test)]
 mod tests {
     use crate::proto_decoder_common::{
-        decode_message, find_message, to_file_descriptor, ReferencedSchemas,
+        decode_message, to_file_descriptor, MessageIndex, ReferencedSchemas,
     };
-    use prost_reflect::{MapKey, Value};
+    use prost_reflect::{FileDescriptor, MapKey, MessageDescriptor, Value};
 
-    fn compile(schema: &str) -> prost_reflect::FileDescriptor {
+    fn find_message(
+        file: &FileDescriptor,
+        index: &[i32],
+    ) -> Result<MessageDescriptor, crate::error::SRCError> {
+        MessageIndex::new(file).find(index)
+    }
+
+    fn compile(schema: &str) -> FileDescriptor {
         to_file_descriptor(schema, ReferencedSchemas::new()).unwrap()
     }
 
