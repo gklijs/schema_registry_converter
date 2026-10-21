@@ -1,38 +1,21 @@
-use bytes::Bytes;
 use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::blocking::schema_registry::{
     get_referenced_schema, get_schema_by_guid_and_type, get_schema_by_id_and_type, SrSettings,
 };
 use crate::error::SRCError;
-use crate::proto_common_types::add_common_files;
-use crate::proto_resolver::{resolve_name, to_index_and_data, MessageResolver};
+use crate::proto_decoder_common::{
+    decode_message, find_message, to_file_descriptor, ReferencedSchemas,
+};
+use crate::proto_resolver::to_index_and_data;
 use crate::schema_registry_common::{
     get_bytes_result, parse_schema_id_header, BytesResult, HeaderSchemaId, RegisteredSchema,
     SchemaType,
 };
-use protofish::context::{Context, MessageInfo};
-use protofish::decode::{MessageValue, Value};
-
-/// `Context::get_message` returns `None` for a name it can't resolve. Surfacing that as an
-/// `SRCError` instead of panicking matters most for `decode_with_header_id`, where `full_name`
-/// is ultimately derived from Kafka header bytes a producer controls (a guid paired with a
-/// message index that doesn't actually match anything in the resolved schema), rather than from
-/// data `resolve_name` has already validated against this same context.
-fn get_message_info<'a>(
-    context: &'a Context,
-    full_name: &str,
-) -> Result<&'a MessageInfo, SRCError> {
-    context.get_message(full_name).ok_or_else(|| {
-        SRCError::non_retryable_without_cause(&format!(
-            "could not find message {} in the resolved protobuf schema",
-            full_name
-        ))
-    })
-}
+use prost_reflect::bytes::Bytes;
+use prost_reflect::{DynamicMessage, FileDescriptor, Value};
 
 #[derive(Debug)]
 pub struct ProtoDecoder {
@@ -75,9 +58,7 @@ impl ProtoDecoder {
     pub fn decode(&self, bytes: Option<&[u8]>) -> Result<Value, SRCError> {
         match get_bytes_result(bytes) {
             BytesResult::Null => Ok(Value::Bytes(Bytes::new())),
-            BytesResult::Valid(id, bytes) => {
-                Ok(Value::Message(Box::from(self.deserialize(id, bytes)?)))
-            }
+            BytesResult::Valid(id, bytes) => Ok(Value::Message(self.deserialize(id, bytes)?)),
             BytesResult::Invalid(i) => Ok(Value::Bytes(Bytes::copy_from_slice(i))),
         }
     }
@@ -106,26 +87,18 @@ impl ProtoDecoder {
                     HeaderSchemaId::Guid(guid) => self.guid_context(guid)?,
                 };
                 let (index, _empty) = to_index_and_data(index_bytes)?;
-                let full_name = resolve_name(&context.resolver, &index)?;
-                let message_info = get_message_info(&context.context, &full_name)?;
-                Ok(Value::Message(Box::from(
-                    message_info.decode(payload, &context.context),
-                )))
+                let descriptor = find_message(&context.file_descriptor, &index)?;
+                Ok(Value::Message(decode_message(descriptor, payload)?))
             }
         }
     }
     /// The actual deserialization trying to get the id from the bytes to retrieve the schema, and
     /// using a reader transforms the bytes to a value.
-    fn deserialize(&self, id: u32, bytes: &[u8]) -> Result<MessageValue, SRCError> {
-        match self.context(id) {
-            Ok(s) => {
-                let (index, data) = to_index_and_data(bytes)?;
-                let full_name = resolve_name(&s.resolver, &index)?;
-                let message_info = get_message_info(&s.context, &full_name)?;
-                Ok(message_info.decode(&data, &s.context))
-            }
-            Err(e) => Err(e),
-        }
+    fn deserialize(&self, id: u32, bytes: &[u8]) -> Result<DynamicMessage, SRCError> {
+        let context = self.context(id)?;
+        let (index, data) = to_index_and_data(bytes)?;
+        let descriptor = find_message(&context.file_descriptor, &index)?;
+        decode_message(descriptor, &data)
     }
     /// Decodes bytes into a decode result.
     /// The choice to use Option<&[u8]> as type us made so it plays nice with the BorrowedMessage
@@ -154,21 +127,17 @@ impl ProtoDecoder {
         id: u32,
         bytes: &[u8],
     ) -> Result<DecodeResultWithContext, SRCError> {
-        match self.context(id) {
-            Ok(s) => {
-                let (index, data_bytes) = to_index_and_data(bytes)?;
-                let full_name = resolve_name(&s.resolver, &index)?;
-                let message_info = get_message_info(&s.context, &full_name)?;
-                let value = message_info.decode(&data_bytes, &s.context);
-                Ok(DecodeResultWithContext {
-                    value,
-                    context: s.clone(),
-                    full_name,
-                    data_bytes,
-                })
-            }
-            Err(e) => Err(e),
-        }
+        let context = self.context(id)?;
+        let (index, data_bytes) = to_index_and_data(bytes)?;
+        let descriptor = find_message(&context.file_descriptor, &index)?;
+        let full_name = descriptor.full_name().to_owned();
+        let value = decode_message(descriptor, &data_bytes)?;
+        Ok(DecodeResultWithContext {
+            value,
+            context,
+            full_name,
+            data_bytes,
+        })
     }
     /// Gets the Context object, either from the cache, or from the schema registry and then putting
     /// it into the cache.
@@ -185,9 +154,7 @@ impl ProtoDecoder {
                     // Retriable errors (transient network/HTTP issues) don't make sense to
                     // cache, so the entry is left vacant and the next call issues a fresh
                     // request rather than replaying a stale failure. Non-retriable errors,
-                    // e.g. a parse failure, are cached permanently. Unlike the async decoder,
-                    // this caches the fully-parsed Context rather than re-parsing on every
-                    // decode call — see https://github.com/gklijs/schema_registry_converter/issues/175.
+                    // e.g. a parse failure, are cached permanently.
                     Err(e) if e.retriable => Err(e),
                     result => entry
                         .insert(result.map_err(SRCError::into_cache))
@@ -226,77 +193,66 @@ impl ProtoDecoder {
 
 #[derive(Debug)]
 pub struct DecodeResultWithContext {
-    pub value: MessageValue,
+    pub value: DynamicMessage,
     pub context: Arc<DecodeContext>,
-    pub full_name: Arc<String>,
+    pub full_name: String,
     pub data_bytes: Vec<u8>,
 }
 
-fn add_files(
+/// Adds the schemas `registered_schema` references, and the ones those reference, keyed by the
+/// name they're imported by. A schema referenced via several paths is only fetched once.
+fn add_referenced_schemas(
     sr_settings: &SrSettings,
-    registered_schema: RegisteredSchema,
-    files: &mut Vec<String>,
+    registered_schema: &RegisteredSchema,
+    schemas: &mut ReferencedSchemas,
 ) -> Result<(), SRCError> {
-    for r in registered_schema.references {
-        let child_schema = get_referenced_schema(sr_settings, &r)?;
-        add_files(sr_settings, child_schema, files)?;
+    for r in &registered_schema.references {
+        if schemas.contains_key(&r.name) {
+            continue;
+        }
+        let child_schema = get_referenced_schema(sr_settings, r)?;
+        add_referenced_schemas(sr_settings, &child_schema, schemas)?;
+        schemas.insert(r.name.clone(), child_schema.schema);
     }
-    files.push(registered_schema.schema);
     Ok(())
 }
 
 #[derive(Debug)]
 pub struct DecodeContext {
-    pub resolver: MessageResolver,
-    pub context: Context,
-    pub registered_schema: RegisteredSchema,
+    pub schema: RegisteredSchema,
+    /// The compiled root schema, its imports can be reached via
+    /// [`FileDescriptor::parent_pool`].
+    pub file_descriptor: FileDescriptor,
 }
 
 fn to_resolve_context(
     sr_settings: &SrSettings,
-    registered_schema: RegisteredSchema,
+    schema: RegisteredSchema,
 ) -> Result<Arc<DecodeContext>, SRCError> {
-    let mut vec_of_schemas = Vec::new();
-    add_files(sr_settings, registered_schema.clone(), &mut vec_of_schemas)?;
-    // The root schema is always pushed last by add_files, so pop it off rather than
-    // re-parsing it below with the other, dependent schemas.
-    let root_schema = vec_of_schemas.pop().unwrap();
-    let resolver = MessageResolver::new(&root_schema);
-    let mut files: HashSet<String> = HashSet::new();
-    add_common_files(resolver.imports(), &mut files);
-    for s in vec_of_schemas {
-        let dependent_resolver = MessageResolver::new(&s);
-        add_common_files(dependent_resolver.imports(), &mut files);
-        files.insert(s);
-    }
-    files.insert(root_schema);
-    match Context::parse(&files) {
-        Ok(context) => Ok(Arc::new(DecodeContext {
-            resolver,
-            context,
-            registered_schema,
-        })),
-        Err(e) => Err(SRCError::non_retryable_with_cause(
-            e,
-            "Error creating proto context",
-        )),
-    }
+    let mut referenced_schemas = ReferencedSchemas::new();
+    add_referenced_schemas(sr_settings, &schema, &mut referenced_schemas)?;
+    let file_descriptor = to_file_descriptor(&schema.schema, referenced_schemas)?;
+    Ok(Arc::new(DecodeContext {
+        schema,
+        file_descriptor,
+    }))
 }
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
-
-    use crate::blocking::proto_decoder::{get_message_info, ProtoDecoder};
+    use crate::blocking::proto_decoder::ProtoDecoder;
     use crate::blocking::schema_registry::SrSettings;
-    use protofish::context::Context;
-    use protofish::decode::Value;
+    use prost_reflect::{DynamicMessage, Value};
     use test_utils::{
         get_proto_body, get_proto_body_with_reference, get_proto_complex,
         get_proto_complex_proto_test_message, get_proto_complex_references, get_proto_hb_101,
         get_proto_hb_101_empty_payload, get_proto_hb_schema, get_proto_money_result,
         get_proto_result,
     };
+
+    fn field(message: &DynamicMessage, name: &str) -> Value {
+        message.get_field_by_name(name).unwrap().into_owned()
+    }
 
     #[test]
     fn test_decoder_default() {
@@ -317,12 +273,12 @@ mod tests {
         let heartbeat = decoder.decode(Some(get_proto_hb_101()));
 
         let message = match heartbeat {
-            Ok(Value::Message(x)) => *x,
+            Ok(Value::Message(x)) => x,
             Err(e) => panic!("Error: {:?}, while none expected", e),
             Ok(v) => panic!("Other value: {:?} than expected Message", v),
         };
 
-        assert_eq!(Value::UInt64(101u64), message.fields[0].value)
+        assert_eq!(Value::U64(101u64), field(&message, "beat"))
     }
 
     #[test]
@@ -354,10 +310,10 @@ mod tests {
             .decode_with_header_id(Some(&header_value), Some(payload))
             .unwrap();
         let message = match heartbeat {
-            Value::Message(x) => *x,
+            Value::Message(x) => x,
             v => panic!("Other value: {:?} than expected Message", v),
         };
-        assert_eq!(Value::UInt64(101u64), message.fields[0].value);
+        assert_eq!(Value::U64(101u64), field(&message, "beat"));
 
         // header absent -> falls straight through to decode(), which expects the prefix
         let _m2 = server
@@ -370,28 +326,69 @@ mod tests {
             .decode_with_header_id(None, Some(get_proto_hb_101()))
             .unwrap();
         let message = match heartbeat {
-            Value::Message(x) => *x,
+            Value::Message(x) => x,
             v => panic!("Other value: {:?} than expected Message", v),
         };
-        assert_eq!(Value::UInt64(101u64), message.fields[0].value);
+        assert_eq!(Value::U64(101u64), field(&message, "beat"));
     }
 
     #[test]
-    fn get_message_info_returns_error_instead_of_panicking_for_unknown_message() {
-        // Context::get_message returns None for a name it can't resolve -- e.g. from a header
-        // whose guid/message-index resolves to a message this schema doesn't actually contain.
-        // That must come back as an SRCError, not panic the caller. See
-        // https://github.com/gklijs/schema_registry_converter/issues/139.
-        let schema =
-            "syntax = \"proto3\"; package nl.openweb.data; message Heartbeat { uint64 beat = 1; }";
-        let mut files = HashSet::new();
-        files.insert(schema.to_string());
-        let context = Context::parse(&files).unwrap();
+    fn test_decode_with_header_id_unknown_message_index_gives_error() {
+        // The header is controlled by a producer, so a message index that doesn't match
+        // anything in the resolved schema must come back as an error, not panic the caller.
+        // See https://github.com/gklijs/schema_registry_converter/issues/139.
+        let mut server = mockito::Server::new();
+        let _m = server
+            .mock(
+                "GET",
+                "/schemas/guids/cc0e0e0e-53c1-4a1a-8f1a-000000000001?deleted=true",
+            )
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(get_proto_body(get_proto_hb_schema(), 1))
+            .create();
 
-        let err = get_message_info(&context, "nl.openweb.data.DoesNotExist").unwrap_err();
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
+        let decoder = ProtoDecoder::new(sr_settings);
+        // magic byte 0x01 + 16-byte guid + message index [5] (zigzag varint count 1, index 5)
+        let header_value = [
+            0x01, 0xcc, 0x0e, 0x0e, 0x0e, 0x53, 0xc1, 0x4a, 0x1a, 0x8f, 0x1a, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x01, 0x02, 0x0a,
+        ];
+        let err = decoder
+            .decode_with_header_id(Some(&header_value), Some(&get_proto_hb_101()[6..]))
+            .unwrap_err();
         assert_eq!(
             err.error,
-            "could not find message nl.openweb.data.DoesNotExist in the resolved protobuf schema"
+            "could not find a message with index [5] in the resolved protobuf schema"
+        );
+    }
+
+    #[test]
+    fn test_decoder_invalid_payload_gives_error() {
+        let mut server = mockito::Server::new();
+        let _m = server
+            .mock("GET", "/schemas/ids/7?deleted=true")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(get_proto_body(get_proto_hb_schema(), 1))
+            .create();
+
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
+        let decoder = ProtoDecoder::new(sr_settings);
+        // id 7 + single-message index, followed by bytes that aren't a valid Heartbeat
+        let mut bytes = get_proto_hb_101()[..6].to_vec();
+        bytes.extend([0xff, 0xff]);
+        let err = decoder.decode(Some(&bytes)).unwrap_err();
+        assert_eq!(
+            err.error,
+            "could not decode bytes as protobuf message nl.openweb.data.Heartbeat"
         );
     }
 
@@ -437,9 +434,11 @@ mod tests {
 
         assert!(heartbeat.is_some());
 
-        let message = heartbeat.unwrap().value;
+        let result = heartbeat.unwrap();
 
-        assert_eq!(Value::UInt64(101u64), message.fields[0].value)
+        assert_eq!(Value::U64(101u64), field(&result.value, "beat"));
+        assert_eq!(result.context.schema.id, 7);
+        assert_eq!(&result.full_name, "nl.openweb.data.Heartbeat");
     }
 
     #[test]
@@ -469,11 +468,11 @@ mod tests {
         decoder.remove_errors_from_cache();
 
         let message = match decoder.decode(Some(get_proto_hb_101())).unwrap() {
-            Value::Message(x) => *x,
+            Value::Message(x) => x,
             v => panic!("Other value: {:?} than expected Message", v),
         };
 
-        assert_eq!(Value::UInt64(101u64), message.fields[0].value);
+        assert_eq!(Value::U64(101u64), field(&message, "beat"));
     }
 
     #[test]
@@ -506,11 +505,11 @@ mod tests {
         let proto_test = decoder.decode(Some(get_proto_complex_proto_test_message()));
 
         let message = match proto_test {
-            Ok(Value::Message(x)) => *x,
+            Ok(Value::Message(x)) => x,
             Err(e) => panic!("Error: {:?}, while none expected", e),
             Ok(v) => panic!("Other value: {:?} than expected Message", v),
         };
-        assert_eq!(message.fields[1].value, Value::Int64(1))
+        assert_eq!(field(&message, "counter"), Value::I64(1))
     }
 
     #[test]
@@ -545,11 +544,11 @@ mod tests {
         let proto_test = decoder.decode(Some(get_proto_complex_proto_test_message()));
 
         let message = match proto_test {
-            Ok(Value::Message(x)) => *x,
+            Ok(Value::Message(x)) => x,
             Err(e) => panic!("Error: {:?}, while none expected", e),
             Ok(v) => panic!("Other value: {:?} than expected Message", v),
         };
-        assert_eq!(message.fields[1].value, Value::Int64(1))
+        assert_eq!(field(&message, "counter"), Value::I64(1))
     }
 
     #[test]

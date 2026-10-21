@@ -1,6 +1,6 @@
 extern crate schema_registry_converter;
 
-use protofish::decode::Value;
+use schema_registry_converter::prost_reflect::{DynamicMessage, ReflectMessage, Value};
 
 use crate::blocking::proto_consumer::{
     consume_proto, consume_proto_with_header_id, DeserializedProtoRecord,
@@ -8,6 +8,13 @@ use crate::blocking::proto_consumer::{
 
 pub fn get_schema_registry_url() -> String {
     String::from("http://localhost:8081")
+}
+
+fn field(message: &DynamicMessage, name: &str) -> Value {
+    message
+        .get_field_by_name(name)
+        .unwrap_or_else(|| panic!("no field {} in {}", name, message.descriptor().full_name()))
+        .into_owned()
 }
 
 fn get_brokers() -> &'static str {
@@ -20,49 +27,32 @@ fn get_brokers() -> &'static str {
 fn assert_java_proto_test_record(rec: DeserializedProtoRecord, topic: &str) {
     println!("testing record {:#?}", rec);
     assert_eq!(String::from("testkey"), rec.key, "check string key");
-    let value_values = match rec.value {
-        Value::Message(v) => v.fields,
+    let message = match rec.value {
+        Value::Message(v) => v,
         _ => panic!("Not a message value while that was expected"),
     };
-    match &value_values[0].value {
+    match field(&message, "id") {
         Value::Bytes(v) => assert_eq!(16, v.len(), "expected id of 16 size"),
-        _ => panic!("Not a bytes value for counter while that was expected"),
+        _ => panic!("Not a bytes value for id while that was expected"),
     };
-    let counter_value = match &value_values[1].value {
-        Value::Int64(v) => v,
-        _ => panic!("Not a long value for counter while that was expected"),
-    };
-    assert_eq!(&1, counter_value, "counter is 1");
-    let input_value = match &value_values[2].value {
-        Value::String(v) => v,
-        _ => panic!("Not a string value for input while that was expected"),
-    };
+    assert_eq!(Value::I64(1), field(&message, "counter"), "counter is 1");
     assert_eq!(
-        &String::from("String"),
-        input_value,
+        Value::String(String::from("String")),
+        field(&message, "input"),
         "Optional string is string"
     );
-    let results = match &value_values[3].value {
-        Value::Message(v) => v.fields.clone(),
-        _ => panic!("Not an array value for results while that was expected"),
-    };
-    assert_eq!(2, results.len(), "Expect two result");
-    let input_value = match &results[0].value {
-        Value::String(v) => v,
-        _ => panic!("Not a string value for input while that was expected"),
+    let results = match field(&message, "results") {
+        Value::Message(v) => v,
+        _ => panic!("Not a message value for results while that was expected"),
     };
     assert_eq!(
-        &String::from("STRING"),
-        input_value,
+        Value::String(String::from("STRING")),
+        field(&results, "up"),
         "Optional string is STRING"
     );
-    let input_value = match &results[1].value {
-        Value::String(v) => v,
-        _ => panic!("Not a string value for input while that was expected"),
-    };
     assert_eq!(
-        &String::from("string"),
-        input_value,
+        Value::String(String::from("string")),
+        field(&results, "down"),
         "Optional string is string"
     );
     assert_eq!(
@@ -99,7 +89,7 @@ fn test2_test_google_proto_from_java_test_app() {
         println!("testing record {:#?}", rec);
         assert_eq!(String::from("testkey"), rec.key, "check string key");
         match rec.value {
-            Value::Message(v) => v.fields,
+            Value::Message(v) => v,
             _ => panic!("Not a message, while only only those expected"),
         };
     });

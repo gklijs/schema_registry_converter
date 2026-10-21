@@ -1,6 +1,6 @@
-use protofish::decode::Value;
 use rdkafka::message::{BorrowedMessage, Headers};
 use rdkafka::Message;
+use schema_registry_converter::prost_reflect::Value;
 
 use schema_registry_converter::blocking::proto_decoder::ProtoDecoder;
 use schema_registry_converter::blocking::schema_registry::SrSettings;

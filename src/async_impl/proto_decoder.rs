@@ -1,57 +1,36 @@
-use bytes::Bytes;
 use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
 use futures::future::{BoxFuture, Shared};
 use futures::FutureExt;
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::async_impl::schema_registry::{
     get_referenced_schema, get_schema_by_guid_and_type, get_schema_by_id_and_type, SrSettings,
 };
 use crate::error::SRCError;
-use crate::proto_common_types::add_common_files;
-use crate::proto_resolver::{resolve_name, to_index_and_data, MessageResolver};
+use crate::proto_decoder_common::{
+    decode_message, find_message, to_file_descriptor, ReferencedSchemas,
+};
+use crate::proto_resolver::to_index_and_data;
 use crate::schema_registry_common::{
     get_bytes_result, parse_schema_id_header, BytesResult, HeaderSchemaId, RegisteredSchema,
     SchemaType,
 };
-use protofish::context::{Context, MessageInfo};
-use protofish::decode::{MessageValue, Value};
+use prost_reflect::bytes::Bytes;
+use prost_reflect::{DynamicMessage, FileDescriptor, Value};
 
-/// `Context::get_message` returns `None` for a name it can't resolve. Surfacing that as an
-/// `SRCError` instead of panicking matters most for `decode_with_header_id`, where `full_name`
-/// is ultimately derived from Kafka header bytes a producer controls (a guid paired with a
-/// message index that doesn't actually match anything in the resolved schema), rather than from
-/// data `resolve_name` has already validated against this same context.
-fn get_message_info<'a>(
-    context: &'a Context,
-    full_name: &str,
-) -> Result<&'a MessageInfo, SRCError> {
-    context.get_message(full_name).ok_or_else(|| {
-        SRCError::non_retryable_without_cause(&format!(
-            "could not find message {} in the resolved protobuf schema",
-            full_name
-        ))
-    })
-}
-
-/// The root `RegisteredSchema` alongside the flattened schema texts
-/// used to build a `DecodeContext`.
-type CachedSchemas = (RegisteredSchema, Vec<String>);
-
-type SharedFutureSchema<'a> = Shared<BoxFuture<'a, Result<Arc<CachedSchemas>, SRCError>>>;
+type SharedFutureContext<'a> = Shared<BoxFuture<'a, Result<Arc<DecodeContext>, SRCError>>>;
 
 #[derive(Debug)]
 pub struct ProtoDecoder<'a> {
     sr_settings: SrSettings,
-    direct_cache: DashMap<u32, Arc<CachedSchemas>>,
-    cache: DashMap<u32, SharedFutureSchema<'a>>,
+    direct_cache: DashMap<u32, Arc<DecodeContext>>,
+    cache: DashMap<u32, SharedFutureContext<'a>>,
     /// Cache for schemas looked up by guid rather than id, used by
     /// [`ProtoDecoder::decode_with_header_id`]. Kept separate from `direct_cache`/`cache`
     /// (keyed by id) since a guid and an id are different keyspaces.
-    guid_direct_cache: DashMap<String, Arc<CachedSchemas>>,
-    guid_cache: DashMap<String, SharedFutureSchema<'a>>,
+    guid_direct_cache: DashMap<String, Arc<DecodeContext>>,
+    guid_cache: DashMap<String, SharedFutureContext<'a>>,
 }
 
 impl<'a> ProtoDecoder<'a> {
@@ -93,9 +72,7 @@ impl<'a> ProtoDecoder<'a> {
     pub async fn decode(&self, bytes: Option<&[u8]>) -> Result<Value, SRCError> {
         match get_bytes_result(bytes) {
             BytesResult::Null => Ok(Value::Bytes(Bytes::new())),
-            BytesResult::Valid(id, bytes) => Ok(Value::Message(Box::from(
-                self.deserialize(id, bytes).await?,
-            ))),
+            BytesResult::Valid(id, bytes) => Ok(Value::Message(self.deserialize(id, bytes).await?)),
             BytesResult::Invalid(i) => Ok(Value::Bytes(Bytes::copy_from_slice(i))),
         }
     }
@@ -119,22 +96,18 @@ impl<'a> ProtoDecoder<'a> {
             None => self.decode(Some(payload)).await,
             Some(header) => {
                 let (schema_id, index_bytes) = parse_schema_id_header(header)?;
-                let cached = match schema_id {
-                    HeaderSchemaId::Id(id) => self.get_vec_of_schemas(id).await?,
-                    HeaderSchemaId::Guid(guid) => self.get_vec_of_schemas_by_guid(guid).await?,
+                let context = match schema_id {
+                    HeaderSchemaId::Id(id) => self.get_context(id).await?,
+                    HeaderSchemaId::Guid(guid) => self.get_context_by_guid(guid).await?,
                 };
-                let context = into_decode_context(cached.0.clone(), cached.1.clone())?;
                 let (index, _empty) = to_index_and_data(index_bytes)?;
-                let full_name = resolve_name(&context.resolver, &index)?;
-                let message_info = get_message_info(&context.context, &full_name)?;
-                Ok(Value::Message(Box::from(
-                    message_info.decode(payload, &context.context),
-                )))
+                let descriptor = find_message(&context.file_descriptor, &index)?;
+                Ok(Value::Message(decode_message(descriptor, payload)?))
             }
         }
     }
     /// Like [`ProtoDecoder::decode_with_header_id`], but returns the resolved [`DecodeContext`]
-    /// (schema metadata, resolver, parsed `protofish::context::Context`) alongside the value and
+    /// (schema metadata and the compiled schema) alongside the value and
     /// full name, mirroring [`ProtoDecoder::decode_with_context`] for the header-aware path.
     /// `header_value` present -> resolve the schema and message index from it and treat `bytes`
     /// as the raw (unprefixed) payload; `header_value` absent -> falls straight through to
@@ -152,15 +125,14 @@ impl<'a> ProtoDecoder<'a> {
             None => self.decode_with_context(Some(payload)).await,
             Some(header) => {
                 let (schema_id, index_bytes) = parse_schema_id_header(header)?;
-                let cached = match schema_id {
-                    HeaderSchemaId::Id(id) => self.get_vec_of_schemas(id).await?,
-                    HeaderSchemaId::Guid(guid) => self.get_vec_of_schemas_by_guid(guid).await?,
+                let context = match schema_id {
+                    HeaderSchemaId::Id(id) => self.get_context(id).await?,
+                    HeaderSchemaId::Guid(guid) => self.get_context_by_guid(guid).await?,
                 };
-                let context = into_decode_context(cached.0.clone(), cached.1.clone())?;
                 let (index, _empty) = to_index_and_data(index_bytes)?;
-                let full_name = resolve_name(&context.resolver, &index)?;
-                let message_info = get_message_info(&context.context, &full_name)?;
-                let value = message_info.decode(payload, &context.context);
+                let descriptor = find_message(&context.file_descriptor, &index)?;
+                let full_name = descriptor.full_name().to_owned();
+                let value = decode_message(descriptor, payload)?;
                 Ok(Some(DecodeResultWithContext {
                     value,
                     context,
@@ -172,13 +144,11 @@ impl<'a> ProtoDecoder<'a> {
     }
     /// The actual deserialization trying to get the id from the bytes to retrieve the schema, and
     /// using a reader transforms the bytes to a value.
-    async fn deserialize(&self, id: u32, bytes: &[u8]) -> Result<MessageValue, SRCError> {
-        let cached = self.get_vec_of_schemas(id).await?;
-        let context = into_decode_context(cached.0.clone(), cached.1.clone())?;
+    async fn deserialize(&self, id: u32, bytes: &[u8]) -> Result<DynamicMessage, SRCError> {
+        let context = self.get_context(id).await?;
         let (index, data) = to_index_and_data(bytes)?;
-        let full_name = resolve_name(&context.resolver, &index)?;
-        let message_info = get_message_info(&context.context, &full_name)?;
-        Ok(message_info.decode(&data, &context.context))
+        let descriptor = find_message(&context.file_descriptor, &index)?;
+        decode_message(descriptor, &data)
     }
     /// Decodes bytes into a value.
     /// The choice to use Option<&[u8]> as type us made so it plays nice with the BorrowedMessage
@@ -207,12 +177,11 @@ impl<'a> ProtoDecoder<'a> {
         id: u32,
         bytes: &[u8],
     ) -> Result<DecodeResultWithContext, SRCError> {
-        let cached = self.get_vec_of_schemas(id).await?;
-        let context = into_decode_context(cached.0.clone(), cached.1.clone())?;
+        let context = self.get_context(id).await?;
         let (index, data_bytes) = to_index_and_data(bytes)?;
-        let full_name = resolve_name(&context.resolver, &index)?;
-        let message_info = get_message_info(&context.context, &full_name)?;
-        let value = message_info.decode(&data_bytes, &context.context);
+        let descriptor = find_message(&context.file_descriptor, &index)?;
+        let full_name = descriptor.full_name().to_owned();
+        let value = decode_message(descriptor, &data_bytes)?;
         Ok(DecodeResultWithContext {
             value,
             context,
@@ -220,12 +189,12 @@ impl<'a> ProtoDecoder<'a> {
             data_bytes,
         })
     }
-    /// Gets the vector of schema's directly of via a shared future. The direct cache main function
+    /// Gets the decode context directly or via a shared future. The direct cache main function
     /// is for performance.
-    async fn get_vec_of_schemas(&self, id: u32) -> Result<Arc<CachedSchemas>, SRCError> {
+    async fn get_context(&self, id: u32) -> Result<Arc<DecodeContext>, SRCError> {
         match self.direct_cache.get(&id) {
             None => {
-                let result = self.get_vec_of_schemas_by_shared_future(id).await;
+                let result = self.get_context_by_shared_future(id).await;
                 match result {
                     Ok(v) => {
                         if !self.direct_cache.contains_key(&id) {
@@ -247,17 +216,17 @@ impl<'a> ProtoDecoder<'a> {
             Some(result) => Ok(result.value().clone()),
         }
     }
-    /// Gets the vector of schema's by a shared future, to prevent multiple of the same calls to
+    /// Gets the decode context by a shared future, to prevent multiple of the same calls to
     /// schema registry, either from the cache, or from the schema registry and then putting
     /// it into the cache.
-    fn get_vec_of_schemas_by_shared_future(&self, id: u32) -> SharedFutureSchema<'a> {
+    fn get_context_by_shared_future(&self, id: u32) -> SharedFutureContext<'a> {
         match self.cache.entry(id) {
             Entry::Occupied(e) => e.get().clone(),
             Entry::Vacant(e) => {
                 let sr_settings = self.sr_settings.clone();
                 let v = async move {
                     match get_schema_by_id_and_type(id, &sr_settings, SchemaType::Protobuf).await {
-                        Ok(v) => to_vec_of_schemas(&sr_settings, v).await,
+                        Ok(v) => to_decode_context(&sr_settings, v).await,
                         Err(e) => Err(e),
                     }
                 }
@@ -268,15 +237,13 @@ impl<'a> ProtoDecoder<'a> {
         }
     }
 
-    /// Like [`ProtoDecoder::get_vec_of_schemas`], but looks the schema up by guid instead of id
+    /// Like [`ProtoDecoder::get_context`], but looks the schema up by guid instead of id
     /// -- used by [`ProtoDecoder::decode_with_header_id`] when the header carries a guid rather
     /// than an id.
-    async fn get_vec_of_schemas_by_guid(&self, guid: String) -> Result<Arc<CachedSchemas>, SRCError> {
+    async fn get_context_by_guid(&self, guid: String) -> Result<Arc<DecodeContext>, SRCError> {
         match self.guid_direct_cache.get(&guid) {
             None => {
-                let result = self
-                    .get_vec_of_schemas_by_guid_shared_future(guid.clone())
-                    .await;
+                let result = self.get_context_by_guid_shared_future(guid.clone()).await;
                 match result {
                     Ok(v) => {
                         if !self.guid_direct_cache.contains_key(&guid) {
@@ -296,7 +263,7 @@ impl<'a> ProtoDecoder<'a> {
         }
     }
 
-    fn get_vec_of_schemas_by_guid_shared_future(&self, guid: String) -> SharedFutureSchema<'a> {
+    fn get_context_by_guid_shared_future(&self, guid: String) -> SharedFutureContext<'a> {
         match self.guid_cache.entry(guid.clone()) {
             Entry::Occupied(e) => e.get().clone(),
             Entry::Vacant(e) => {
@@ -305,7 +272,7 @@ impl<'a> ProtoDecoder<'a> {
                     match get_schema_by_guid_and_type(&guid, &sr_settings, SchemaType::Protobuf)
                         .await
                     {
-                        Ok(v) => to_vec_of_schemas(&sr_settings, v).await,
+                        Ok(v) => to_decode_context(&sr_settings, v).await,
                         Err(e) => Err(e),
                     }
                 }
@@ -319,23 +286,28 @@ impl<'a> ProtoDecoder<'a> {
 
 #[derive(Debug)]
 pub struct DecodeResultWithContext {
-    pub value: MessageValue,
-    pub context: DecodeContext,
-    pub full_name: Arc<String>,
+    pub value: DynamicMessage,
+    pub context: Arc<DecodeContext>,
+    pub full_name: String,
     pub data_bytes: Vec<u8>,
 }
 
-fn add_files<'a>(
+/// Adds the schemas `registered_schema` references, and the ones those reference, keyed by the
+/// name they're imported by. A schema referenced via several paths is only fetched once.
+fn add_referenced_schemas<'a>(
     sr_settings: &'a SrSettings,
-    registered_schema: RegisteredSchema,
-    files: &'a mut Vec<String>,
+    registered_schema: &'a RegisteredSchema,
+    schemas: &'a mut ReferencedSchemas,
 ) -> BoxFuture<'a, Result<(), SRCError>> {
     async move {
-        for r in registered_schema.references {
-            let child_schema = get_referenced_schema(sr_settings, &r).await?;
-            add_files(sr_settings, child_schema, files).await?;
+        for r in &registered_schema.references {
+            if schemas.contains_key(&r.name) {
+                continue;
+            }
+            let child_schema = get_referenced_schema(sr_settings, r).await?;
+            add_referenced_schemas(sr_settings, &child_schema, schemas).await?;
+            schemas.insert(r.name.clone(), child_schema.schema);
         }
-        files.push(registered_schema.schema);
         Ok(())
     }
     .boxed()
@@ -344,70 +316,55 @@ fn add_files<'a>(
 #[derive(Debug)]
 pub struct DecodeContext {
     pub schema: RegisteredSchema,
-    pub resolver: MessageResolver,
-    pub context: Context,
+    /// The compiled root schema, its imports can be reached via
+    /// [`FileDescriptor::parent_pool`].
+    pub file_descriptor: FileDescriptor,
 }
 
-/// Parses the schema texts into a `DecodeContext`. Deliberately *not* cached: unlike the
-/// blocking decoder (which caches the parsed `Arc<DecodeContext>` and so also caches a parse
-/// failure), this runs again on every `deserialize`/`deserialize_with_context` call, re-parsing
-/// on each decode rather than storing the parsed `Context`/`MessageResolver` in the schema-id
-/// cache alongside the raw schema texts. That's an intentional trade-off to avoid caching
-/// non-trivial parsed state, not an oversight — see
-/// https://github.com/gklijs/schema_registry_converter/issues/175 for the discussion. One
-/// consequence: a parse failure here is never cached, so `error.cached` is always `false` for
-/// it and it's retried on every call, unlike the equivalent blocking-decoder failure.
+/// Compiles the schema texts into a `DecodeContext`. The result is cached per schema id/guid,
+/// like the blocking decoder does, so a compile failure is cached too (as a non-retriable error,
+/// see `remove_errors_from_cache`). See
+/// https://github.com/gklijs/schema_registry_converter/issues/175.
 fn into_decode_context(
     schema: RegisteredSchema,
-    mut vec_of_schemas: Vec<String>,
+    referenced_schemas: ReferencedSchemas,
 ) -> Result<DecodeContext, SRCError> {
-    // The root schema is always pushed last by add_files, so pop it off rather than
-    // re-parsing it below with the other, dependent schemas.
-    let root_schema = vec_of_schemas.pop().unwrap();
-    let resolver = MessageResolver::new(&root_schema);
-    let mut files: HashSet<String> = HashSet::new();
-    add_common_files(resolver.imports(), &mut files);
-    for s in vec_of_schemas {
-        let dependent_resolver = MessageResolver::new(&s);
-        add_common_files(dependent_resolver.imports(), &mut files);
-        files.insert(s);
-    }
-    files.insert(root_schema);
-    match Context::parse(files) {
-        Ok(context) => Ok(DecodeContext {
-            schema,
-            resolver,
-            context,
-        }),
-        Err(e) => Err(SRCError::non_retryable_with_cause(
-            e,
-            "Error creating proto context",
-        )),
-    }
+    let file_descriptor = to_file_descriptor(&schema.schema, referenced_schemas)?;
+    Ok(DecodeContext {
+        schema,
+        file_descriptor,
+    })
 }
 
-async fn to_vec_of_schemas(
+async fn to_decode_context(
     sr_settings: &SrSettings,
     registered_schema: RegisteredSchema,
-) -> Result<Arc<CachedSchemas>, SRCError> {
-    let root_schema = registered_schema.clone();
-    let mut vec_of_schemas = Vec::new();
-    add_files(sr_settings, registered_schema, &mut vec_of_schemas).await?;
-    Ok(Arc::new((root_schema, vec_of_schemas)))
+) -> Result<Arc<DecodeContext>, SRCError> {
+    let mut referenced_schemas = ReferencedSchemas::new();
+    add_referenced_schemas(sr_settings, &registered_schema, &mut referenced_schemas).await?;
+    Ok(Arc::new(into_decode_context(
+        registered_schema,
+        referenced_schemas,
+    )?))
 }
 
 #[cfg(test)]
 mod tests {
     use crate::async_impl::proto_decoder::{into_decode_context, ProtoDecoder};
     use crate::async_impl::schema_registry::SrSettings;
+    use crate::proto_decoder_common::ReferencedSchemas;
     use crate::schema_registry_common::{RegisteredSchema, SchemaType};
     use mockito::Server;
-    use protofish::prelude::Value;
+    use prost_reflect::{DynamicMessage, Value};
     use test_utils::{
         get_proto_complex, get_proto_complex_proto_test_message, get_proto_complex_references,
         get_proto_hb_101, get_proto_hb_101_empty_payload, get_proto_hb_schema,
         get_proto_money_result, get_proto_result,
     };
+
+    fn field(message: &DynamicMessage, name: &str) -> Value {
+        message.get_field_by_name(name).unwrap().into_owned()
+    }
 
     fn dummy_registered_schema(schema: &str) -> RegisteredSchema {
         RegisteredSchema {
@@ -455,11 +412,11 @@ mod tests {
         let heartbeat = decoder.decode(Some(get_proto_hb_101())).await.unwrap();
 
         let message = match heartbeat {
-            Value::Message(x) => *x,
+            Value::Message(x) => x,
             v => panic!("Other value: {:?} than expected Message", v),
         };
 
-        assert_eq!(Value::UInt64(101u64), message.fields[0].value)
+        assert_eq!(Value::U64(101u64), field(&message, "beat"))
     }
 
     #[tokio::test]
@@ -493,10 +450,10 @@ mod tests {
             .unwrap();
 
         let message = match heartbeat {
-            Value::Message(x) => *x,
+            Value::Message(x) => x,
             v => panic!("Other value: {:?} than expected Message", v),
         };
-        assert_eq!(Value::UInt64(101u64), message.fields[0].value);
+        assert_eq!(Value::U64(101u64), field(&message, "beat"));
 
         // header absent -> falls straight through to decode(), which expects the prefix
         let _m2 = server
@@ -510,10 +467,10 @@ mod tests {
             .await
             .unwrap();
         let message = match heartbeat {
-            Value::Message(x) => *x,
+            Value::Message(x) => x,
             v => panic!("Other value: {:?} than expected Message", v),
         };
-        assert_eq!(Value::UInt64(101u64), message.fields[0].value);
+        assert_eq!(Value::U64(101u64), field(&message, "beat"));
     }
 
     #[tokio::test]
@@ -547,7 +504,7 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        assert_eq!(Value::UInt64(101u64), result.value.fields[0].value);
+        assert_eq!(Value::U64(101u64), field(&result.value, "beat"));
         assert_eq!(result.context.schema.id, 1);
         assert_eq!(result.context.schema.schema_type, SchemaType::Protobuf);
         assert_eq!(&*result.full_name, "nl.openweb.data.Heartbeat");
@@ -565,7 +522,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(Value::UInt64(101u64), result.value.fields[0].value);
+        assert_eq!(Value::U64(101u64), field(&result.value, "beat"));
         assert_eq!(result.context.schema.id, 7);
     }
 
@@ -613,7 +570,7 @@ mod tests {
 
         let result = heartbeat.unwrap();
 
-        assert_eq!(Value::UInt64(101u64), result.value.fields[0].value);
+        assert_eq!(Value::U64(101u64), field(&result.value, "beat"));
         // The registered schema's id reflects the id used to look it up (from the payload's
         // prefix), not the (unrelated, in this mocked response) "id" field of the schema
         // registry response body.
@@ -661,7 +618,7 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        assert_eq!(result.value.fields[1].value, Value::Int64(1));
+        assert_eq!(field(&result.value, "counter"), Value::I64(1));
         assert_eq!(result.context.schema.id, 6);
         assert_eq!(
             result.context.schema.schema,
@@ -728,11 +685,11 @@ mod tests {
         let heartbeat = decoder.decode(Some(get_proto_hb_101())).await.unwrap();
 
         let message = match heartbeat {
-            Value::Message(x) => *x,
+            Value::Message(x) => x,
             v => panic!("Other value: {:?} than expected Message", v),
         };
 
-        assert_eq!(Value::UInt64(101u64), message.fields[0].value);
+        assert_eq!(Value::U64(101u64), field(&message, "beat"));
     }
 
     #[tokio::test]
@@ -767,10 +724,10 @@ mod tests {
             .unwrap();
 
         let message = match proto_test {
-            Value::Message(x) => *x,
+            Value::Message(x) => x,
             v => panic!("Other value: {:?} than expected Message", v),
         };
-        assert_eq!(message.fields[1].value, Value::Int64(1))
+        assert_eq!(field(&message, "counter"), Value::I64(1))
     }
 
     #[tokio::test]
@@ -809,10 +766,10 @@ mod tests {
             .unwrap();
 
         let message = match proto_test {
-            Value::Message(x) => *x,
+            Value::Message(x) => x,
             v => panic!("Other value: {:?} than expected Message", v),
         };
-        assert_eq!(message.fields[1].value, Value::Int64(1))
+        assert_eq!(field(&message, "counter"), Value::I64(1))
     }
 
     #[test]
@@ -828,20 +785,21 @@ mod tests {
     fn test_into_decode_context() {
         let base_schema = "syntax = \"proto3\";\npackage a.b.c;\n\nimport \"google/protobuf/timestamp.proto\";\n\noption java_outer_classname = \"MetadataProto\";\n\nmessage Metadata {\n  string field1 = 1;\n  string field2 = 2;\n  .google.protobuf.Timestamp field3 = 3;\n}\n";
         let top_schema = "syntax = \"proto3\";\npackage a.b.c.d;\n\nimport \"a/b/c/metadata.proto\";\n\noption java_outer_classname = \"TopLevelProto\";\n\nmessage TopLevelMetadata {\n  uint64 field1 = 1;\n  .a.b.c.Metadata metadata = 3;\n\n}\n";
-        let vec_of_schemas = vec![base_schema.to_string(), top_schema.to_string()];
-        let result = into_decode_context(dummy_registered_schema(top_schema), vec_of_schemas);
+        let mut referenced_schemas = ReferencedSchemas::new();
+        referenced_schemas.insert(
+            String::from("a/b/c/metadata.proto"),
+            base_schema.to_string(),
+        );
+        let result = into_decode_context(dummy_registered_schema(top_schema), referenced_schemas);
         assert!(result.is_ok())
     }
 
     #[test]
     fn test_into_decode_context_with_optional_field() {
         // Regression test for https://github.com/gklijs/schema_registry_converter/issues/147:
-        // proto3 `optional` fields make protofish generate a synthetic `oneof _<field>`, which
-        // used to fail to re-parse because protofish's own grammar didn't allow identifiers
-        // starting with an underscore. Fixed upstream in
-        // https://github.com/Rantanen/protofish/pull/13, released in protofish 0.5.3.
+        // proto3 `optional` fields, which are compiled into a synthetic `oneof _<field>`.
         let schema = "syntax = \"proto3\";\n\npackage in.abc.event_entities;\n\noption java_outer_classname = \"EventSourceProto\";\n\nmessage EventSource {\n  message Actor {\n    enum UserEntity {\n      USER_ENTITY_UNSPECIFIED = 0;\n      USER_ENTITY_ADMIN = 1;\n    }\n\n    UserEntity entity = 1;\n    uint32 id = 2;\n  }\n  string system = 1;\n  optional Actor initiator = 2;\n  optional Actor proxy = 3;\n  optional string reason = 4;\n}\n";
-        let result = into_decode_context(dummy_registered_schema(schema), vec![schema.to_string()]);
+        let result = into_decode_context(dummy_registered_schema(schema), ReferencedSchemas::new());
         assert!(result.is_ok())
     }
 }
