@@ -25,6 +25,14 @@ json = ["url", "valico"]
 middleware = ["dep:reqwest-middleware"]
 proto_decoder = ["integer-encoding", "prost-reflect", "prost-types", "protox", "protox-parse"]
 proto_raw = ["integer-encoding", "prost-types", "protox-parse"]
+proto_encoder = [
+    "integer-encoding",
+    "prost-reflect",
+    "prost-reflect/serde",
+    "prost-types",
+    "protox",
+    "protox-parse",
+]
 easy = ["tokio"]
 kafka_test = []
 default = ["futures", "native_tls"]

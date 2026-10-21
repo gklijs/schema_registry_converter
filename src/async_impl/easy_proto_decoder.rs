@@ -26,6 +26,26 @@ impl EasyProtoDecoder {
     ) -> Result<Option<DecodeResultWithContext>, SRCError> {
         self.decoder.decode_with_context(bytes).await
     }
+    /// See [`ProtoDecoder::decode_with_header_id`].
+    pub async fn decode_with_header_id(
+        &self,
+        header_value: Option<&[u8]>,
+        bytes: Option<&[u8]>,
+    ) -> Result<Value, SRCError> {
+        self.decoder
+            .decode_with_header_id(header_value, bytes)
+            .await
+    }
+    /// See [`ProtoDecoder::decode_with_context_and_header_id`].
+    pub async fn decode_with_context_and_header_id(
+        &self,
+        header_value: Option<&[u8]>,
+        bytes: Option<&[u8]>,
+    ) -> Result<Option<DecodeResultWithContext>, SRCError> {
+        self.decoder
+            .decode_with_context_and_header_id(header_value, bytes)
+            .await
+    }
 }
 
 #[cfg(test)]
@@ -90,5 +110,45 @@ mod tests {
         let message = heartbeat.unwrap().value;
 
         assert_eq!(Value::U64(101u64), field(&message, "beat"))
+    }
+
+    #[tokio::test]
+    async fn test_decode_with_context_and_header_id() {
+        let mut server = Server::new_async().await;
+        let _m = server
+            .mock(
+                "GET",
+                "/schemas/guids/cc0e0e0e-53c1-4a1a-8f1a-000000000001?deleted=true",
+            )
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(get_proto_body(get_proto_hb_schema(), 1))
+            .create();
+
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
+        let decoder = EasyProtoDecoder::new(sr_settings);
+        // magic byte 0x01 + 16-byte guid + single-message index byte 0x00
+        let header_value = [
+            0x01, 0xcc, 0x0e, 0x0e, 0x0e, 0x53, 0xc1, 0x4a, 0x1a, 0x8f, 0x1a, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x01, 0x00,
+        ];
+        let payload = &get_proto_hb_101()[6..];
+        let result = decoder
+            .decode_with_context_and_header_id(Some(&header_value), Some(payload))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(Value::U64(101u64), field(&result.value, "beat"));
+        let value = decoder
+            .decode_with_header_id(Some(&header_value), Some(payload))
+            .await
+            .unwrap();
+        match value {
+            Value::Message(message) => assert_eq!(Value::U64(101u64), field(&message, "beat")),
+            v => panic!("Other value: {:?} than expected Message", v),
+        }
     }
 }

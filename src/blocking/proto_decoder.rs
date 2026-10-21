@@ -3,12 +3,10 @@ use dashmap::DashMap;
 use std::sync::Arc;
 
 use crate::blocking::schema_registry::{
-    get_referenced_schema, get_schema_by_guid_and_type, get_schema_by_id_and_type, SrSettings,
+    get_referenced_schemas, get_schema_by_guid_and_type, get_schema_by_id_and_type, SrSettings,
 };
 use crate::error::SRCError;
-use crate::proto_decoder_common::{
-    decode_message, to_file_descriptor, MessageIndex, ReferencedSchemas,
-};
+use crate::proto_decoder_common::{decode_message, to_file_descriptor, MessageIndex};
 use crate::proto_resolver::to_index_and_data;
 use crate::schema_registry_common::{
     get_bytes_result, parse_schema_id_header, BytesResult, HeaderSchemaId, RegisteredSchema,
@@ -120,6 +118,41 @@ impl ProtoDecoder {
             }
         }
     }
+    /// Like [`ProtoDecoder::decode_with_header_id`], but returns the resolved [`DecodeContext`]
+    /// alongside the value and full name, like [`ProtoDecoder::decode_with_context`].
+    /// `header_value` present -> resolve the schema and message index from it and treat `bytes`
+    /// as the raw (unprefixed) payload; `header_value` absent -> falls straight through to
+    /// [`ProtoDecoder::decode_with_context`].
+    pub fn decode_with_context_and_header_id(
+        &self,
+        header_value: Option<&[u8]>,
+        bytes: Option<&[u8]>,
+    ) -> Result<Option<DecodeResultWithContext>, SRCError> {
+        let payload = match bytes {
+            Some(v) => v,
+            None => return Ok(None),
+        };
+        match header_value {
+            None => self.decode_with_context(Some(payload)),
+            Some(header) => {
+                let (schema_id, index_bytes) = parse_schema_id_header(header)?;
+                let context = match schema_id {
+                    HeaderSchemaId::Id(id) => self.context(id)?,
+                    HeaderSchemaId::Guid(guid) => self.guid_context(guid)?,
+                };
+                let (index, _empty) = to_index_and_data(index_bytes)?;
+                let descriptor = context.messages.find(&index)?;
+                let full_name = descriptor.full_name().to_owned();
+                let value = decode_message(descriptor, payload)?;
+                Ok(Some(DecodeResultWithContext {
+                    value,
+                    context,
+                    full_name,
+                    data_bytes: payload.to_vec(),
+                }))
+            }
+        }
+    }
     /// The actual deserialization trying to get the id from the bytes to retrieve the schema, and
     /// using a reader transforms the bytes to a value.
     fn deserialize_with_context(
@@ -200,24 +233,6 @@ pub struct DecodeResultWithContext {
     pub data_bytes: Vec<u8>,
 }
 
-/// Adds the schemas `registered_schema` references, and the ones those reference, keyed by the
-/// name they're imported by. A schema referenced via several paths is only fetched once.
-fn add_referenced_schemas(
-    sr_settings: &SrSettings,
-    registered_schema: &RegisteredSchema,
-    schemas: &mut ReferencedSchemas,
-) -> Result<(), SRCError> {
-    for r in &registered_schema.references {
-        if schemas.contains_key(&r.name) {
-            continue;
-        }
-        let child_schema = get_referenced_schema(sr_settings, r)?;
-        add_referenced_schemas(sr_settings, &child_schema, schemas)?;
-        schemas.insert(r.name.clone(), child_schema.schema);
-    }
-    Ok(())
-}
-
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct DecodeContext {
@@ -233,8 +248,7 @@ fn to_resolve_context(
     sr_settings: &SrSettings,
     schema: RegisteredSchema,
 ) -> Result<Arc<DecodeContext>, SRCError> {
-    let mut referenced_schemas = ReferencedSchemas::new();
-    add_referenced_schemas(sr_settings, &schema, &mut referenced_schemas)?;
+    let referenced_schemas = get_referenced_schemas(sr_settings, &schema)?;
     let file_descriptor = to_file_descriptor(&schema.schema, referenced_schemas)?;
     let messages = MessageIndex::new(&file_descriptor);
     Ok(Arc::new(DecodeContext {
@@ -248,6 +262,7 @@ fn to_resolve_context(
 mod tests {
     use crate::blocking::proto_decoder::ProtoDecoder;
     use crate::blocking::schema_registry::SrSettings;
+    use crate::schema_registry_common::SchemaType;
     use prost_reflect::{DynamicMessage, Value};
     use test_utils::{
         get_proto_body, get_proto_body_with_reference, get_proto_complex,
@@ -336,6 +351,57 @@ mod tests {
             v => panic!("Other value: {:?} than expected Message", v),
         };
         assert_eq!(Value::U64(101u64), field(&message, "beat"));
+    }
+
+    #[test]
+    fn test_decode_with_context_and_header_id() {
+        let mut server = mockito::Server::new();
+        let _m = server
+            .mock(
+                "GET",
+                "/schemas/guids/cc0e0e0e-53c1-4a1a-8f1a-000000000001?deleted=true",
+            )
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(get_proto_body(get_proto_hb_schema(), 1))
+            .create();
+
+        let sr_settings = SrSettings::new_builder(server.url())
+            .no_proxy()
+            .build()
+            .unwrap();
+        let decoder = ProtoDecoder::new(sr_settings);
+        // magic byte 0x01 + 16-byte guid + single-message index byte 0x00
+        let header_value = [
+            0x01, 0xcc, 0x0e, 0x0e, 0x0e, 0x53, 0xc1, 0x4a, 0x1a, 0x8f, 0x1a, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x01, 0x00,
+        ];
+        let payload = &get_proto_hb_101()[6..]; // data only, no prefix/index
+
+        let result = decoder
+            .decode_with_context_and_header_id(Some(&header_value), Some(payload))
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(Value::U64(101u64), field(&result.value, "beat"));
+        assert_eq!(result.context.schema.id, 1);
+        assert_eq!(result.context.schema.schema_type, SchemaType::Protobuf);
+        assert_eq!(&*result.full_name, "nl.openweb.data.Heartbeat");
+
+        // header absent -> falls straight through to decode_with_context(), which expects the
+        // classic wire-format prefix
+        let _m2 = server
+            .mock("GET", "/schemas/ids/7?deleted=true")
+            .with_status(200)
+            .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+            .with_body(get_proto_body(get_proto_hb_schema(), 1))
+            .create();
+        let result = decoder
+            .decode_with_context_and_header_id(None, Some(get_proto_hb_101()))
+            .unwrap()
+            .unwrap();
+        assert_eq!(Value::U64(101u64), field(&result.value, "beat"));
+        assert_eq!(result.context.schema.id, 7);
     }
 
     #[test]

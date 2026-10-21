@@ -75,13 +75,32 @@ Other breaking changes in this release, so later additions don't need another ma
   `Arc<JsonSchema>` instead of a `ScopedSchema` borrowing from the decoder, so the blocking
   `JsonDecoder` methods take `&self` instead of `&mut self`, like the other decoders. The async
   `DecodeResult` also holds an `Arc<JsonSchema>`, instead of a clone of the schema for every
-  decoded message. Validate a decoded value with `validate(&result.schema, &result.value)`,
-  available from both `blocking::json` and `async_impl::json`, which now takes the schema by
-  reference. Note this compiles the schema on every call: validating after a blocking decode
-  went from about 1µs to about 15µs in the benchmark. The blocking decoder also gains
+  decoded message. Validate a decoded value with `decoder.validate(&result.schema,
+  &result.value)`, on the blocking and async `JsonDecoder` (and `EasyJsonDecoder`), which keeps
+  the compiled schemas, so validating against the same schema again doesn't compile it again.
+  Validations through the same decoder happen one at a time, as valico's compiled schemas can't
+  be shared between threads. There's also a free `validate` function in both `blocking::json`
+  and `async_impl::json`, which now takes the schema by reference; it compiles the schema on
+  every call, about 14µs instead of 1µs in the benchmark. The blocking decoder also gains
   `get_schema`, and the blocking module `get_json_schema`, matching the async ones.
+- The async `JsonEncoder` keeps the compiled schemas too, instead of compiling the schema for
+  every encoded value.
 - A referenced JSON schema with its own `$id` is now the base for its own relative references in
   the async encoder and decoder too, as the blocking ones already did.
+
+New in this release:
+
+- A `ProtoEncoder` (async, blocking and `EasyProtoEncoder`), behind the new `proto_encoder`
+  feature, for protobuf messages only known at runtime. It encodes a `DynamicMessage` with
+  `encode`, or JSON in the canonical protobuf JSON mapping with `encode_json`, each also with a
+  `_with_header_id` variant. `get_message_descriptor` gives the descriptor of a message in the
+  registered schema, to create a `DynamicMessage` with. Like the decoder, it compiles the schema
+  together with the schemas it references, finds the message index by the full name of the
+  message, and fails when the registered schema isn't a protobuf schema.
+- The header-id methods are now available everywhere: the blocking `AvroDecoder` gains
+  `decode_with_schema_with_header_id` and the blocking `ProtoDecoder`
+  `decode_with_context_and_header_id`, like the async ones, and the `Easy*` wrappers gain all the
+  `_with_header_id` methods of the codecs they wrap.
 
 ### 5.1.0
 

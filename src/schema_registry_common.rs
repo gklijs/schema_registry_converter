@@ -394,6 +394,15 @@ pub struct SchemaIdHeader {
 
 /// What a [`SchemaIdHeader`]'s bytes resolved to, produced by [`parse_schema_id_header`].
 #[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(
+    not(any(
+        feature = "avro",
+        feature = "json",
+        feature = "proto_decoder",
+        feature = "proto_raw"
+    )),
+    allow(dead_code)
+)]
 pub(crate) enum HeaderSchemaId {
     Id(u32),
     Guid(String),
@@ -403,6 +412,15 @@ pub(crate) enum HeaderSchemaId {
 /// GUID wire format) followed by the 16 raw bytes of `guid`, followed by `message_indexes`
 /// verbatim (used by the protobuf decoders to carry the message index that would otherwise be a
 /// payload-prefix; empty for Avro/JSON).
+#[cfg_attr(
+    not(any(
+        feature = "avro",
+        feature = "json",
+        feature = "proto_encoder",
+        feature = "proto_raw"
+    )),
+    allow(dead_code)
+)]
 pub(crate) fn build_schema_id_header(
     name: &'static str,
     guid: &str,
@@ -423,6 +441,15 @@ pub(crate) fn build_schema_id_header(
 /// payload-prefix (empty for Avro/JSON). Shared by every encoder (Avro, JSON, protobuf; blocking
 /// and async) so the guid-required error message and header-name selection can't drift between
 /// them.
+#[cfg_attr(
+    not(any(
+        feature = "avro",
+        feature = "json",
+        feature = "proto_encoder",
+        feature = "proto_raw"
+    )),
+    allow(dead_code)
+)]
 pub(crate) fn schema_id_header_for(
     guid: Option<&str>,
     is_key: bool,
@@ -446,6 +473,15 @@ pub(crate) fn schema_id_header_for(
 /// `SchemaId.fromBytes`: magic byte `0x00` followed by a 4-byte id, or magic byte `0x01` followed
 /// by a 16-byte guid. Returns the id/guid plus whatever bytes follow it (the protobuf message
 /// index, when present; empty otherwise).
+#[cfg_attr(
+    not(any(
+        feature = "avro",
+        feature = "json",
+        feature = "proto_decoder",
+        feature = "proto_raw"
+    )),
+    allow(dead_code)
+)]
 pub(crate) fn parse_schema_id_header(bytes: &[u8]) -> Result<(HeaderSchemaId, &[u8]), SRCError> {
     match bytes.first() {
         Some(0x00) if bytes.len() >= 5 => {
@@ -474,6 +510,15 @@ pub(crate) fn parse_schema_id_header(bytes: &[u8]) -> Result<(HeaderSchemaId, &[
 }
 
 /// Parses a hyphenated or bare-hex UUID string into its 16 raw bytes.
+#[cfg_attr(
+    not(any(
+        feature = "avro",
+        feature = "json",
+        feature = "proto_encoder",
+        feature = "proto_raw"
+    )),
+    allow(dead_code)
+)]
 fn guid_to_bytes(guid: &str) -> Result<[u8; 16], SRCError> {
     let hex: String = guid.chars().filter(|c| *c != '-').collect();
     if hex.len() != 32 {
@@ -492,6 +537,15 @@ fn guid_to_bytes(guid: &str) -> Result<[u8; 16], SRCError> {
 }
 
 /// Formats 16 raw bytes as a standard hyphenated UUID string.
+#[cfg_attr(
+    not(any(
+        feature = "avro",
+        feature = "json",
+        feature = "proto_decoder",
+        feature = "proto_raw"
+    )),
+    allow(dead_code)
+)]
 fn bytes_to_guid(bytes: &[u8]) -> String {
     format!(
         "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",

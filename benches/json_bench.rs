@@ -52,8 +52,15 @@ fn json_benchmarks(c: &mut Criterion) {
         b.iter(|| decoder.decode(black_box(Some(&encoded))))
     });
 
-    // Validating a decoded value compiles the schema each time, see `validate`.
     c.bench_function("json_decode_and_validate_cached", |b| {
+        b.iter(|| {
+            let result = decoder.decode(black_box(Some(&encoded))).unwrap().unwrap();
+            decoder.validate(&result.schema, &result.value)
+        })
+    });
+
+    // The free `validate` function compiles the schema each time.
+    c.bench_function("json_decode_and_validate_uncached", |b| {
         b.iter(|| {
             let result = decoder.decode(black_box(Some(&encoded))).unwrap().unwrap();
             validate(&result.schema, &result.value)

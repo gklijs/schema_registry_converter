@@ -197,7 +197,7 @@ contract WireEnvelope {
     -- id-shaped header variant classify_header also accepts is never produced by this
     -- library's own encoders; it exists so a decoder stays compatible with the wire
     -- format regardless of which shape a producer used). message_index is present only
-    -- for a raw protobuf codec (see Codec.payload_model); empty for every other format.
+    -- for a protobuf codec, raw or structured; empty for every other format.
     frame_header: (guid: String, message_index: Bytes?) -> Bytes
     classify_header: (header: Bytes?) -> Bytes
 
@@ -249,11 +249,12 @@ contract FormatCodec {
         -- schema is outside this specification. This library only orchestrates around
         -- them.
 
-    @invariant NoStructuredProtobufEncoding
-        -- There is no protobuf counterpart to serialize. A protobuf caller encodes the
-        -- value itself with its own generated types and hands over finished bytes; the
-        -- library adds the envelope and the message-index path. This asymmetry is
-        -- current scope, not an omission to be normalised away.
+    @invariant ProtobufEncodingTwoWays
+        -- A structured protobuf encoder serializes a dynamic message, created with the
+        -- descriptor of the resolved schema or from JSON in the canonical protobuf JSON
+        -- mapping. A raw protobuf encoder serializes nothing: the caller encodes the value
+        -- itself with its own generated types and hands over finished bytes. Both add the
+        -- envelope and the message-index path.
 }
 
 ------------------------------------------------------------
@@ -399,11 +400,12 @@ entity Codec {
     style: client.style
 
     -- Whether resolving a schema verifies that the registry's reported format matches
-    -- this codec's. Every decoder does. On encode only Avro does: the JSON and raw
-    -- protobuf encoders will happily encode against a subject whose registered schema is
-    -- of a different format. That is an inconsistency between the three encoders rather
-    -- than a considered decision.
-    verifies_schema_format: role = decoder or format = avro
+    -- this codec's. Every decoder does. On encode Avro and structured protobuf do: the
+    -- JSON and raw protobuf encoders will happily encode against a subject whose
+    -- registered schema is of a different format. That is an inconsistency between the
+    -- encoders rather than a considered decision.
+    verifies_schema_format:
+        role = decoder or format = avro or (format = protobuf and payload_model = structured)
 
     -- Whether resolving a schema also pulls in the schemas it references. Avro, JSON
     -- Schema and generic protobuf all do, on both the encode and the decode path. Raw
@@ -428,11 +430,6 @@ entity Codec {
 
     invariant RawPayloadModelIsProtobufOnly {
         payload_model = raw implies format = protobuf
-    }
-
-    -- The asymmetry stated plainly: there is no protobuf encoder over a value model.
-    invariant NoStructuredProtobufEncoder {
-        format = protobuf and role = encoder implies payload_model = raw
     }
 }
 
@@ -624,7 +621,7 @@ rule RecordFetchedSchema {
         -- here identifies the schema by guid throughout.
 }
 
--- Every decoder verifies the format. On encode only Avro does; see
+-- Every decoder verifies the format. On encode only Avro and structured protobuf do; see
 -- Codec.verifies_schema_format for why that is a wart rather than a design.
 rule RejectSchemaOfWrongFormat {
     when: RegistrySchemaFetched(entry, data)
@@ -756,6 +753,14 @@ rule EncodeWithCachedSchema {
                     is_key: is_key,
                     bytes: value
                 )
+            else if codec.format = protobuf:
+                MessageEncoded(
+                    codec: codec,
+                    schema: entry.schema,
+                    header: frame_header(entry.schema.guid, message_index(entry.schema, message_name)),
+                    is_key: is_key,
+                    bytes: serialize(entry.schema, value)
+                )
             else:
                 MessageEncoded(
                     codec: codec,
@@ -773,6 +778,15 @@ rule EncodeWithCachedSchema {
                     with_message_index(entry.schema, message_name, value)
                 )
             )
+        else if codec.format = protobuf:
+            MessageEncoded(
+                codec: codec,
+                schema: entry.schema,
+                bytes: framed(
+                    entry.schema.id,
+                    with_message_index(entry.schema, message_name, serialize(entry.schema, value))
+                )
+            )
         else:
             MessageEncoded(
                 codec: codec,
@@ -788,6 +802,10 @@ rule EncodeWithCachedSchema {
         -- computes that same index path without prepending it to anything -- the header
         -- channel carries it in the header instead of the payload, so there is nothing to
         -- prepend value with.
+        --
+        -- For a structured protobuf codec, message_name is the full name of the message
+        -- value (or the one given to create it from JSON), so it can't be left out: the
+        -- schema has to declare a message by that name, or the operation fails.
         --
         -- The header channel needs a guid: without one (a registry older than Confluent
         -- Schema Registry 8.0), there is no way to make the header format unambiguous

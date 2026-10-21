@@ -1,5 +1,6 @@
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::fmt;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use serde_json::value::Value;
 use url::Url;
@@ -143,13 +144,60 @@ fn add_refs_to_scope<'s>(
 }
 
 /// Validates the value against the schema, including the schemas it references. This compiles
-/// the schema each time, so when validating many values against the same schema it might be
-/// better to compile it once with `valico` directly.
+/// the schema each time, so when validating many values, use the `validate` method of a
+/// `JsonDecoder` instead, which keeps the compiled schemas.
 pub fn validate(schema: &JsonSchema, value: &Value) -> Result<(), SRCError> {
     let mut scope = Scope::new();
     let schema = add_refs_to_scope(&mut scope, schema)?;
     let validation = schema.validate(value);
     handle_validation(validation, value)
+}
+
+/// Keeps the schemas it validated against compiled, so validating against the same schema again
+/// doesn't compile it again. A `Scope` can't be shared between threads, so it's behind a mutex,
+/// meaning validations through the same `ValidationScope` happen one at a time.
+pub(crate) struct ValidationScope(Mutex<Scope>);
+
+impl ValidationScope {
+    pub(crate) fn new() -> ValidationScope {
+        ValidationScope(Mutex::new(Scope::new()))
+    }
+
+    pub(crate) fn validate(&self, schema: &JsonSchema, value: &Value) -> Result<(), SRCError> {
+        // A panic while validating leaves the scope usable, at worst with fewer schemas compiled.
+        let mut scope = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        compile_once(&mut scope, schema)?;
+        match scope.resolve(&schema.url) {
+            Some(compiled) => handle_validation(compiled.validate(value), value),
+            None => Err(SRCError::non_retryable_without_cause(
+                "could not get schema from scope",
+            )),
+        }
+    }
+}
+
+impl fmt::Debug for ValidationScope {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ValidationScope").finish_non_exhaustive()
+    }
+}
+
+/// Compiles the schema and the schemas it references, unless it's already compiled. A url
+/// always holds the same schema, as a schema id or guid never changes in the registry.
+fn compile_once(scope: &mut Scope, schema: &JsonSchema) -> Result<(), SRCError> {
+    if scope.resolve(&schema.url).is_some() {
+        return Ok(());
+    }
+    for reference in &schema.references {
+        compile_once(scope, reference)?;
+    }
+    match scope.compile_with_id(&schema.url, schema.schema.clone(), false) {
+        Ok(_) => Ok(()),
+        Err(e) => Err(SRCError::non_retryable_with_cause(
+            e,
+            "error compiling schema",
+        )),
+    }
 }
 
 /// `base` is the url the referencing schema is compiled under -- a reference's `name` is
@@ -189,9 +237,60 @@ pub(crate) fn reference_base(schema: &Value, url: &Url) -> Url {
 
 #[cfg(test)]
 mod tests {
-    use crate::json_common::reference_base;
-    use serde_json::json;
+    use crate::json_common::{reference_base, JsonSchema, ValidationScope};
+    use serde_json::{json, Value};
+    use std::sync::Arc;
     use url::Url;
+
+    fn json_schema(url: &str, schema: Value, references: Vec<JsonSchema>) -> JsonSchema {
+        JsonSchema {
+            id: 0,
+            url: Url::parse(url).unwrap(),
+            schema,
+            references,
+            subject: None,
+            version: None,
+            properties: None,
+            tags: None,
+            guid: None,
+        }
+    }
+
+    #[test]
+    fn test_validation_scope_compiles_once_and_resolves_references() {
+        let result = json_schema(
+            "http://example.com/result.json",
+            json!({"type": "object", "properties": {"up": {"type": "string"}}, "required": ["up"]}),
+            vec![],
+        );
+        let root = Arc::new(json_schema(
+            "http://example.com/root.json",
+            json!({"type": "object", "properties": {"r": {"$ref": "result.json"}}, "required": ["r"]}),
+            vec![result.clone()],
+        ));
+        // shares the reference, which is then already compiled
+        let other = json_schema(
+            "http://example.com/other.json",
+            json!({"type": "array", "items": {"$ref": "result.json"}}),
+            vec![result],
+        );
+        let scope = ValidationScope::new();
+        scope.validate(&root, &json!({"r": {"up": "a"}})).unwrap();
+        scope.validate(&root, &json!({"r": {"up": "b"}})).unwrap();
+        assert!(scope.validate(&root, &json!({"r": {"up": 1}})).is_err());
+        scope.validate(&other, &json!([{"up": "c"}])).unwrap();
+        assert!(scope.validate(&other, &json!([{"down": "c"}])).is_err());
+        assert!(scope.validate(&root, &json!({})).is_err());
+    }
+
+    #[test]
+    fn test_validation_scope_invalid_schema_gives_error() {
+        let invalid = json_schema("http://example.com/x.json", json!({"type": 5}), vec![]);
+        let err = ValidationScope::new()
+            .validate(&invalid, &json!({}))
+            .unwrap_err();
+        assert_eq!(err.error, "error compiling schema");
+    }
 
     #[test]
     fn test_reference_base_prefers_own_id() {

@@ -274,6 +274,56 @@ impl AvroDecoder {
             )),
         }
     }
+    /// Like [`AvroDecoder::decode_with_schema`], but for a message that may carry its schema
+    /// id/guid in a `__key_schema_id`/`__value_schema_id` header instead of the payload prefix,
+    /// see [`AvroDecoder::decode_with_header_id`].
+    ///
+    /// ```
+    /// use apache_avro::types::Value;
+    /// use schema_registry_converter::blocking::avro::AvroDecoder;
+    /// use schema_registry_converter::blocking::schema_registry::SrSettings;
+    ///
+    /// let mut server = mockito::Server::new();
+    /// let _m = server .mock("GET", "/schemas/guids/cc0e0e0e-53c1-4a1a-8f1a-000000000001?deleted=true")
+    ///     .with_status(200)
+    ///     .with_header("content-type", "application/vnd.schemaregistry.v1+json")
+    ///     .with_body(r#"{"schema":"{\"type\":\"record\",\"name\":\"Heartbeat\",\"namespace\":\"nl.openweb.data\",\"fields\":[{\"name\":\"beat\",\"type\":\"long\"}]}"}"#)
+    ///     .create();
+    ///
+    /// let sr_settings = SrSettings::new_builder(server.url()).no_proxy().build().unwrap();
+    /// let decoder = AvroDecoder::new(sr_settings);
+    /// let header_value = [0x01, 0xcc, 0x0e, 0x0e, 0x0e, 0x53, 0xc1, 0x4a, 0x1a, 0x8f, 0x1a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01];
+    /// let result = decoder.decode_with_schema_with_header_id(Some(&header_value), Some(&[6])).unwrap().unwrap();
+    ///
+    /// assert_eq!(result.value, Value::Record(vec![("beat".to_string(), Value::Long(3))]));
+    /// assert_eq!(result.schema.id, 0);
+    /// ```
+    pub fn decode_with_schema_with_header_id(
+        &self,
+        header_value: Option<&[u8]>,
+        bytes: Option<&[u8]>,
+    ) -> Result<Option<DecodeResultWithSchema>, SRCError> {
+        let payload = match bytes {
+            Some(v) => v,
+            None => return Ok(None),
+        };
+        match header_value {
+            None => self.decode_with_schema(Some(payload)),
+            Some(header) => {
+                let (schema_id, _rest) = parse_schema_id_header(header)?;
+                let schema = match schema_id {
+                    HeaderSchemaId::Id(id) => self.schema(id)?,
+                    HeaderSchemaId::Guid(guid) => self.guid_schema(guid)?,
+                };
+                let value = decode_bytes(&self.resolved_cache, &schema, payload)?;
+                Ok(Some(DecodeResultWithSchema {
+                    name: get_name(&schema.parsed),
+                    value,
+                    schema,
+                }))
+            }
+        }
+    }
     /// The actual deserialization trying to get the id from the bytes to retrieve the schema, and
     /// using a reader transforms the bytes to a value.
     fn deserialize_with_schema(

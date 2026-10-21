@@ -1,7 +1,7 @@
 use crate::async_impl::proto_raw::{ProtoRawDecoder, ProtoRawEncoder, RawDecodeResult};
 use crate::async_impl::schema_registry::SrSettings;
 use crate::error::SRCError;
-use crate::schema_registry_common::SubjectNameStrategy;
+use crate::schema_registry_common::{SchemaIdHeader, SubjectNameStrategy};
 use std::sync::Arc;
 
 /// A decoder used to transform bytes to a [RawDecodeResult], its much like [ProtoRawDecoder] but wrapped with an arc to make it easier.
@@ -18,6 +18,16 @@ impl EasyProtoRawDecoder {
     }
     pub async fn decode(&self, bytes: Option<&[u8]>) -> Result<Option<RawDecodeResult>, SRCError> {
         self.decoder.decode(bytes).await
+    }
+    /// See [`ProtoRawDecoder::decode_with_header_id`].
+    pub async fn decode_with_header_id(
+        &self,
+        header_value: Option<&[u8]>,
+        bytes: Option<&[u8]>,
+    ) -> Result<Option<RawDecodeResult>, SRCError> {
+        self.decoder
+            .decode_with_header_id(header_value, bytes)
+            .await
     }
 }
 
@@ -44,6 +54,18 @@ impl EasyProtoRawEncoder {
             .encode(bytes, full_name, subject_name_strategy)
             .await
     }
+    /// See [`ProtoRawEncoder::encode_with_header_id`].
+    pub async fn encode_with_header_id(
+        &self,
+        bytes: &[u8],
+        full_name: &str,
+        subject_name_strategy: SubjectNameStrategy,
+        is_key: bool,
+    ) -> Result<(Vec<u8>, SchemaIdHeader), SRCError> {
+        self.encoder
+            .encode_with_header_id(bytes, full_name, subject_name_strategy, is_key)
+            .await
+    }
     pub async fn encode_single_message(
         &self,
         bytes: &[u8],
@@ -51,6 +73,17 @@ impl EasyProtoRawEncoder {
     ) -> Result<Vec<u8>, SRCError> {
         self.encoder
             .encode_single_message(bytes, subject_name_strategy)
+            .await
+    }
+    /// See [`ProtoRawEncoder::encode_single_message_with_header_id`].
+    pub async fn encode_single_message_with_header_id(
+        &self,
+        bytes: &[u8],
+        subject_name_strategy: SubjectNameStrategy,
+        is_key: bool,
+    ) -> Result<(Vec<u8>, SchemaIdHeader), SRCError> {
+        self.encoder
+            .encode_single_message_with_header_id(bytes, subject_name_strategy, is_key)
             .await
     }
 }

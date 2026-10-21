@@ -60,8 +60,10 @@ pub(crate) fn to_file_descriptor(
 /// instead of walking the descriptors again, which for a message further down a schema took
 /// several microseconds per decode.
 #[derive(Debug)]
+#[cfg_attr(not(feature = "proto_decoder"), allow(dead_code))]
 pub(crate) struct MessageIndex(HashMap<Vec<i32>, MessageDescriptor>);
 
+#[cfg_attr(not(feature = "proto_decoder"), allow(dead_code))]
 impl MessageIndex {
     pub(crate) fn new(file: &FileDescriptor) -> MessageIndex {
         let pool = file.parent_pool();
@@ -86,6 +88,7 @@ impl MessageIndex {
 }
 
 /// Decodes the data bytes, the payload without the id and message index, as the given message.
+#[cfg_attr(not(feature = "proto_decoder"), allow(dead_code))]
 pub(crate) fn decode_message(
     descriptor: MessageDescriptor,
     data: &[u8],
