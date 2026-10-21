@@ -6,7 +6,7 @@
 //! network/mock overhead.
 
 use criterion::{criterion_group, criterion_main, Criterion};
-use schema_registry_converter::blocking::json::{JsonDecoder, JsonEncoder};
+use schema_registry_converter::blocking::json::{validate, JsonDecoder, JsonEncoder};
 use schema_registry_converter::blocking::schema_registry::SrSettings;
 use schema_registry_converter::schema_registry_common::SubjectNameStrategy;
 use serde_json::json;
@@ -45,15 +45,18 @@ fn json_benchmarks(c: &mut Criterion) {
         b.iter(|| encoder.encode(black_box(&value), black_box(&strategy)))
     });
 
-    let mut decoder = JsonDecoder::new(sr_settings);
+    let decoder = JsonDecoder::new(sr_settings);
     decoder.decode(Some(&encoded)).unwrap();
 
-    // Unlike the other decoders here, JsonDecoder::decode borrows from `&mut self` in its
-    // return type, which can't escape a `FnMut` closure, so the result is consumed (via
-    // black_box) inside the closure instead of being returned out of it.
     c.bench_function("json_decode_cached", |b| {
+        b.iter(|| decoder.decode(black_box(Some(&encoded))))
+    });
+
+    // Validating a decoded value compiles the schema each time, see `validate`.
+    c.bench_function("json_decode_and_validate_cached", |b| {
         b.iter(|| {
-            black_box(decoder.decode(black_box(Some(&encoded))).unwrap());
+            let result = decoder.decode(black_box(Some(&encoded))).unwrap().unwrap();
+            validate(&result.schema, &result.value)
         })
     });
 }

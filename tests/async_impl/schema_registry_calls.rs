@@ -4,7 +4,8 @@ use schema_registry_converter::async_impl::schema_registry::{
 };
 use schema_registry_converter::error::SRCError;
 use schema_registry_converter::schema_registry_common::{
-    RegisteredReference, SrCall, SubjectNameStrategy, SuppliedReference, SuppliedSchema,
+    RegisteredReference, RegisteredSchema, SrCall, SubjectNameStrategy, SuppliedReference,
+    SuppliedSchema,
 };
 
 fn get_schema_registry_url() -> String {
@@ -75,20 +76,37 @@ async fn to_supplied_reference(
     let reference_schema = get_referenced_schema(sr_settings, registered_reference)
         .await
         .unwrap();
-    SuppliedReference {
-        name: registered_reference.name.clone(),
-        subject: registered_reference.subject.clone(),
-        schema: reference_schema.schema,
-        references: futures::future::join_all(
-            reference_schema
-                .references
-                .iter()
-                .map(|r| to_supplied_reference(sr_settings, r)),
-        )
-        .await,
-        properties: reference_schema.properties,
-        tags: reference_schema.tags,
-    }
+    let references = futures::future::join_all(
+        reference_schema
+            .references
+            .iter()
+            .map(|r| to_supplied_reference(sr_settings, r)),
+    )
+    .await;
+    let mut reference = SuppliedReference::new(
+        registered_reference.name.clone(),
+        registered_reference.subject.clone(),
+        reference_schema.schema,
+    )
+    .with_references(references);
+    reference.properties = reference_schema.properties;
+    reference.tags = reference_schema.tags;
+    reference
+}
+
+async fn to_supplied_schema(sr_settings: &SrSettings, schema: RegisteredSchema) -> SuppliedSchema {
+    let references = futures::future::join_all(
+        schema
+            .references
+            .iter()
+            .map(|r| to_supplied_reference(sr_settings, r)),
+    )
+    .await;
+    let mut supplied =
+        SuppliedSchema::new(None, schema.schema_type, schema.schema).with_references(references);
+    supplied.properties = schema.properties;
+    supplied.tags = schema.tags;
+    supplied
 }
 
 #[tokio::test]
@@ -108,20 +126,7 @@ async fn test_check_schema_compatibility_pass() {
     let compatible = is_compatible_schema(
         &sr_settings,
         compatibility_check_subject,
-        SuppliedSchema {
-            name: None,
-            schema_type: schema.schema_type,
-            schema: schema.schema,
-            references: futures::future::join_all(
-                schema
-                    .references
-                    .iter()
-                    .map(|r| to_supplied_reference(&sr_settings, r)),
-            )
-            .await,
-            properties: schema.properties,
-            tags: schema.tags,
-        },
+        to_supplied_schema(&sr_settings, schema).await,
     )
     .await
     .unwrap();
@@ -145,20 +150,7 @@ async fn test_check_schema_compatibility_fail() {
     let compatible = is_compatible_schema(
         &sr_settings,
         compatibility_check_subject,
-        SuppliedSchema {
-            name: None,
-            schema_type: schema.schema_type,
-            schema: schema.schema,
-            references: futures::future::join_all(
-                schema
-                    .references
-                    .iter()
-                    .map(|r| to_supplied_reference(&sr_settings, r)),
-            )
-            .await,
-            properties: schema.properties,
-            tags: schema.tags,
-        },
+        to_supplied_schema(&sr_settings, schema).await,
     )
     .await
     .unwrap();

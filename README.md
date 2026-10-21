@@ -279,14 +279,11 @@ use schema_registry_converter::schema_registry_common::{SchemaType, SuppliedSche
 
 fn main() {
     let sr_settings = SrSettings::new(String::from("http://localhost:8081"));
-    let schema = SuppliedSchema {
-        name: Some(String::from("nl.openweb.data.Heartbeat")),
-        schema_type: SchemaType::Avro,
-        schema: String::from(r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#),
-        references: vec![],
-        properties: None,
-        tags: None,
-    };
+    let schema = SuppliedSchema::new(
+        Some(String::from("nl.openweb.data.Heartbeat")),
+        SchemaType::Avro,
+        String::from(r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#),
+    );
     let result = post_schema(&sr_settings, String::from("test-value"), schema);
 }
 ```

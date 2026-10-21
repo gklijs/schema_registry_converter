@@ -8,9 +8,9 @@ use crate::blocking::schema_registry::{
 use crate::error::SRCError;
 use crate::proto_raw_common::{
     index_bytes, index_bytes_single_message, to_bytes, to_bytes_single_message, to_decode_context,
-    DecodeContext, EncodeContext,
+    to_encode_context, DecodeContext, EncodeContext,
 };
-use crate::proto_resolver::{resolve_name, to_index_and_data, IndexResolver};
+use crate::proto_resolver::{resolve_name, to_index_and_data};
 use crate::schema_registry_common::{
     get_bytes_result, invalid_bytes_error, parse_schema_id_header, schema_id_header_for,
     BytesResult, HeaderSchemaId, RegisteredSchema, SchemaIdHeader, SchemaType, SubjectNameStrategy,
@@ -114,11 +114,9 @@ impl ProtoRawEncoder {
             Entry::Occupied(e) => e.get().clone(),
             Entry::Vacant(e) => {
                 let v = match get_schema_by_subject(&self.sr_settings, subject_name_strategy) {
-                    Ok(registered_schema) => Ok(Arc::new(EncodeContext {
-                        id: registered_schema.id,
-                        guid: registered_schema.guid,
-                        resolver: IndexResolver::new(&registered_schema.schema),
-                    })),
+                    Ok(registered_schema) => to_encode_context(registered_schema)
+                        .map(Arc::new)
+                        .map_err(SRCError::into_cache),
                     Err(e) => Err(e.into_cache()),
                 };
                 e.insert(v).value().clone()
@@ -226,7 +224,7 @@ impl ProtoRawDecoder {
             Entry::Vacant(entry) => {
                 let result =
                     match get_schema_by_id_and_type(id, &self.sr_settings, SchemaType::Protobuf) {
-                        Ok(r) => Ok(Arc::new(to_decode_context(r))),
+                        Ok(r) => to_decode_context(r).map(Arc::new),
                         Err(e) => Err(e),
                     };
                 match result {
@@ -255,7 +253,7 @@ impl ProtoRawDecoder {
                     &self.sr_settings,
                     SchemaType::Protobuf,
                 ) {
-                    Ok(r) => Ok(Arc::new(to_decode_context(r))),
+                    Ok(r) => to_decode_context(r).map(Arc::new),
                     Err(e) => Err(e),
                 };
                 match result {
@@ -271,6 +269,7 @@ impl ProtoRawDecoder {
 }
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct RawDecodeResult {
     pub schema: RegisteredSchema,
     pub full_name: Arc<String>,
@@ -574,7 +573,7 @@ mod tests {
         let result_reference = SuppliedReference {
             name: String::from("result.proto"),
             subject: String::from("result.proto"),
-            schema: String::from(get_proto_result()),
+            schema: get_proto_result().replace("\\\"", "\""),
             references: vec![],
             properties: None,
             tags: None,
@@ -582,7 +581,7 @@ mod tests {
         let supplied_schema = SuppliedSchema {
             name: Some(String::from("test.proto")),
             schema_type: SchemaType::Protobuf,
-            schema: String::from(get_proto_complex()),
+            schema: get_proto_complex().replace("\\\"", "\""),
             references: vec![result_reference],
             properties: None,
             tags: None,

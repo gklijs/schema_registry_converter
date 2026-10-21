@@ -31,7 +31,7 @@ pub fn consume_json(
         .no_proxy()
         .build()
         .unwrap();
-    let mut decoder = JsonDecoder::new(sr_settings);
+    let decoder = JsonDecoder::new(sr_settings);
     let consumer = get_consumer(brokers, group_id, topics, auto_commit);
 
     match consumer.iter().next() {
@@ -40,7 +40,7 @@ pub fn consume_json(
                 panic!("Got error consuming message: {}", e);
             }
             Ok(m) => {
-                let des_r = get_deserialized_json_record(&m, &mut decoder);
+                let des_r = get_deserialized_json_record(&m, &decoder);
                 test(des_r);
             }
         },
@@ -50,7 +50,7 @@ pub fn consume_json(
 
 fn get_deserialized_json_record<'a>(
     m: &'a BorrowedMessage,
-    decoder: &mut JsonDecoder,
+    decoder: &JsonDecoder,
 ) -> DeserializedJsonRecord<'a> {
     let key = deserialize_key(m);
     print!("value needed for test {:?}", m.payload());
@@ -94,7 +94,7 @@ pub fn consume_json_with_header_id(
         .no_proxy()
         .build()
         .unwrap();
-    let mut decoder = JsonDecoder::new(sr_settings);
+    let decoder = JsonDecoder::new(sr_settings);
     let consumer = get_consumer(brokers, group_id, topics, auto_commit);
 
     match consumer.iter().next() {
@@ -103,7 +103,7 @@ pub fn consume_json_with_header_id(
                 panic!("Got error consuming message: {}", e);
             }
             Ok(m) => {
-                let des_r = get_deserialized_json_record_with_header_id(&m, &mut decoder);
+                let des_r = get_deserialized_json_record_with_header_id(&m, &decoder);
                 test(des_r);
             }
         },
@@ -113,7 +113,7 @@ pub fn consume_json_with_header_id(
 
 fn get_deserialized_json_record_with_header_id<'a>(
     m: &'a BorrowedMessage,
-    decoder: &mut JsonDecoder,
+    decoder: &JsonDecoder,
 ) -> DeserializedJsonRecord<'a> {
     let key = deserialize_key(m);
     let header_value = m.headers().and_then(|headers| {

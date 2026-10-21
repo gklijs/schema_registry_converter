@@ -19,16 +19,13 @@ fn get_brokers() -> &'static str {
 }
 
 fn get_heartbeat_schema() -> SuppliedSchema {
-    SuppliedSchema {
-        name: Some(String::from("nl.openweb.data.Heartbeat")),
-        schema_type: SchemaType::Avro,
-        schema: String::from(
+    SuppliedSchema::new(
+        Some(String::from("nl.openweb.data.Heartbeat")),
+        SchemaType::Avro,
+        String::from(
             r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#,
         ),
-        references: vec![],
-        properties: None,
-        tags: None,
-    }
+    )
 }
 
 fn test_beat_value(key_value: i64, value_value: i64) -> Box<dyn Fn(DeserializedAvroRecord)> {

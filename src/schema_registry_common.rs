@@ -27,6 +27,7 @@ impl fmt::Debug for SrAuthorization {
 /// By default, the schema registry supports three types. It's possible there will be more in the future
 /// or to add your own. Therefore, the other is one of the schema types.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum SchemaType {
     Avro,
     Protobuf,
@@ -36,6 +37,7 @@ pub enum SchemaType {
 
 /// The schema registry supports sub schema's they will be stored separately in the schema registry
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct SuppliedReference {
     pub name: String,
     pub subject: String,
@@ -45,8 +47,36 @@ pub struct SuppliedReference {
     pub tags: Option<HashMap<String, Vec<String>>>,
 }
 
+impl SuppliedReference {
+    /// A reference without references of its own, properties or tags, which can be added with
+    /// the `with_` methods.
+    pub fn new(name: String, subject: String, schema: String) -> SuppliedReference {
+        SuppliedReference {
+            name,
+            subject,
+            schema,
+            references: Vec::new(),
+            properties: None,
+            tags: None,
+        }
+    }
+    pub fn with_references(mut self, references: Vec<SuppliedReference>) -> SuppliedReference {
+        self.references = references;
+        self
+    }
+    pub fn with_properties(mut self, properties: HashMap<String, String>) -> SuppliedReference {
+        self.properties = Some(properties);
+        self
+    }
+    pub fn with_tags(mut self, tags: HashMap<String, Vec<String>>) -> SuppliedReference {
+        self.tags = Some(tags);
+        self
+    }
+}
+
 /// Errors as returned by the schema registry API
 #[derive(Clone, Debug, Deserialize)]
+#[non_exhaustive]
 pub struct RawError {
     pub error_code: u32,
     pub message: String,
@@ -62,9 +92,14 @@ impl Display for RawError {
     }
 }
 
+/// The source of an [`SRCError`](crate::error::SRCError) for an error response from the schema
+/// registry, so the `error_code` can be read by downcasting it.
+impl std::error::Error for RawError {}
+
 /// Schema as it might be provided to create messages, they will be added to the schema registry if
 /// not already present
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct SuppliedSchema {
     pub name: Option<String>,
     pub schema_type: SchemaType,
@@ -74,7 +109,36 @@ pub struct SuppliedSchema {
     pub tags: Option<HashMap<String, Vec<String>>>,
 }
 
+impl SuppliedSchema {
+    /// A schema without references, properties or tags, which can be added with the `with_`
+    /// methods. The `name` is the full name of the record (Avro) or message (Protobuf), and is
+    /// needed for the record name strategies.
+    pub fn new(name: Option<String>, schema_type: SchemaType, schema: String) -> SuppliedSchema {
+        SuppliedSchema {
+            name,
+            schema_type,
+            schema,
+            references: Vec::new(),
+            properties: None,
+            tags: None,
+        }
+    }
+    pub fn with_references(mut self, references: Vec<SuppliedReference>) -> SuppliedSchema {
+        self.references = references;
+        self
+    }
+    pub fn with_properties(mut self, properties: HashMap<String, String>) -> SuppliedSchema {
+        self.properties = Some(properties);
+        self
+    }
+    pub fn with_tags(mut self, tags: HashMap<String, Vec<String>>) -> SuppliedSchema {
+        self.tags = Some(tags);
+        self
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[non_exhaustive]
 pub struct RegisteredReference {
     pub name: String,
     pub subject: String,
@@ -93,6 +157,7 @@ pub struct RegisteredReference {
 /// `guid` is the schema's UUID, as returned by Confluent Schema Registry 8.0+ alongside the int
 /// `id`. It's `None` against older registries. See [`SchemaIdHeader`].
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[non_exhaustive]
 pub struct RegisteredSchema {
     pub id: u32,
     pub schema_type: SchemaType,
@@ -107,6 +172,7 @@ pub struct RegisteredSchema {
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub struct RawRegisteredSchema {
     pub subject: Option<String>,
     pub version: Option<u32>,
@@ -120,6 +186,7 @@ pub struct RawRegisteredSchema {
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub struct Metadata {
     pub tags: Option<HashMap<String, Vec<String>>>,
     pub properties: Option<HashMap<String, String>>,
@@ -148,6 +215,7 @@ pub enum BytesResult<'a> {
 /// Depending on the strategy, either the topic, whether the value is used as key, the fully
 /// qualified name (only for RecordNameStrategy), or the schema needs to be provided.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub enum SubjectNameStrategy {
     RecordNameStrategy(String),
     TopicNameStrategy(String, bool),
@@ -318,6 +386,7 @@ pub const VALUE_SCHEMA_ID_HEADER: &str = "__value_schema_id";
 /// `value` under `name` using whatever `Headers`/`OwnedHeaders`/etc. type your Kafka client uses.
 /// See https://github.com/gklijs/schema_registry_converter/issues/139.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct SchemaIdHeader {
     pub name: &'static str,
     pub value: Vec<u8>,

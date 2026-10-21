@@ -83,21 +83,21 @@ use crate::schema_registry_common::{
 /// # }
 /// ```
 #[derive(Debug)]
-pub struct AvroDecoder<'a> {
+pub struct AvroDecoder {
     sr_settings: SrSettings,
     direct_cache: DashMap<u32, Arc<AvroSchema>>,
-    cache: DashMap<u32, SharedFutureSchema<'a>>,
+    cache: DashMap<u32, SharedFutureSchema>,
     /// Cache for schemas looked up by guid rather than id, used by
     /// [`AvroDecoder::decode_with_header_id`]. Kept separate from `direct_cache`/`cache` (keyed
     /// by id) since a guid and an id are different keyspaces.
     guid_direct_cache: DashMap<String, Arc<AvroSchema>>,
-    guid_cache: DashMap<String, SharedFutureSchema<'a>>,
+    guid_cache: DashMap<String, SharedFutureSchema>,
     resolved_cache: ResolvedSchemaCache,
 }
 
-type SharedFutureSchema<'a> = Shared<BoxFuture<'a, Result<Arc<AvroSchema>, SRCError>>>;
+type SharedFutureSchema = Shared<BoxFuture<'static, Result<Arc<AvroSchema>, SRCError>>>;
 
-impl<'a> AvroDecoder<'a> {
+impl AvroDecoder {
     /// Creates a new decoder which will use the supplied url to fetch the schema's since the schema
     /// needed is encoded in the binary, independent of the SubjectNameStrategy we don't need any
     /// additional data. Retriable errors (e.g. a transient network/HTTP failure) are never cached,
@@ -105,7 +105,7 @@ impl<'a> AvroDecoder<'a> {
     /// doesn't exist or can't be parsed) are cached to avoid repeatedly retrying a lookup that
     /// isn't going to succeed; if the underlying problem gets fixed you can use
     /// remove_errors_from_cache to clean those out.
-    pub fn new(sr_settings: SrSettings) -> AvroDecoder<'a> {
+    pub fn new(sr_settings: SrSettings) -> AvroDecoder {
         AvroDecoder {
             sr_settings,
             direct_cache: DashMap::new(),
@@ -181,7 +181,7 @@ impl<'a> AvroDecoder<'a> {
     /// use schema_registry_converter::async_impl::avro::AvroDecoder;
     /// async fn get_value (
     ///     msg: &'_ BorrowedMessage <'_>,
-    ///     decoder: &'_ AvroDecoder <'_>,
+    ///     decoder: &AvroDecoder,
     /// ) -> Value{
     ///     match decoder.decode(msg.payload()).await{
     ///         Ok(r) => r.value,
@@ -404,7 +404,7 @@ impl<'a> AvroDecoder<'a> {
         }
     }
 
-    fn get_schema_by_shared_future(&self, id: u32) -> SharedFutureSchema<'a> {
+    fn get_schema_by_shared_future(&self, id: u32) -> SharedFutureSchema {
         match self.cache.entry(id) {
             Entry::Occupied(e) => e.get().clone(),
             Entry::Vacant(e) => {
@@ -449,7 +449,7 @@ impl<'a> AvroDecoder<'a> {
         }
     }
 
-    fn get_schema_by_guid_shared_future(&self, guid: String) -> SharedFutureSchema<'a> {
+    fn get_schema_by_guid_shared_future(&self, guid: String) -> SharedFutureSchema {
         match self.guid_cache.entry(guid.clone()) {
             Entry::Occupied(e) => e.get().clone(),
             Entry::Vacant(e) => {
@@ -518,14 +518,14 @@ impl<'a> AvroDecoder<'a> {
 /// # }
 /// ```
 #[derive(Debug)]
-pub struct AvroEncoder<'a> {
+pub struct AvroEncoder {
     sr_settings: SrSettings,
     direct_cache: DashMap<String, Arc<AvroSchema>>,
-    cache: DashMap<String, SharedFutureSchema<'a>>,
+    cache: DashMap<String, SharedFutureSchema>,
     resolved_cache: ResolvedSchemaCache,
 }
 
-impl<'a> AvroEncoder<'a> {
+impl AvroEncoder {
     /// Creates a new encoder which will use the supplied url to fetch the schema's. The schema's
     /// need to be retrieved together with the id, in order for a consumer to decode the bytes.
     /// For the encoding several strategies are available in the java client, all three of them are
@@ -552,20 +552,17 @@ impl<'a> AvroEncoder<'a> {
     /// let sr_settings = SrSettings::new_builder(server.url()).no_proxy().build().unwrap();
     /// let encoder = AvroEncoder::new(sr_settings);
     ///
-    /// let strategy = SubjectNameStrategy::TopicRecordNameStrategyWithSchema(String::from("hb"), SuppliedSchema {
-    ///                 name: Some(String::from("nl.openweb.data.Heartbeat")),
-    ///                 schema_type: SchemaType::Avro,
-    ///                 schema: String::from(r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#),
-    ///                 references: vec![],
-    ///                 properties: None,
-    ///                 tags: None,
-    ///             });
+    /// let strategy = SubjectNameStrategy::TopicRecordNameStrategyWithSchema(String::from("hb"), SuppliedSchema::new(
+    ///                 Some(String::from("nl.openweb.data.Heartbeat")),
+    ///                 SchemaType::Avro,
+    ///                 String::from(r#"{"type":"record","name":"Heartbeat","namespace":"nl.openweb.data","fields":[{"name":"beat","type":"long"}]}"#),
+    ///             ));
     /// let bytes = encoder.encode(vec![("beat", Value::Long(3))], strategy).await;
     /// assert_eq!(bytes, Ok(vec![0, 0, 0, 0, 23, 6]));
     /// # Ok(())
     /// # }
     /// ```
-    pub fn new(sr_settings: SrSettings) -> AvroEncoder<'a> {
+    pub fn new(sr_settings: SrSettings) -> AvroEncoder {
         AvroEncoder {
             sr_settings,
             direct_cache: DashMap::new(),
@@ -854,7 +851,7 @@ impl<'a> AvroEncoder<'a> {
         &self,
         key: String,
         subject_name_strategy: SubjectNameStrategy,
-    ) -> SharedFutureSchema<'a> {
+    ) -> SharedFutureSchema {
         match self.cache.entry(key) {
             Entry::Occupied(e) => e.get().clone(),
             Entry::Vacant(e) => {

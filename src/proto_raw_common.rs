@@ -64,12 +64,25 @@ pub(crate) fn to_bytes_single_message(
     Ok(get_payload(encode_context.id, payload))
 }
 
-pub(crate) fn to_decode_context(registered_schema: RegisteredSchema) -> DecodeContext {
-    let schema = String::from(&registered_schema.schema);
-    DecodeContext {
+pub(crate) fn to_decode_context(
+    registered_schema: RegisteredSchema,
+) -> Result<DecodeContext, SRCError> {
+    let resolver = MessageResolver::new(&registered_schema.schema)?;
+    Ok(DecodeContext {
         schema: registered_schema,
-        resolver: MessageResolver::new(&schema),
-    }
+        resolver,
+    })
+}
+
+pub(crate) fn to_encode_context(
+    registered_schema: RegisteredSchema,
+) -> Result<EncodeContext, SRCError> {
+    let resolver = IndexResolver::new(&registered_schema.schema)?;
+    Ok(EncodeContext {
+        id: registered_schema.id,
+        guid: registered_schema.guid,
+        resolver,
+    })
 }
 
 #[derive(Debug, Clone)]

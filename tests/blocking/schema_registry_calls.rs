@@ -5,7 +5,8 @@ use schema_registry_converter::blocking::schema_registry::{
 };
 use schema_registry_converter::error::SRCError;
 use schema_registry_converter::schema_registry_common::{
-    RegisteredReference, SrCall, SubjectNameStrategy, SuppliedReference, SuppliedSchema,
+    RegisteredReference, RegisteredSchema, SrCall, SubjectNameStrategy, SuppliedReference,
+    SuppliedSchema,
 };
 
 #[test]
@@ -68,18 +69,33 @@ fn to_supplied_reference(
     registered_reference: &RegisteredReference,
 ) -> SuppliedReference {
     let reference_schema = get_referenced_schema(sr_settings, registered_reference).unwrap();
-    SuppliedReference {
-        name: registered_reference.name.clone(),
-        subject: registered_reference.subject.clone(),
-        schema: reference_schema.schema,
-        references: reference_schema
-            .references
-            .iter()
-            .map(|r| to_supplied_reference(sr_settings, r))
-            .collect(),
-        properties: reference_schema.properties,
-        tags: reference_schema.tags,
-    }
+    let references = reference_schema
+        .references
+        .iter()
+        .map(|r| to_supplied_reference(sr_settings, r))
+        .collect();
+    let mut reference = SuppliedReference::new(
+        registered_reference.name.clone(),
+        registered_reference.subject.clone(),
+        reference_schema.schema,
+    )
+    .with_references(references);
+    reference.properties = reference_schema.properties;
+    reference.tags = reference_schema.tags;
+    reference
+}
+
+fn to_supplied_schema(sr_settings: &SrSettings, schema: RegisteredSchema) -> SuppliedSchema {
+    let references = schema
+        .references
+        .iter()
+        .map(|r| to_supplied_reference(sr_settings, r))
+        .collect();
+    let mut supplied =
+        SuppliedSchema::new(None, schema.schema_type, schema.schema).with_references(references);
+    supplied.properties = schema.properties;
+    supplied.tags = schema.tags;
+    supplied
 }
 
 #[test]
@@ -98,18 +114,7 @@ fn test_check_schema_compatibility_pass() {
     let compatible = is_compatible_schema(
         &sr_settings,
         compatibility_check_subject,
-        SuppliedSchema {
-            name: None,
-            schema_type: schema.schema_type,
-            schema: schema.schema,
-            references: schema
-                .references
-                .iter()
-                .map(|r| to_supplied_reference(&sr_settings, r))
-                .collect(),
-            properties: schema.properties,
-            tags: schema.tags,
-        },
+        to_supplied_schema(&sr_settings, schema),
     )
     .unwrap();
     assert!(compatible, "Identical schema should be compatible");
@@ -131,18 +136,7 @@ fn test_check_schema_compatibility_fail() {
     let compatible = is_compatible_schema(
         &sr_settings,
         compatibility_check_subject,
-        SuppliedSchema {
-            name: None,
-            schema_type: schema.schema_type,
-            schema: schema.schema,
-            references: schema
-                .references
-                .iter()
-                .map(|r| to_supplied_reference(&sr_settings, r))
-                .collect(),
-            properties: schema.properties,
-            tags: schema.tags,
-        },
+        to_supplied_schema(&sr_settings, schema),
     )
     .unwrap();
     assert!(

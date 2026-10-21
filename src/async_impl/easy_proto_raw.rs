@@ -8,7 +8,7 @@ use std::sync::Arc;
 /// You can use the bytes from the result to create a proto object.
 #[derive(Clone, Debug)]
 pub struct EasyProtoRawDecoder {
-    decoder: Arc<ProtoRawDecoder<'static>>,
+    decoder: Arc<ProtoRawDecoder>,
 }
 
 impl EasyProtoRawDecoder {
@@ -26,7 +26,7 @@ impl EasyProtoRawDecoder {
 /// When a schema with multiple messages is used the full_name needs to be supplied to properly encode the message reference.
 #[derive(Clone, Debug)]
 pub struct EasyProtoRawEncoder {
-    encoder: Arc<ProtoRawEncoder<'static>>,
+    encoder: Arc<ProtoRawEncoder>,
 }
 
 impl EasyProtoRawEncoder {

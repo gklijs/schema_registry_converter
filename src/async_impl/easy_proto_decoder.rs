@@ -9,7 +9,7 @@ use std::sync::Arc;
 /// If you do know the format it's better to use the ProtoRawDecoder, and use a different library to deserialize just the proto bytes.
 #[derive(Clone, Debug)]
 pub struct EasyProtoDecoder {
-    decoder: Arc<ProtoDecoder<'static>>,
+    decoder: Arc<ProtoDecoder>,
 }
 
 impl EasyProtoDecoder {

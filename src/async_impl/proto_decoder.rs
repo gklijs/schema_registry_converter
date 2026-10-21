@@ -19,21 +19,21 @@ use crate::schema_registry_common::{
 use prost_reflect::bytes::Bytes;
 use prost_reflect::{DynamicMessage, FileDescriptor, Value};
 
-type SharedFutureContext<'a> = Shared<BoxFuture<'a, Result<Arc<DecodeContext>, SRCError>>>;
+type SharedFutureContext = Shared<BoxFuture<'static, Result<Arc<DecodeContext>, SRCError>>>;
 
 #[derive(Debug)]
-pub struct ProtoDecoder<'a> {
+pub struct ProtoDecoder {
     sr_settings: SrSettings,
     direct_cache: DashMap<u32, Arc<DecodeContext>>,
-    cache: DashMap<u32, SharedFutureContext<'a>>,
+    cache: DashMap<u32, SharedFutureContext>,
     /// Cache for schemas looked up by guid rather than id, used by
     /// [`ProtoDecoder::decode_with_header_id`]. Kept separate from `direct_cache`/`cache`
     /// (keyed by id) since a guid and an id are different keyspaces.
     guid_direct_cache: DashMap<String, Arc<DecodeContext>>,
-    guid_cache: DashMap<String, SharedFutureContext<'a>>,
+    guid_cache: DashMap<String, SharedFutureContext>,
 }
 
-impl<'a> ProtoDecoder<'a> {
+impl ProtoDecoder {
     /// Creates a new decoder which will use the supplied url used in creating the sr settings to
     /// fetch the schema's since the schema needed is encoded in the binary, independent of the
     /// SubjectNameStrategy we don't need any additional data. Retriable errors (e.g. a transient
@@ -41,7 +41,7 @@ impl<'a> ProtoDecoder<'a> {
     /// Non-retriable errors (e.g. a schema that doesn't exist or can't be parsed) are cached to
     /// avoid repeatedly retrying a lookup that isn't going to succeed; if the underlying problem
     /// gets fixed you can use remove_errors_from_cache to clean those out.
-    pub fn new(sr_settings: SrSettings) -> ProtoDecoder<'a> {
+    pub fn new(sr_settings: SrSettings) -> ProtoDecoder {
         ProtoDecoder {
             sr_settings,
             direct_cache: DashMap::new(),
@@ -219,7 +219,7 @@ impl<'a> ProtoDecoder<'a> {
     /// Gets the decode context by a shared future, to prevent multiple of the same calls to
     /// schema registry, either from the cache, or from the schema registry and then putting
     /// it into the cache.
-    fn get_context_by_shared_future(&self, id: u32) -> SharedFutureContext<'a> {
+    fn get_context_by_shared_future(&self, id: u32) -> SharedFutureContext {
         match self.cache.entry(id) {
             Entry::Occupied(e) => e.get().clone(),
             Entry::Vacant(e) => {
@@ -263,7 +263,7 @@ impl<'a> ProtoDecoder<'a> {
         }
     }
 
-    fn get_context_by_guid_shared_future(&self, guid: String) -> SharedFutureContext<'a> {
+    fn get_context_by_guid_shared_future(&self, guid: String) -> SharedFutureContext {
         match self.guid_cache.entry(guid.clone()) {
             Entry::Occupied(e) => e.get().clone(),
             Entry::Vacant(e) => {
@@ -285,6 +285,7 @@ impl<'a> ProtoDecoder<'a> {
 }
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct DecodeResultWithContext {
     pub value: DynamicMessage,
     pub context: Arc<DecodeContext>,
@@ -314,6 +315,7 @@ fn add_referenced_schemas<'a>(
 }
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct DecodeContext {
     pub schema: RegisteredSchema,
     /// The compiled root schema, its imports can be reached via
