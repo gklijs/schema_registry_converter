@@ -368,7 +368,7 @@ pub async fn get_schema_by_id_and_type(
 
 /// Gets a schema by its guid. This is used to get the correct schema to deserialize bytes when
 /// the guid is carried in a Kafka header rather than the payload prefix. See
-/// https://github.com/gklijs/schema_registry_converter/issues/139.
+/// <https://github.com/gklijs/schema_registry_converter/issues/139>.
 pub async fn get_schema_by_guid(
     guid: &str,
     sr_settings: &SrSettings,

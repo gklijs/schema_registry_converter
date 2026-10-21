@@ -44,7 +44,7 @@ pub struct AvroSchema {
 /// schema id, instead of redone from scratch on every call the way the now-deprecated
 /// `to_avro_datum`/`from_avro_datum` free functions do internally (each builds a fresh
 /// `GenericDatumReader`/`GenericDatumWriter`, which resolves the full schema tree into a
-/// `ResolvedSchema` every time). See https://github.com/gklijs/schema_registry_converter/issues/190.
+/// `ResolvedSchema` every time). See <https://github.com/gklijs/schema_registry_converter/issues/190>.
 ///
 /// `schema` is `Box::leak`'d to get the `'static` borrow `ResolvedSchema` needs. That never gets
 /// freed, but neither does the `Arc<AvroSchema>` this is resolved from -- `AvroEncoder`'s and
@@ -195,7 +195,7 @@ pub(crate) fn replace_reference(parent: value::Value, child: value::Value) -> va
 /// Encodes `record` using the (cached, resolved) writer schema, without the confluent wire-format
 /// prefix -- shared by both [`to_bytes`] (prefixed, the default wire format) and the raw variants
 /// used by the `_with_header_id` encode methods, where the id/guid instead goes in a Kafka header.
-/// See https://github.com/gklijs/schema_registry_converter/issues/139.
+/// See <https://github.com/gklijs/schema_registry_converter/issues/139>.
 fn encode_value(
     cache: &ResolvedSchemaCache,
     avro_schema: &AvroSchema,
@@ -233,7 +233,7 @@ pub(crate) fn values_to_bytes(
 
 /// Like [`values_to_bytes`], but without the confluent wire-format prefix -- used when the
 /// schema id/guid is carried in a Kafka header instead. See
-/// https://github.com/gklijs/schema_registry_converter/issues/139.
+/// <https://github.com/gklijs/schema_registry_converter/issues/139>.
 pub(crate) fn values_to_bytes_raw(
     cache: &ResolvedSchemaCache,
     avro_schema: &AvroSchema,
@@ -277,7 +277,7 @@ fn build_record<'a>(
 /// `avro_encode_struct_cached`. Writing directly still validates against the schema as it goes
 /// (an unresolvable union variant or missing named type is still an error), it just never
 /// allocates the untyped intermediate tree or makes a second pass over it. See
-/// https://github.com/gklijs/schema_registry_converter/issues/117.
+/// <https://github.com/gklijs/schema_registry_converter/issues/117>.
 fn encode_item(
     cache: &ResolvedSchemaCache,
     avro_schema: &AvroSchema,
@@ -303,7 +303,7 @@ pub(crate) fn item_to_bytes(
 
 /// Like [`item_to_bytes`], but without the confluent wire-format prefix -- used when the schema
 /// id/guid is carried in a Kafka header instead. See
-/// https://github.com/gklijs/schema_registry_converter/issues/139.
+/// <https://github.com/gklijs/schema_registry_converter/issues/139>.
 pub(crate) fn item_to_bytes_raw(
     cache: &ResolvedSchemaCache,
     avro_schema: &AvroSchema,
@@ -322,7 +322,7 @@ pub(crate) fn record_to_bytes(
 
 /// Like [`record_to_bytes`], but without the confluent wire-format prefix -- used when the schema
 /// id/guid is carried in a Kafka header instead. See
-/// https://github.com/gklijs/schema_registry_converter/issues/139.
+/// <https://github.com/gklijs/schema_registry_converter/issues/139>.
 pub(crate) fn record_to_bytes_raw(
     cache: &ResolvedSchemaCache,
     avro_schema: &AvroSchema,
@@ -356,8 +356,8 @@ pub fn get_supplied_schema(schema: &Schema) -> SuppliedSchema {
     }
 }
 
-/// Like [`get_supplied_schema`], but for a type implementing `apache_avro`'s own [`AvroSchema`
-/// trait`](apache_avro::AvroSchema) -- most commonly via `#[derive(apache_avro::AvroSchema)]`
+/// Like [`get_supplied_schema`], but for a type implementing `apache_avro`'s own
+/// [`AvroSchema` trait](apache_avro::AvroSchema) -- most commonly via `#[derive(apache_avro::AvroSchema)]`
 /// (needs apache_avro's `derive` feature) -- instead of an already-built [`Schema`]. Saves
 /// hand-writing and maintaining the schema as a separate JSON string: the registered schema
 /// always matches the exact shape apache_avro's own serializer will produce for `T`, so there's
@@ -380,7 +380,7 @@ pub fn get_supplied_schema(schema: &Schema) -> SuppliedSchema {
 /// let strategy = SubjectNameStrategy::RecordNameStrategyWithSchema(get_supplied_schema_for::<Heartbeat>());
 /// ```
 ///
-/// See https://github.com/gklijs/schema_registry_converter/issues/111.
+/// See <https://github.com/gklijs/schema_registry_converter/issues/111>.
 pub fn get_supplied_schema_for<T: apache_avro::AvroSchema>() -> SuppliedSchema {
     get_supplied_schema(&T::get_schema())
 }

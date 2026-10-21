@@ -82,7 +82,7 @@ impl ProtoDecoder {
     /// `header_value` present -> resolve the schema and message index from it and treat `bytes`
     /// as the raw (unprefixed) payload; `header_value` absent -> falls straight through to
     /// [`ProtoDecoder::decode`], so the only overhead for a caller who always passes `None` is
-    /// this one check. See https://github.com/gklijs/schema_registry_converter/issues/139.
+    /// this one check. See <https://github.com/gklijs/schema_registry_converter/issues/139>.
     pub async fn decode_with_header_id(
         &self,
         header_value: Option<&[u8]>,
@@ -307,7 +307,7 @@ pub struct DecodeContext {
 /// Compiles the schema texts into a `DecodeContext`. The result is cached per schema id/guid,
 /// like the blocking decoder does, so a compile failure is cached too (as a non-retriable error,
 /// see `remove_errors_from_cache`). See
-/// https://github.com/gklijs/schema_registry_converter/issues/175.
+/// <https://github.com/gklijs/schema_registry_converter/issues/175>.
 fn into_decode_context(
     schema: RegisteredSchema,
     referenced_schemas: ReferencedSchemas,

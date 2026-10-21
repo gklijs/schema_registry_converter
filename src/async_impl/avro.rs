@@ -219,7 +219,7 @@ impl AvroDecoder {
     /// resolve the schema from it and treat `bytes` as the raw (unprefixed) payload;
     /// `header_value` absent -> falls straight through to [`AvroDecoder::decode`], so the only
     /// overhead for a caller who always passes `None` is this one check. See
-    /// https://github.com/gklijs/schema_registry_converter/issues/139.
+    /// <https://github.com/gklijs/schema_registry_converter/issues/139>.
     /// ```
     /// use apache_avro::types::Value;
     /// use mockito::Server;
@@ -321,7 +321,7 @@ impl AvroDecoder {
     /// name and value: `header_value` present -> resolve the schema from it and treat `bytes` as
     /// the raw (unprefixed) payload; `header_value` absent -> falls straight through to
     /// [`AvroDecoder::decode_with_schema`]. See
-    /// https://github.com/gklijs/schema_registry_converter/issues/139.
+    /// <https://github.com/gklijs/schema_registry_converter/issues/139>.
     /// ```
     /// use apache_avro::types::Value;
     /// use mockito::Server;
@@ -665,7 +665,7 @@ impl AvroEncoder {
     /// using whatever Kafka client you're using -- this crate has no dependency on one. `is_key`
     /// picks between the `__key_schema_id`/`__value_schema_id` header names, matching
     /// Confluent's `HeaderSchemaIdSerializer`. See
-    /// https://github.com/gklijs/schema_registry_converter/issues/139.
+    /// <https://github.com/gklijs/schema_registry_converter/issues/139>.
     ///
     /// Requires a schema registry that returns a `guid` (Confluent Schema Registry 8.0+); a
     /// registry that doesn't will make this return an error.

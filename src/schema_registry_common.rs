@@ -92,7 +92,7 @@ impl Display for RawError {
     }
 }
 
-/// The source of an [`SRCError`](crate::error::SRCError) for an error response from the schema
+/// The source of an [`SRCError`] for an error response from the schema
 /// registry, so the `error_code` can be read by downcasting it.
 impl std::error::Error for RawError {}
 
@@ -198,7 +198,9 @@ pub struct Metadata {
 /// Borrows from the payload passed to [`get_bytes_result`] rather than copying it -- decoding is
 /// one of the hottest paths in this crate (every message goes through it), and the payload is
 /// already available as a borrow for at least the duration of the call in every caller. See
-/// https://github.com/gklijs/schema_registry_converter/issues/190.
+/// <https://github.com/gklijs/schema_registry_converter/issues/190>.
+// Hidden from the docs as it's decoder plumbing, still public to not break code using it.
+#[doc(hidden)]
 #[derive(Debug, PartialEq)]
 pub enum BytesResult<'a> {
     Null,
@@ -341,6 +343,8 @@ pub fn get_payload(id: u32, encoded_bytes: Vec<u8>) -> Vec<u8> {
 /// it will return the id and the data bytes. The way schema registry messages are encoded is
 /// starting with a zero, with the next 4 bytes having the id. The other bytes are the encoded
 /// message.
+// Hidden from the docs as it's decoder plumbing, still public to not break code using it.
+#[doc(hidden)]
 pub fn get_bytes_result(bytes: Option<&[u8]>) -> BytesResult<'_> {
     match bytes {
         None => BytesResult::Null,
@@ -355,6 +359,8 @@ pub fn get_bytes_result(bytes: Option<&[u8]>) -> BytesResult<'_> {
 
 /// Returns a descriptive error message for invalid bytes, including a hint about the magic byte
 /// when the first byte is not 0x00.
+// Hidden from the docs as it's decoder plumbing, still public to not break code using it.
+#[doc(hidden)]
 pub fn invalid_bytes_error(bytes: &[u8]) -> String {
     if bytes.is_empty() {
         "Invalid bytes: empty payload, expected confluent schema registry wire format".to_string()
@@ -384,7 +390,7 @@ pub const VALUE_SCHEMA_ID_HEADER: &str = "__value_schema_id";
 ///
 /// This crate has no dependency on any particular Kafka client, so this is plain data: attach
 /// `value` under `name` using whatever `Headers`/`OwnedHeaders`/etc. type your Kafka client uses.
-/// See https://github.com/gklijs/schema_registry_converter/issues/139.
+/// See <https://github.com/gklijs/schema_registry_converter/issues/139>.
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct SchemaIdHeader {

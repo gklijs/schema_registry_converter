@@ -23,21 +23,29 @@ resolver = "3"
 native_tls = ["reqwest/native-tls"]
 rustls_tls = ["reqwest/rustls"]
 
-avro = ["apache-avro"]
+# The async implementations, see async_impl.
+futures = ["dep:futures"]
+avro = ["dep:apache-avro"]
 blocking = ["reqwest/blocking"]
-json = ["jsonschema", "url"]
+json = ["dep:jsonschema", "dep:url"]
 middleware = ["dep:reqwest-middleware"]
-proto_decoder = ["integer-encoding", "prost-reflect", "prost-types", "protox", "protox-parse"]
-proto_raw = ["integer-encoding", "prost-types", "protox-parse"]
-proto_encoder = [
-    "integer-encoding",
-    "prost-reflect",
-    "prost-reflect/serde",
-    "prost-types",
-    "protox",
-    "protox-parse",
+proto_decoder = [
+    "dep:integer-encoding",
+    "dep:prost-reflect",
+    "dep:prost-types",
+    "dep:protox",
+    "dep:protox-parse",
 ]
-easy = ["tokio"]
+proto_raw = ["dep:integer-encoding", "dep:prost-types", "dep:protox-parse"]
+proto_encoder = [
+    "dep:integer-encoding",
+    "dep:prost-reflect",
+    "prost-reflect/serde",
+    "dep:prost-types",
+    "dep:protox",
+    "dep:protox-parse",
+]
+easy = []
 kafka_test = []
 default = ["futures", "native_tls"]
 
@@ -101,11 +109,6 @@ optional = true
 
 [dependencies.url]
 version = "^2.5"
-optional = true
-
-[dependencies.tokio]
-version = "^1.46"
-features = ["macros"]
 optional = true
 
 

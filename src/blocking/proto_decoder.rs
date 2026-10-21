@@ -66,7 +66,7 @@ impl ProtoDecoder {
     /// `header_value` present -> resolve the schema and message index from it and treat `bytes`
     /// as the raw (unprefixed) payload; `header_value` absent -> falls straight through to
     /// [`ProtoDecoder::decode`], so the only overhead for a caller who always passes `None` is
-    /// this one check. See https://github.com/gklijs/schema_registry_converter/issues/139.
+    /// this one check. See <https://github.com/gklijs/schema_registry_converter/issues/139>.
     pub fn decode_with_header_id(
         &self,
         header_value: Option<&[u8]>,

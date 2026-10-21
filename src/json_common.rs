@@ -51,7 +51,7 @@ pub(crate) fn to_bytes(id: u32, value: &Value) -> Result<Vec<u8>, SRCError> {
 
 /// Like [`to_bytes`], but without the confluent wire-format prefix -- used when the schema
 /// id/guid is carried in a Kafka header instead. See
-/// https://github.com/gklijs/schema_registry_converter/issues/139.
+/// <https://github.com/gklijs/schema_registry_converter/issues/139>.
 pub(crate) fn to_bytes_raw(value: &Value) -> Result<Vec<u8>, SRCError> {
     serde_json::to_vec(value)
         .map_err(|e| SRCError::non_retryable_with_cause(e, "error serialising value to bytes"))
