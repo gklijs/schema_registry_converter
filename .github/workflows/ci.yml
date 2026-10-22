@@ -3,8 +3,7 @@ name: CI
 on: [push, pull_request]
 
 # A push and its PR both trigger this workflow, and every new push superseded an
-# already-running one anyway -- cancel it instead of letting both run to completion (or hang,
-# see CARGO_MAKE_SKIP_CODECOV below) in parallel.
+# already-running one anyway -- cancel it instead of letting both run to completion in parallel.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -12,14 +11,6 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
-  RUSTFLAGS: "-C link-dead-code"
-  CARGO_MAKE_RUN_CODECOV: true
-  # cargo-make's `codecov` task pipes `curl -s https://codecov.io/bash` straight into `bash` --
-  # Codecov's now-deprecated bash uploader. It was intermittently hanging CI builds for 30+
-  # minutes until manually cancelled (observed on PR #189). So skip that task: ci-flow still
-  # generates the kcov report in target/coverage, which the "upload coverage" step below
-  # uploads with the Codecov GitHub Action instead.
-  CARGO_MAKE_SKIP_CODECOV: true
 
 jobs:
   build:
@@ -28,15 +19,15 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
       - uses: Swatinem/rust-cache@v2
-        # This job has never cached dependencies -- every push did a fully cold rebuild of the
-        # whole tree, including cargo-make's own ci-flow (build/clippy/test all over again) and
-        # the benchmarks step's dev-dependencies (criterion pulls in a dozen-plus extra crates:
-        # clap, plotters, rayon, ciborium, ...). See
-        # https://github.com/gklijs/schema_registry_converter/issues/118 for where the time was
-        # actually going (ci-flow ~58%, benchmarks ~21% of a ~23 minute run).
-      - name: Install
-        run: cargo install --debug cargo-make
+        # See https://github.com/gklijs/schema_registry_converter/issues/118 for where the time
+        # was going before dependencies were cached.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
       - name: Build
         run: cargo build --verbose
       - name: prepare env
@@ -48,14 +39,18 @@ jobs:
         run: ./prepare_integration_test.sh
         shell: bash
       - name: test
-        run: cargo test --verbose --all-features -- --test-threads=1
-      - name: ci-flow
-        run: cargo make --makefile make.toml ci-flow
+        # Runs the unit and integration tests once, instrumented by the compiler. Unlike line
+        # based tools like kcov, this measures regions, so an assert's never-taken panic branch
+        # or a closing parenthesis on its own line doesn't count as a miss.
+        run: cargo llvm-cov --all-features --lcov --output-path lcov.info -- --test-threads=1
+      - name: doc tests
+        # cargo-llvm-cov only instruments doc tests on nightly.
+        run: cargo test --doc --all-features
       - name: upload coverage
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          directory: target/coverage
+          files: lcov.info
           # Coverage is informative only, an unavailable Codecov shouldn't fail the build.
           fail_ci_if_error: false
       - name: benchmarks
