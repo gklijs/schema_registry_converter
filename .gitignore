@@ -4,3 +4,4 @@ Cargo.lock
 **/*.iml
 /.claude
 .mcp.json
+lcov.info

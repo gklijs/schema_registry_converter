@@ -252,7 +252,8 @@ pub(crate) fn reference_base(schema: &Value, url: &Url) -> Url {
 
 #[cfg(test)]
 mod tests {
-    use crate::json_common::{JsonSchema, ValidatorCache, reference_base, validate};
+    use crate::json_common::{JsonSchema, ValidatorCache, reference_base, reference_url, validate};
+    use crate::schema_registry_common::RegisteredReference;
     use serde_json::{Value, json};
     use std::sync::Arc;
     use url::Url;
@@ -378,5 +379,29 @@ mod tests {
             "http://example.com/schemas/a.json"
         );
         assert_eq!(reference_base(&json!({}), &url), url);
+    }
+
+    #[test]
+    fn test_reference_url_resolves_against_base_or_gives_error() {
+        let base = Url::parse("http://example.com/schemas/root.json").unwrap();
+        let reference = |name: &str| RegisteredReference {
+            name: name.to_owned(),
+            subject: String::from("result"),
+            version: 2,
+            properties: None,
+            tags: None,
+        };
+        assert_eq!(
+            reference_url(&reference("result.json"), &base)
+                .unwrap()
+                .as_str(),
+            "http://example.com/schemas/result.json"
+        );
+        let err = reference_url(&reference("http://example.com:99999/x.json"), &base).unwrap_err();
+        assert_eq!(err.cause.as_deref(), Some("invalid port number"));
+        assert!(
+            err.error
+                .starts_with("reference schema with subject result and version 2 has invalid id")
+        );
     }
 }

@@ -1,4 +1,4 @@
-# kcov attributes coverage per line, so reformatting (like a new rustfmt style edition) can split
+# Coverage is reported per line, so reformatting (like a new rustfmt style edition) can split
 # already uncovered expressions over more lines and shift the numbers without any real change.
 coverage:
   status:
