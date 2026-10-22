@@ -1,23 +1,23 @@
 use std::sync::Arc;
 
-use dashmap::mapref::entry::Entry as DashEntry;
 use dashmap::DashMap;
+use dashmap::mapref::entry::Entry as DashEntry;
 use serde_json::Value;
 use url::Url;
 
 use crate::blocking::schema_registry::{
-    get_referenced_schema, get_schema_by_guid_and_type, get_schema_by_id_and_type,
-    get_schema_by_subject, SrSettings,
+    SrSettings, get_referenced_schema, get_schema_by_guid_and_type, get_schema_by_id_and_type,
+    get_schema_by_subject,
 };
 use crate::error::SRCError;
+pub use crate::json_common::{DecodeResult, JsonSchema, validate};
 use crate::json_common::{
-    main_url, reference_base, reference_depth_exceeded_error, reference_url, to_bytes,
-    to_bytes_raw, to_value, ValidatorCache, MAX_REFERENCE_DEPTH,
+    MAX_REFERENCE_DEPTH, ValidatorCache, main_url, reference_base, reference_depth_exceeded_error,
+    reference_url, to_bytes, to_bytes_raw, to_value,
 };
-pub use crate::json_common::{validate, DecodeResult, JsonSchema};
 use crate::schema_registry_common::{
-    get_bytes_result, invalid_bytes_error, parse_schema_id_header, schema_id_header_for,
     BytesResult, HeaderSchemaId, RegisteredSchema, SchemaIdHeader, SchemaType, SubjectNameStrategy,
+    get_bytes_result, invalid_bytes_error, parse_schema_id_header, schema_id_header_for,
 };
 
 /// Encoder that validates the value against the schema the subject name strategy resolves to,
@@ -311,14 +311,14 @@ fn to_json_schema(
 
 #[cfg(test)]
 mod tests {
-    use std::fs::{read_to_string, File};
+    use std::fs::{File, read_to_string};
 
     use serde_json::Value;
 
     use crate::blocking::json::{JsonDecoder, JsonEncoder};
     use crate::blocking::schema_registry::SrSettings;
     use crate::schema_registry_common::{
-        build_schema_id_header, get_payload, SubjectNameStrategy, VALUE_SCHEMA_ID_HEADER,
+        SubjectNameStrategy, VALUE_SCHEMA_ID_HEADER, build_schema_id_header, get_payload,
     };
     use test_utils::{
         get_json_body, get_json_body_with_reference, json_extra_schema, json_get_extra_references,
@@ -1143,10 +1143,12 @@ mod tests {
         let error = encoder.encode(&result_example, &strategy).unwrap_err();
 
         assert_eq!(error.error, "error compiling schema");
-        assert!(error
-            .cause
-            .unwrap()
-            .contains("is not present in a registry"));
+        assert!(
+            error
+                .cause
+                .unwrap()
+                .contains("is not present in a registry")
+        );
     }
 
     #[test]
@@ -1154,6 +1156,11 @@ mod tests {
         let sr_settings = SrSettings::new(String::from("http://127.0.0.1:1234"));
         let decoder = JsonDecoder::new(sr_settings);
         let result = decoder.decode(Some(&[1, 0])).unwrap_err();
-        assert_eq!(String::from("Invalid bytes: payload too short (2 bytes), expected at least 5 bytes for confluent schema registry wire format"), result.error)
+        assert_eq!(
+            String::from(
+                "Invalid bytes: payload too short (2 bytes), expected at least 5 bytes for confluent schema registry wire format"
+            ),
+            result.error
+        )
     }
 }

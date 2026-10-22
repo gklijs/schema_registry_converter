@@ -3,7 +3,7 @@ extern crate schema_registry_converter;
 use serde_json::Value;
 
 use crate::blocking::json_consumer::{
-    consume_json, consume_json_with_header_id, DeserializedJsonRecord,
+    DeserializedJsonRecord, consume_json, consume_json_with_header_id,
 };
 
 fn get_schema_registry_url() -> String {

@@ -3,10 +3,10 @@ use prost_reflect::{DynamicMessage, FileDescriptor, MessageDescriptor, ReflectMe
 use serde_json::Value;
 
 use crate::error::SRCError;
-use crate::proto_decoder_common::{to_file_descriptor, ReferencedSchemas};
-use crate::proto_resolver::{to_index_bytes, IndexResolver};
+use crate::proto_decoder_common::{ReferencedSchemas, to_file_descriptor};
+use crate::proto_resolver::{IndexResolver, to_index_bytes};
 use crate::schema_registry_common::{
-    get_payload, schema_id_header_for, RegisteredSchema, SchemaIdHeader, SchemaType,
+    RegisteredSchema, SchemaIdHeader, SchemaType, get_payload, schema_id_header_for,
 };
 
 /// The compiled schema a subject resolved to, to encode messages with.

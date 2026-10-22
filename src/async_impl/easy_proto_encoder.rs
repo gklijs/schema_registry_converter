@@ -77,7 +77,7 @@ mod tests {
     use crate::async_impl::easy_proto_decoder::EasyProtoDecoder;
     use crate::async_impl::easy_proto_encoder::EasyProtoEncoder;
     use crate::async_impl::schema_registry::SrSettings;
-    use crate::schema_registry_common::{SubjectNameStrategy, KEY_SCHEMA_ID_HEADER};
+    use crate::schema_registry_common::{KEY_SCHEMA_ID_HEADER, SubjectNameStrategy};
     use mockito::Server;
     use prost_reflect::{DynamicMessage, Value};
     use serde_json::json;

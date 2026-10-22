@@ -1,5 +1,5 @@
-use rdkafka::message::{BorrowedMessage, Headers};
 use rdkafka::Message;
+use rdkafka::message::{BorrowedMessage, Headers};
 use schema_registry_converter::prost_reflect::Value;
 
 use schema_registry_converter::blocking::proto_decoder::ProtoDecoder;

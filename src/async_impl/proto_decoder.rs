@@ -1,20 +1,20 @@
-use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
-use futures::future::{BoxFuture, Shared};
+use dashmap::mapref::entry::Entry;
 use futures::FutureExt;
+use futures::future::{BoxFuture, Shared};
 use std::sync::Arc;
 
 use crate::async_impl::schema_registry::{
-    get_referenced_schemas, get_schema_by_guid_and_type, get_schema_by_id_and_type, SrSettings,
+    SrSettings, get_referenced_schemas, get_schema_by_guid_and_type, get_schema_by_id_and_type,
 };
 use crate::error::SRCError;
 use crate::proto_decoder_common::{
-    decode_message, to_file_descriptor, MessageIndex, ReferencedSchemas,
+    MessageIndex, ReferencedSchemas, decode_message, to_file_descriptor,
 };
 use crate::proto_resolver::to_index_and_data;
 use crate::schema_registry_common::{
-    get_bytes_result, parse_schema_id_header, BytesResult, HeaderSchemaId, RegisteredSchema,
-    SchemaType,
+    BytesResult, HeaderSchemaId, RegisteredSchema, SchemaType, get_bytes_result,
+    parse_schema_id_header,
 };
 use prost_reflect::bytes::Bytes;
 use prost_reflect::{DynamicMessage, FileDescriptor, Value};
@@ -334,7 +334,7 @@ async fn to_decode_context(
 
 #[cfg(test)]
 mod tests {
-    use crate::async_impl::proto_decoder::{into_decode_context, ProtoDecoder};
+    use crate::async_impl::proto_decoder::{ProtoDecoder, into_decode_context};
     use crate::async_impl::schema_registry::SrSettings;
     use crate::proto_decoder_common::ReferencedSchemas;
     use crate::schema_registry_common::{RegisteredSchema, SchemaType};

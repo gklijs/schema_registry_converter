@@ -5,7 +5,7 @@
 //! is the cache-hit hot path: avro (de)serialization, not network/mock overhead. That's the path
 //! that matters for a long-running consumer/producer once it has warmed up.
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use schema_registry_converter::blocking::avro::{AvroDecoder, AvroEncoder};
 use schema_registry_converter::blocking::schema_registry::SrSettings;
 use schema_registry_converter::schema_registry_common::SubjectNameStrategy;

@@ -3,7 +3,7 @@ extern crate schema_registry_converter;
 use schema_registry_converter::prost_reflect::{DynamicMessage, ReflectMessage, Value};
 
 use crate::blocking::proto_consumer::{
-    consume_proto, consume_proto_with_header_id, DeserializedProtoRecord,
+    DeserializedProtoRecord, consume_proto, consume_proto_with_header_id,
 };
 
 pub fn get_schema_registry_url() -> String {

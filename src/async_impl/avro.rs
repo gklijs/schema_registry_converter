@@ -24,29 +24,29 @@
 
 use std::sync::Arc;
 
-use apache_avro::types::Value;
 use apache_avro::Schema;
-use dashmap::mapref::entry::Entry;
+use apache_avro::types::Value;
 use dashmap::DashMap;
-use futures::future::{BoxFuture, Shared};
+use dashmap::mapref::entry::Entry;
 use futures::FutureExt;
+use futures::future::{BoxFuture, Shared};
 use serde::ser::Serialize;
 use serde_json::value;
 
 use crate::async_impl::schema_registry::{
-    get_referenced_schema, get_schema_by_guid_and_type, get_schema_by_id_and_type,
-    get_schema_by_subject, SrSettings,
+    SrSettings, get_referenced_schema, get_schema_by_guid_and_type, get_schema_by_id_and_type,
+    get_schema_by_subject,
 };
 use crate::avro_common::{
-    decode_bytes, get_name, item_to_bytes, item_to_bytes_raw, record_to_bytes, record_to_bytes_raw,
-    replace_reference, values_to_bytes, values_to_bytes_raw, AvroSchema, DecodeResult,
-    DecodeResultWithSchema, ResolvedSchemaCache,
+    AvroSchema, DecodeResult, DecodeResultWithSchema, ResolvedSchemaCache, decode_bytes, get_name,
+    item_to_bytes, item_to_bytes_raw, record_to_bytes, record_to_bytes_raw, replace_reference,
+    values_to_bytes, values_to_bytes_raw,
 };
 use crate::error::SRCError;
 use crate::schema_registry_common::{
-    get_bytes_result, invalid_bytes_error, parse_schema_id_header, schema_id_header_for,
     BytesResult, HeaderSchemaId, RegisteredReference, RegisteredSchema, SchemaIdHeader, SchemaType,
-    SubjectNameStrategy,
+    SubjectNameStrategy, get_bytes_result, invalid_bytes_error, parse_schema_id_header,
+    schema_id_header_for,
 };
 
 /// A decoder used to transform bytes to a Value object
@@ -1081,7 +1081,9 @@ mod tests {
 
         assert_eq!(
             result,
-            SRCError::non_retryable_without_cause("Invalid bytes: first byte is 0x01, expected magic byte 0x00 for confluent schema registry wire format. The message may not be encoded with the schema registry serializer.")
+            SRCError::non_retryable_without_cause(
+                "Invalid bytes: first byte is 0x01, expected magic byte 0x00 for confluent schema registry wire format. The message may not be encoded with the schema registry serializer."
+            )
         )
     }
 
@@ -1093,7 +1095,9 @@ mod tests {
 
         assert_eq!(
             result,
-            SRCError::non_retryable_without_cause("Invalid bytes: first byte is 0x01, expected magic byte 0x00 for confluent schema registry wire format. The message may not be encoded with the schema registry serializer.")
+            SRCError::non_retryable_without_cause(
+                "Invalid bytes: first byte is 0x01, expected magic byte 0x00 for confluent schema registry wire format. The message may not be encoded with the schema registry serializer."
+            )
         )
     }
 
@@ -1105,7 +1109,9 @@ mod tests {
 
         assert_eq!(
             result,
-            SRCError::non_retryable_without_cause("Invalid bytes: payload too short (4 bytes), expected at least 5 bytes for confluent schema registry wire format")
+            SRCError::non_retryable_without_cause(
+                "Invalid bytes: payload too short (4 bytes), expected at least 5 bytes for confluent schema registry wire format"
+            )
         )
     }
 
@@ -1243,7 +1249,7 @@ mod tests {
 
         assert_eq!(
             err.error,
-           "Supplied raw value \"{\\\"type\\\":\\\"record\\\",\\\"name\\\":\\\"Heartbeat\\\",\\\"namespace\\\":\\\"nl.openweb.data\\\"}\" cant be turned into a Schema",
+            "Supplied raw value \"{\\\"type\\\":\\\"record\\\",\\\"name\\\":\\\"Heartbeat\\\",\\\"namespace\\\":\\\"nl.openweb.data\\\"}\" cant be turned into a Schema",
         )
     }
 
@@ -1607,7 +1613,9 @@ mod tests {
             err,
             SRCError::new(
                 "http call to schema registry failed",
-                Some(String::from("builder error for url (hxxx://bogus/subjects/heartbeat-nl.openweb.data.Balance/versions/latest)")),
+                Some(String::from(
+                    "builder error for url (hxxx://bogus/subjects/heartbeat-nl.openweb.data.Balance/versions/latest)"
+                )),
                 true,
             )
         )

@@ -2,19 +2,19 @@
 //! JSON in the canonical protobuf JSON mapping.
 //!
 //! **NOTE**: Requires the `proto_encoder` feature
-use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
-use futures::future::{BoxFuture, Shared};
+use dashmap::mapref::entry::Entry;
 use futures::FutureExt;
+use futures::future::{BoxFuture, Shared};
 use prost_reflect::{DynamicMessage, MessageDescriptor};
 use serde_json::Value;
 use std::sync::Arc;
 
 use crate::async_impl::schema_registry::{
-    get_referenced_schemas, get_schema_by_subject, SrSettings,
+    SrSettings, get_referenced_schemas, get_schema_by_subject,
 };
 use crate::error::SRCError;
-use crate::proto_encoder_common::{to_encode_context, EncodeContext};
+use crate::proto_encoder_common::{EncodeContext, to_encode_context};
 use crate::schema_registry_common::{SchemaIdHeader, SubjectNameStrategy};
 
 type SharedFutureEncodeContext = Shared<BoxFuture<'static, Result<Arc<EncodeContext>, SRCError>>>;

@@ -2,15 +2,15 @@
 //! JSON in the canonical protobuf JSON mapping.
 //!
 //! **NOTE**: Requires the `proto_encoder` feature
-use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
+use dashmap::mapref::entry::Entry;
 use prost_reflect::{DynamicMessage, MessageDescriptor};
 use serde_json::Value;
 use std::sync::Arc;
 
-use crate::blocking::schema_registry::{get_referenced_schemas, get_schema_by_subject, SrSettings};
+use crate::blocking::schema_registry::{SrSettings, get_referenced_schemas, get_schema_by_subject};
 use crate::error::SRCError;
-use crate::proto_encoder_common::{to_encode_context, EncodeContext};
+use crate::proto_encoder_common::{EncodeContext, to_encode_context};
 use crate::schema_registry_common::{SchemaIdHeader, SubjectNameStrategy};
 
 /// Encodes a [`DynamicMessage`] with the schema the subject name strategy resolves to, adding the

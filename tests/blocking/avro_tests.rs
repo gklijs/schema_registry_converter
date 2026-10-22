@@ -1,7 +1,7 @@
 extern crate schema_registry_converter;
 
 use crate::blocking::avro_consumer::{
-    consume_avro, consume_avro_with_header_id, DeserializedAvroRecord,
+    DeserializedAvroRecord, consume_avro, consume_avro_with_header_id,
 };
 use crate::blocking::kafka_producer::get_producer;
 use apache_avro::types::Value;

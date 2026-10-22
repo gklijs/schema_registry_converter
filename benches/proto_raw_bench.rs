@@ -5,7 +5,7 @@
 //! timing starts, so this measures the cache-hit hot path (index resolving + framing), not
 //! network/mock overhead.
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use schema_registry_converter::blocking::proto_raw::{ProtoRawDecoder, ProtoRawEncoder};
 use schema_registry_converter::blocking::schema_registry::SrSettings;
 use schema_registry_converter::schema_registry_common::SubjectNameStrategy;

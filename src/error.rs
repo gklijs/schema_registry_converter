@@ -138,8 +138,10 @@ mod tests {
     fn string_cause_and_no_cause() {
         let err = SRCError::non_retryable_with_cause("bad input", "could not parse");
         assert_eq!(err.cause.as_deref(), Some("bad input"));
-        assert!(SRCError::non_retryable_without_cause("x")
-            .source()
-            .is_none());
+        assert!(
+            SRCError::non_retryable_without_cause("x")
+                .source()
+                .is_none()
+        );
     }
 }

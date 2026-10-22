@@ -1,7 +1,7 @@
 use crate::blocking::kafka_consumer::get_consumer;
 use apache_avro::types::Value;
-use rdkafka::message::{BorrowedMessage, Headers};
 use rdkafka::Message;
+use rdkafka::message::{BorrowedMessage, Headers};
 use schema_registry_converter::blocking::avro::AvroDecoder;
 use schema_registry_converter::blocking::schema_registry::SrSettings;
 use schema_registry_converter::schema_registry_common::VALUE_SCHEMA_ID_HEADER;

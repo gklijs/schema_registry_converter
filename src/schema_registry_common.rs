@@ -244,35 +244,35 @@ impl SubjectNameStrategy {
     /// it's compatible with the Java client.
     pub fn get_subject(&self) -> Result<String, SRCError> {
         match self {
-        SubjectNameStrategy::RecordNameStrategy(rn) => Ok(rn.clone()),
-        SubjectNameStrategy::TopicNameStrategy(t, is_key) => {
-            if *is_key {
-                Ok(format!("{}-key", t))
-            } else {
-                Ok(format!("{}-value", t))
+            SubjectNameStrategy::RecordNameStrategy(rn) => Ok(rn.clone()),
+            SubjectNameStrategy::TopicNameStrategy(t, is_key) => {
+                if *is_key {
+                    Ok(format!("{}-key", t))
+                } else {
+                    Ok(format!("{}-value", t))
+                }
             }
-        }
-        SubjectNameStrategy::TopicRecordNameStrategy(t, rn) => Ok(format!("{}-{}", t, rn)),
-        SubjectNameStrategy::RecordNameStrategyWithSchema(s) => match &s.name {
-            None => Err(SRCError::non_retryable_without_cause(
-                "name is mandatory in SuppliedSchema when used in TopicRecordNameStrategyWithSchema",
-            )),
-            Some(n) => Ok(n.clone()),
-        },
-        SubjectNameStrategy::TopicNameStrategyWithSchema(t, is_key, _) => {
-            if *is_key {
-                Ok(format!("{}-key", t))
-            } else {
-                Ok(format!("{}-value", t))
+            SubjectNameStrategy::TopicRecordNameStrategy(t, rn) => Ok(format!("{}-{}", t, rn)),
+            SubjectNameStrategy::RecordNameStrategyWithSchema(s) => match &s.name {
+                None => Err(SRCError::non_retryable_without_cause(
+                    "name is mandatory in SuppliedSchema when used in TopicRecordNameStrategyWithSchema",
+                )),
+                Some(n) => Ok(n.clone()),
+            },
+            SubjectNameStrategy::TopicNameStrategyWithSchema(t, is_key, _) => {
+                if *is_key {
+                    Ok(format!("{}-key", t))
+                } else {
+                    Ok(format!("{}-value", t))
+                }
             }
+            SubjectNameStrategy::TopicRecordNameStrategyWithSchema(t, s) => match &s.name {
+                None => Err(SRCError::non_retryable_without_cause(
+                    "name is mandatory in SuppliedSchema when used in TopicRecordNameStrategyWithSchema",
+                )),
+                Some(n) => Ok(format!("{}-{}", t, n)),
+            },
         }
-        SubjectNameStrategy::TopicRecordNameStrategyWithSchema(t, s) => match &s.name {
-            None => Err(SRCError::non_retryable_without_cause(
-                "name is mandatory in SuppliedSchema when used in TopicRecordNameStrategyWithSchema",
-            )),
-            Some(n) => Ok(format!("{}-{}", t, n)),
-        },
-    }
     }
 }
 
@@ -498,9 +498,10 @@ pub(crate) fn parse_schema_id_header(bytes: &[u8]) -> Result<(HeaderSchemaId, &[
             "Invalid schema id header: {} bytes, expected at least 5 (magic byte 0x00 + 4-byte id)",
             bytes.len()
         ))),
-        Some(0x01) if bytes.len() >= 17 => {
-            Ok((HeaderSchemaId::Guid(bytes_to_guid(&bytes[1..17])), &bytes[17..]))
-        }
+        Some(0x01) if bytes.len() >= 17 => Ok((
+            HeaderSchemaId::Guid(bytes_to_guid(&bytes[1..17])),
+            &bytes[17..],
+        )),
         Some(0x01) => Err(SRCError::non_retryable_without_cause(&format!(
             "Invalid schema id header: {} bytes, expected at least 17 (magic byte 0x01 + 16-byte guid)",
             bytes.len()
@@ -578,9 +579,9 @@ fn bytes_to_guid(bytes: &[u8]) -> String {
 mod test {
     use crate::error::SRCError;
     use crate::schema_registry_common::{
-        build_schema_id_header, get_bytes_result, invalid_bytes_error, parse_schema_id_header,
-        BytesResult, HeaderSchemaId, RegisteredSchema, SchemaType, SrAuthorization,
-        SubjectNameStrategy, SuppliedSchema, KEY_SCHEMA_ID_HEADER,
+        BytesResult, HeaderSchemaId, KEY_SCHEMA_ID_HEADER, RegisteredSchema, SchemaType,
+        SrAuthorization, SubjectNameStrategy, SuppliedSchema, build_schema_id_header,
+        get_bytes_result, invalid_bytes_error, parse_schema_id_header,
     };
 
     #[test]
@@ -768,9 +769,10 @@ mod test {
     #[test]
     fn parse_schema_id_header_unknown_magic_byte() {
         let err = parse_schema_id_header(&[0x02, 0, 0, 0, 0]).unwrap_err();
-        assert!(err
-            .error
-            .starts_with("Invalid schema id header: first byte is 0x02"));
+        assert!(
+            err.error
+                .starts_with("Invalid schema id header: first byte is 0x02")
+        );
     }
 
     #[test]

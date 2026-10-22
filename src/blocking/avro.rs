@@ -28,26 +28,26 @@
 
 use std::sync::Arc;
 
-use apache_avro::types::Value;
 use apache_avro::Schema;
-use dashmap::mapref::entry::Entry;
+use apache_avro::types::Value;
 use dashmap::DashMap;
+use dashmap::mapref::entry::Entry;
 use serde::ser::Serialize;
 use serde_json::Value as JsonValue;
 
 use crate::avro_common::{
-    decode_bytes, get_name, item_to_bytes, item_to_bytes_raw, replace_reference, values_to_bytes,
-    values_to_bytes_raw, AvroSchema, DecodeResult, DecodeResultWithSchema, ResolvedSchemaCache,
+    AvroSchema, DecodeResult, DecodeResultWithSchema, ResolvedSchemaCache, decode_bytes, get_name,
+    item_to_bytes, item_to_bytes_raw, replace_reference, values_to_bytes, values_to_bytes_raw,
 };
 use crate::blocking::schema_registry::{
-    get_referenced_schema, get_schema_by_guid_and_type, get_schema_by_id_and_type,
-    get_schema_by_subject, SrSettings,
+    SrSettings, get_referenced_schema, get_schema_by_guid_and_type, get_schema_by_id_and_type,
+    get_schema_by_subject,
 };
 use crate::error::SRCError;
 use crate::schema_registry_common::{
-    get_bytes_result, invalid_bytes_error, parse_schema_id_header, schema_id_header_for,
     BytesResult, HeaderSchemaId, RegisteredReference, RegisteredSchema, SchemaIdHeader, SchemaType,
-    SubjectNameStrategy,
+    SubjectNameStrategy, get_bytes_result, invalid_bytes_error, parse_schema_id_header,
+    schema_id_header_for,
 };
 
 /// A decoder used to transform bytes to a Value object
@@ -1089,7 +1089,7 @@ mod tests {
 
         assert_eq!(
             err.error,
-           "Supplied raw value \"{\\\"type\\\":\\\"record\\\",\\\"name\\\":\\\"Heartbeat\\\",\\\"namespace\\\":\\\"nl.openweb.data\\\"}\" cant be turned into a Schema",
+            "Supplied raw value \"{\\\"type\\\":\\\"record\\\",\\\"name\\\":\\\"Heartbeat\\\",\\\"namespace\\\":\\\"nl.openweb.data\\\"}\" cant be turned into a Schema",
         )
     }
 
@@ -1411,7 +1411,9 @@ mod tests {
             result,
             Err(SRCError::new(
                 "http call to schema registry failed",
-                Some(String::from("builder error for url (hxxx://bogus/subjects/heartbeat-nl.openweb.data.Balance/versions/latest)")),
+                Some(String::from(
+                    "builder error for url (hxxx://bogus/subjects/heartbeat-nl.openweb.data.Balance/versions/latest)"
+                )),
                 true,
             ))
         )
@@ -2041,21 +2043,29 @@ mod tests {
                 .value,
             Value::Null
         );
-        assert!(decoder
-            .decode_with_schema_with_header_id(Some(&header.value), None)
-            .unwrap()
-            .is_none());
+        assert!(
+            decoder
+                .decode_with_schema_with_header_id(Some(&header.value), None)
+                .unwrap()
+                .is_none()
+        );
 
         // an invalid header, or bytes that don't match the schema, are errors
-        assert!(decoder
-            .decode_with_header_id(Some(&[0x02]), Some(&bytes))
-            .is_err());
-        assert!(decoder
-            .decode_with_schema_with_header_id(Some(&[0x02]), Some(&bytes))
-            .is_err());
-        assert!(decoder
-            .decode_with_header_id(Some(&header.value), Some(&[0xff]))
-            .is_err());
+        assert!(
+            decoder
+                .decode_with_header_id(Some(&[0x02]), Some(&bytes))
+                .is_err()
+        );
+        assert!(
+            decoder
+                .decode_with_schema_with_header_id(Some(&[0x02]), Some(&bytes))
+                .is_err()
+        );
+        assert!(
+            decoder
+                .decode_with_header_id(Some(&header.value), Some(&[0xff]))
+                .is_err()
+        );
         _m_guid.assert();
     }
 }

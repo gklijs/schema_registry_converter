@@ -5,8 +5,8 @@
 //! timing starts, so this measures the cache-hit hot path: JSON Schema validation, not
 //! network/mock overhead.
 
-use criterion::{criterion_group, criterion_main, Criterion};
-use schema_registry_converter::blocking::json::{validate, JsonDecoder, JsonEncoder};
+use criterion::{Criterion, criterion_group, criterion_main};
+use schema_registry_converter::blocking::json::{JsonDecoder, JsonEncoder, validate};
 use schema_registry_converter::blocking::schema_registry::SrSettings;
 use schema_registry_converter::schema_registry_common::SubjectNameStrategy;
 use serde_json::json;

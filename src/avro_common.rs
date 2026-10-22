@@ -4,16 +4,16 @@ use apache_avro::reader::datum::GenericDatumReader;
 use apache_avro::schema::{Name, ResolvedSchema, Schema};
 use apache_avro::types::{Record, Value};
 use apache_avro::writer::datum::GenericDatumWriter;
-use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
+use dashmap::mapref::entry::Entry;
 use serde::ser::Serialize;
-use serde_json::{value, Map};
+use serde_json::{Map, value};
 use std::collections::HashMap;
 use std::io::Cursor;
 use std::sync::Arc;
 
 use crate::error::SRCError;
-use crate::schema_registry_common::{get_payload, SchemaType, SuppliedSchema};
+use crate::schema_registry_common::{SchemaType, SuppliedSchema, get_payload};
 
 /// Because we need both the resulting schema, as have a way of posting the schema as json, we use
 /// this struct so we keep them both together.
@@ -387,13 +387,13 @@ pub fn get_supplied_schema_for<T: apache_avro::AvroSchema>() -> SuppliedSchema {
 
 #[cfg(test)]
 mod tests {
-    use apache_avro::types::Value;
     use apache_avro::Schema;
+    use apache_avro::types::Value;
     use dashmap::DashMap;
 
     use test_utils::{Atype, ConfirmAccountCreation, Heartbeat};
 
-    use crate::avro_common::{get_name, get_supplied_schema_for, values_to_bytes, AvroSchema};
+    use crate::avro_common::{AvroSchema, get_name, get_supplied_schema_for, values_to_bytes};
     use crate::error::SRCError;
     use crate::schema_registry_common::SchemaType;
 

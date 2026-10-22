@@ -8,18 +8,18 @@ use std::time::Duration;
 use dashmap::DashMap;
 use futures::future::{BoxFuture, FutureExt};
 use futures::stream::{self, StreamExt};
-use reqwest::header::{HeaderName, ACCEPT, CONTENT_TYPE};
-use reqwest::{header, RequestBuilder, Response};
+use reqwest::header::{ACCEPT, CONTENT_TYPE, HeaderName};
 use reqwest::{Client, ClientBuilder};
+use reqwest::{RequestBuilder, Response, header};
 #[cfg(feature = "middleware")]
 use reqwest_middleware::{ClientWithMiddleware, Middleware};
 use serde::Deserialize;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use crate::error::SRCError;
 use crate::schema_registry_common::{
-    url_for_call, RawError, RawRegisteredSchema, RegisteredReference, RegisteredSchema, SchemaType,
-    SrAuthorization, SrCall, SubjectNameStrategy, SuppliedReference, SuppliedSchema,
+    RawError, RawRegisteredSchema, RegisteredReference, RegisteredSchema, SchemaType,
+    SrAuthorization, SrCall, SubjectNameStrategy, SuppliedReference, SuppliedSchema, url_for_call,
 };
 
 /// The http client used to perform the calls, either a plain reqwest client, or, when the
@@ -978,8 +978,8 @@ mod tests {
     use std::time::Duration;
 
     use crate::async_impl::schema_registry::{
-        get_schema_by_guid, get_schema_by_id, get_schema_by_id_and_type,
-        get_schema_by_subject_and_version, post_schema, SrSettings,
+        SrSettings, get_schema_by_guid, get_schema_by_id, get_schema_by_id_and_type,
+        get_schema_by_subject_and_version, post_schema,
     };
     use crate::schema_registry_common::{
         Metadata, RawRegisteredSchema, RegisteredReference, RegisteredSchema, SchemaType,
@@ -1365,8 +1365,8 @@ mod tests {
 
     #[cfg(feature = "middleware")]
     mod middleware_tests {
-        use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
 
         use async_trait::async_trait;
         use http::Extensions;
@@ -1374,7 +1374,7 @@ mod tests {
         use reqwest::{Request, Response};
         use reqwest_middleware::{Middleware, Next, Result as MwResult};
 
-        use crate::async_impl::schema_registry::{get_schema_by_id, post_schema, SrSettings};
+        use crate::async_impl::schema_registry::{SrSettings, get_schema_by_id, post_schema};
         use crate::schema_registry_common::{SchemaType, SuppliedSchema};
 
         /// Stand-in for a token refresh middleware (e.g. GCP workload identity): fetches a

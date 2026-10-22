@@ -1,6 +1,6 @@
 use crate::error::SRCError;
-use crate::proto_resolver::{to_index_bytes, IndexResolver, MessageResolver};
-use crate::schema_registry_common::{get_payload, RegisteredSchema};
+use crate::proto_resolver::{IndexResolver, MessageResolver, to_index_bytes};
+use crate::schema_registry_common::{RegisteredSchema, get_payload};
 
 /// The message-index bytes for `full_name` in `encode_context`'s schema. This is the confluent
 /// wire format's way of pointing at which message in a (possibly multi-message) `.proto` schema

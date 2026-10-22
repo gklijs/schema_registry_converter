@@ -1,16 +1,16 @@
-use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
+use dashmap::mapref::entry::Entry;
 use std::sync::Arc;
 
 use crate::blocking::schema_registry::{
-    get_referenced_schemas, get_schema_by_guid_and_type, get_schema_by_id_and_type, SrSettings,
+    SrSettings, get_referenced_schemas, get_schema_by_guid_and_type, get_schema_by_id_and_type,
 };
 use crate::error::SRCError;
-use crate::proto_decoder_common::{decode_message, to_file_descriptor, MessageIndex};
+use crate::proto_decoder_common::{MessageIndex, decode_message, to_file_descriptor};
 use crate::proto_resolver::to_index_and_data;
 use crate::schema_registry_common::{
-    get_bytes_result, parse_schema_id_header, BytesResult, HeaderSchemaId, RegisteredSchema,
-    SchemaType,
+    BytesResult, HeaderSchemaId, RegisteredSchema, SchemaType, get_bytes_result,
+    parse_schema_id_header,
 };
 use prost_reflect::bytes::Bytes;
 use prost_reflect::{DynamicMessage, FileDescriptor, Value};

@@ -1,19 +1,19 @@
-use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
+use dashmap::mapref::entry::Entry;
 use std::sync::Arc;
 
 use crate::blocking::schema_registry::{
-    get_schema_by_guid_and_type, get_schema_by_id_and_type, get_schema_by_subject, SrSettings,
+    SrSettings, get_schema_by_guid_and_type, get_schema_by_id_and_type, get_schema_by_subject,
 };
 use crate::error::SRCError;
 use crate::proto_raw_common::{
-    index_bytes, index_bytes_single_message, to_bytes, to_bytes_single_message, to_decode_context,
-    to_encode_context, DecodeContext, EncodeContext,
+    DecodeContext, EncodeContext, index_bytes, index_bytes_single_message, to_bytes,
+    to_bytes_single_message, to_decode_context, to_encode_context,
 };
 use crate::proto_resolver::{resolve_name, to_index_and_data};
 use crate::schema_registry_common::{
-    get_bytes_result, invalid_bytes_error, parse_schema_id_header, schema_id_header_for,
     BytesResult, HeaderSchemaId, RegisteredSchema, SchemaIdHeader, SchemaType, SubjectNameStrategy,
+    get_bytes_result, invalid_bytes_error, parse_schema_id_header, schema_id_header_for,
 };
 
 /// Encoder that works by prepending the correct bytes in order to make it valid schema registry
@@ -281,8 +281,8 @@ mod tests {
     use crate::blocking::proto_raw::{ProtoRawDecoder, ProtoRawEncoder};
     use crate::blocking::schema_registry::SrSettings;
     use crate::schema_registry_common::{
-        build_schema_id_header, SchemaType, SubjectNameStrategy, SuppliedReference, SuppliedSchema,
-        VALUE_SCHEMA_ID_HEADER,
+        SchemaType, SubjectNameStrategy, SuppliedReference, SuppliedSchema, VALUE_SCHEMA_ID_HEADER,
+        build_schema_id_header,
     };
     use test_utils::{
         get_proto_body, get_proto_body_with_reference, get_proto_complex,
@@ -488,9 +488,11 @@ mod tests {
         let strategy =
             SubjectNameStrategy::RecordNameStrategy(String::from("nl.openweb.data.Heartbeat"));
 
-        assert!(encoder
-            .encode_single_message(get_proto_complex_only_data(), &strategy,)
-            .is_err())
+        assert!(
+            encoder
+                .encode_single_message(get_proto_complex_only_data(), &strategy,)
+                .is_err()
+        )
     }
 
     #[test]

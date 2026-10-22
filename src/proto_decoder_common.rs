@@ -107,7 +107,7 @@ pub(crate) fn decode_message(
 #[cfg(test)]
 mod tests {
     use crate::proto_decoder_common::{
-        decode_message, to_file_descriptor, MessageIndex, ReferencedSchemas,
+        MessageIndex, ReferencedSchemas, decode_message, to_file_descriptor,
     };
     use prost_reflect::{FileDescriptor, MapKey, MessageDescriptor, Value};
 
