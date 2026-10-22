@@ -7,14 +7,14 @@ use std::time::Duration;
 use dashmap::DashMap;
 use reqwest::blocking::{Client, ClientBuilder, RequestBuilder, Response};
 use reqwest::header;
-use reqwest::header::{HeaderName, ACCEPT, CONTENT_TYPE};
+use reqwest::header::{ACCEPT, CONTENT_TYPE, HeaderName};
 use serde::Deserialize;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use crate::error::SRCError;
 use crate::schema_registry_common::{
-    url_for_call, RawError, RawRegisteredSchema, RegisteredReference, RegisteredSchema, SchemaType,
-    SrAuthorization, SrCall, SubjectNameStrategy, SuppliedReference, SuppliedSchema,
+    RawError, RawRegisteredSchema, RegisteredReference, RegisteredSchema, SchemaType,
+    SrAuthorization, SrCall, SubjectNameStrategy, SuppliedReference, SuppliedSchema, url_for_call,
 };
 
 /// Settings used to do the calls to schema registry. For simple cases you can use `SrSettings::new`
@@ -783,7 +783,7 @@ mod tests {
     use std::{collections::HashMap, time::Duration};
 
     use crate::blocking::schema_registry::{
-        get_schema_by_guid, get_schema_by_id, post_schema, SrSettings,
+        SrSettings, get_schema_by_guid, get_schema_by_id, post_schema,
     };
     use crate::schema_registry_common::{
         Metadata, RawRegisteredSchema, RegisteredReference, RegisteredSchema, SchemaType,

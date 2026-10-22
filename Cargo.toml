@@ -10,14 +10,13 @@ readme = "README.md"
 keywords = ["kafka", "confluent", "schema-registry", "avro", "protobuf"]
 categories = ["encoding", "api-bindings", "asynchronous"]
 license = "MIT OR Apache-2.0"
-edition = "2021"
+edition = "2024"
 # The highest version the dependencies require, apache-avro needs 1.88. Checked by the msrv CI job.
 rust-version = "1.88"
 
+# Edition 2024 implies resolver 3, which resolves dependencies to versions that support the
+# rust-version above, see https://doc.rust-lang.org/cargo/reference/resolver.html#rust-version
 [workspace]
-# Resolves dependencies to versions that support the rust-version above, see
-# https://doc.rust-lang.org/cargo/reference/resolver.html#rust-version
-resolver = "3"
 
 [features]
 native_tls = ["reqwest/native-tls"]

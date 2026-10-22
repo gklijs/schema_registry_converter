@@ -1,7 +1,7 @@
 use crate::blocking::proto_tests::get_schema_registry_url;
 use schema_registry_converter::blocking::schema_registry::{
-    get_all_subjects, get_all_versions, get_referenced_schema, get_schema_by_subject,
-    is_compatible_schema, perform_sr_call, SrSettings,
+    SrSettings, get_all_subjects, get_all_versions, get_referenced_schema, get_schema_by_subject,
+    is_compatible_schema, perform_sr_call,
 };
 use schema_registry_converter::error::SRCError;
 use schema_registry_converter::schema_registry_common::{

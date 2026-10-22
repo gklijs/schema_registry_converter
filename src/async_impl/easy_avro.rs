@@ -150,7 +150,7 @@ mod tests {
     use crate::avro_common::get_supplied_schema;
     use crate::schema_registry_common::SubjectNameStrategy;
     use apache_avro::types::Value;
-    use apache_avro::{from_value, Schema};
+    use apache_avro::{Schema, from_value};
     use mockito::Server;
 
     use test_utils::Heartbeat;

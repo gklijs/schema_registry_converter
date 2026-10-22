@@ -205,7 +205,7 @@ pub(crate) fn resolve_name(
 
 #[cfg(test)]
 mod tests {
-    use crate::proto_resolver::{to_index_and_data, IndexResolver, MessageResolver};
+    use crate::proto_resolver::{IndexResolver, MessageResolver, to_index_and_data};
     use std::sync::Arc;
 
     fn get_proto_simple() -> &'static str {

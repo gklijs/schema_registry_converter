@@ -5,7 +5,7 @@
 //! decodes the message through `prost-reflect`, a materially heavier path than the raw decoder's
 //! index-based framing, so it's worth tracking on its own.
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use schema_registry_converter::blocking::proto_decoder::ProtoDecoder;
 use schema_registry_converter::blocking::schema_registry::SrSettings;
 use std::hint::black_box;

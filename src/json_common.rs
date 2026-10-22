@@ -8,7 +8,7 @@ use serde_json::value::Value;
 use url::Url;
 
 use crate::error::SRCError;
-use crate::schema_registry_common::{get_payload, RegisteredReference};
+use crate::schema_registry_common::{RegisteredReference, get_payload};
 
 /// Cap on how deep a chain of JSON schema `references` is followed before giving up with an
 /// `SRCError`. Without a cap, a circular reference chain (a schema that references itself,
@@ -86,7 +86,7 @@ pub(crate) fn to_value(str: &str) -> Result<Value, SRCError> {
             return Err(SRCError::non_retryable_with_cause(
                 e,
                 &format!("could not parse schema {} to a value", str),
-            ))
+            ));
         }
     };
     Ok(value)
@@ -217,7 +217,13 @@ impl fmt::Debug for ValidatorCache {
 pub(crate) fn reference_url(rr: &RegisteredReference, base: &Url) -> Result<Url, SRCError> {
     match Url::options().base_url(Some(base)).parse(&rr.name) {
         Ok(v) => Ok(v),
-        Err(e) => Err(SRCError::non_retryable_with_cause(e, &format!("reference schema with subject {} and version {} has invalid id {}, it has to be a fully qualified url or resolve against {}", rr.subject, rr.version, rr.name, base)))
+        Err(e) => Err(SRCError::non_retryable_with_cause(
+            e,
+            &format!(
+                "reference schema with subject {} and version {} has invalid id {}, it has to be a fully qualified url or resolve against {}",
+                rr.subject, rr.version, rr.name, base
+            ),
+        )),
     }
 }
 
@@ -246,8 +252,8 @@ pub(crate) fn reference_base(schema: &Value, url: &Url) -> Url {
 
 #[cfg(test)]
 mod tests {
-    use crate::json_common::{reference_base, validate, JsonSchema, ValidatorCache};
-    use serde_json::{json, Value};
+    use crate::json_common::{JsonSchema, ValidatorCache, reference_base, validate};
+    use serde_json::{Value, json};
     use std::sync::Arc;
     use url::Url;
 
@@ -337,10 +343,11 @@ mod tests {
         );
         let err = validate(&root, &json!({})).unwrap_err();
         assert_eq!(err.error, "error compiling schema");
-        assert!(err
-            .cause
-            .unwrap()
-            .contains("http://example.com/missing.json"));
+        assert!(
+            err.cause
+                .unwrap()
+                .contains("http://example.com/missing.json")
+        );
     }
 
     #[test]

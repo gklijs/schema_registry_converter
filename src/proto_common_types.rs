@@ -1,5 +1,5 @@
-use protox::file::{File, FileResolver};
 use protox::Error;
+use protox::file::{File, FileResolver};
 
 /// Resolves the `google/type/*` common types by their import path. Unlike the
 /// `google/protobuf/*` well-known types, which protox ships with itself (see
@@ -1345,8 +1345,10 @@ mod tests {
 
     #[test]
     fn test_unknown_import_is_not_found() {
-        assert!(CommonTypesResolver
-            .open_file("google/type/does_not_exist.proto")
-            .is_err());
+        assert!(
+            CommonTypesResolver
+                .open_file("google/type/does_not_exist.proto")
+                .is_err()
+        );
     }
 }

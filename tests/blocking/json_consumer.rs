@@ -1,5 +1,5 @@
-use rdkafka::message::{BorrowedMessage, Headers};
 use rdkafka::Message;
+use rdkafka::message::{BorrowedMessage, Headers};
 use serde_json::Value;
 
 use schema_registry_converter::blocking::json::JsonDecoder;

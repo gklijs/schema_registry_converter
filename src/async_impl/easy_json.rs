@@ -80,11 +80,11 @@ mod tests {
     use crate::async_impl::easy_json::{EasyJsonDecoder, EasyJsonEncoder};
     use crate::async_impl::json::validate;
     use crate::async_impl::schema_registry::SrSettings;
-    use crate::schema_registry_common::{get_payload, SubjectNameStrategy};
+    use crate::schema_registry_common::{SubjectNameStrategy, get_payload};
 
     use mockito::Server;
     use serde_json::Value;
-    use std::fs::{read_to_string, File};
+    use std::fs::{File, read_to_string};
     use test_utils::{get_json_body, json_result_java_bytes, json_result_schema};
 
     #[tokio::test]
@@ -203,8 +203,10 @@ mod tests {
             .unwrap();
         assert_eq!(decoded.value, value);
         decoder.validate(&decoded.schema, &decoded.value).unwrap();
-        assert!(decoder
-            .validate(&decoded.schema, &serde_json::json!("not an object"))
-            .is_err());
+        assert!(
+            decoder
+                .validate(&decoded.schema, &serde_json::json!("not an object"))
+                .is_err()
+        );
     }
 }
