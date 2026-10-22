@@ -1,0 +1,12 @@
+# kcov attributes coverage per line, so reformatting (like a new rustfmt style edition) can split
+# already uncovered expressions over more lines and shift the numbers without any real change.
+coverage:
+  status:
+    project:
+      default:
+        # Allow small drops caused by line splitting, real regressions are larger.
+        threshold: 0.5%
+    patch:
+      default:
+        # Report patch coverage on the PR, but don't fail the check on it.
+        informational: true
