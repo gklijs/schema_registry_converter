@@ -78,7 +78,7 @@ version = "^0.3"
 optional = true
 
 [dependencies.jsonschema]
-version = "^0.59"
+version = "^0.60"
 # Referenced schemas come from the schema registry, so retrieving them over http or from files
 # isn't needed.
 default-features = false
