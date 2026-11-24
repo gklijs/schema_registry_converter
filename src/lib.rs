@@ -56,6 +56,11 @@ mod proto_common_types;
 mod proto_decoder_common;
 #[cfg(feature = "proto_encoder")]
 mod proto_encoder_common;
+/// The version of `apache-avro` the Avro decoders return, and the Avro encoders take, their
+/// values in, so [`apache_avro::types::Value`]s can be used without depending on a matching
+/// version.
+#[cfg(feature = "avro")]
+pub use apache_avro;
 /// The version of `prost-reflect` the proto decoders return, and the proto encoders take, their
 /// values in, so [`prost_reflect::DynamicMessage`]s can be used without depending on a matching
 /// version.

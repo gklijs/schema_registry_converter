@@ -1,5 +1,11 @@
 ## Release notes
 
+### Unreleased
+
+The `avro` feature re-exports `apache_avro`, like the proto features re-export `prost_reflect`. Use
+`schema_registry_converter::apache_avro` to get the version the Avro decoders and encoders use,
+instead of depending on a matching version of `apache-avro`.
+
 ### 6.0.0
 
 #### Upgrading from 5.x
