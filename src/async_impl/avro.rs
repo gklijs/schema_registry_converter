@@ -61,7 +61,7 @@ use crate::schema_registry_common::{
 /// both. But only using the SubjectNameStrategy::TopicNameStrategy it has to be made explicit
 /// whether it's actual used as key or value.
 /// ```
-/// use apache_avro::types::Value;
+/// use schema_registry_converter::apache_avro::types::Value;
 /// use mockito::Server;
 /// use schema_registry_converter::async_impl::schema_registry::SrSettings;
 /// use schema_registry_converter::async_impl::avro::AvroDecoder;
