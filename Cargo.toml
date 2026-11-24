@@ -11,10 +11,10 @@ keywords = ["kafka", "confluent", "schema-registry", "avro", "protobuf"]
 categories = ["encoding", "api-bindings", "asynchronous"]
 license = "MIT OR Apache-2.0"
 edition = "2024"
-# The highest version the dependencies require, apache-avro needs 1.88. Checked by the msrv CI job.
+# The highest version the dependencies require, apache-avro needs 1.89. Checked by the msrv CI job.
 # Edition 2024 implies resolver 3, which resolves dependencies to versions that support it, see
 # https://doc.rust-lang.org/cargo/reference/resolver.html#rust-version
-rust-version = "1.88"
+rust-version = "1.89"
 
 [features]
 native_tls = ["reqwest/native-tls"]
@@ -70,7 +70,7 @@ features = ["derive"]
 version = "^1.0"
 
 [dependencies.apache-avro]
-version = "^0.22"
+version = "^0.23"
 optional = true
 
 [dependencies.futures]
@@ -113,7 +113,7 @@ optional = true
 # `derive` is only needed for tests/doctests exercising `avro_common::get_supplied_schema_for`
 # via `#[derive(apache_avro::AvroSchema)]` -- unified with the plain `apache-avro` optional
 # dependency (see the `avro` feature) when both are active in the same build.
-apache-avro = { version = "^0.22", features = ["derive"] }
+apache-avro = { version = "^0.23", features = ["derive"] }
 async-trait = "^0.1"
 criterion = "^0.8"
 http = "^1.0"
