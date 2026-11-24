@@ -69,7 +69,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@1.88
+      - uses: dtolnay/rust-toolchain@1.89
       - uses: Swatinem/rust-cache@v2
       - name: Check with the minimum supported Rust version
         run: cargo check --lib --all-features

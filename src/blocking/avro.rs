@@ -761,7 +761,7 @@ fn to_avro_schema(
             ));
         }
     };
-    match Schema::parse(&main_schema) {
+    match Schema::parse(main_schema) {
         Ok(parsed) => Ok(Arc::new(AvroSchema {
             id: registered_schema.id,
             raw: registered_schema.schema,
