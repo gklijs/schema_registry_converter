@@ -23,11 +23,11 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Cache allium-cli
         id: cache-allium
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cargo/bin/allium
           key: allium-cli-${{ env.ALLIUM_CLI_VERSION }}-${{ runner.os }}

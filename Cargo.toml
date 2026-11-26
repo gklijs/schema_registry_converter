@@ -1,6 +1,6 @@
 [package]
 name = "schema_registry_converter"
-version = "6.0.0"
+version = "6.1.0"
 authors = ["Gerard Klijs <g.klijs@gmail.com>"]
 include = ["src/**/*", "Cargo.toml"]
 description = "Encode/decode Avro, Protobuf and JSON Schema data from/to Kafka using the Confluent Schema Registry"
@@ -78,7 +78,7 @@ version = "^0.3"
 optional = true
 
 [dependencies.jsonschema]
-version = "^0.61"
+version = "^0.63"
 # Referenced schemas come from the schema registry, so retrieving them over http or from files
 # isn't needed.
 default-features = false
@@ -118,7 +118,7 @@ async-trait = "^0.1"
 criterion = "^0.8"
 http = "^1.0"
 mockito = "^1.7.0"
-rdkafka = { version = "^0.39.0", features = ["cmake-build", "curl-static"] }
+rdkafka = { version = "^0.40.0", features = ["cmake-build", "curl-static"] }
 rand = "^0.10.0"
 test_utils = { path = "test_utils" }
 tokio = { version = "^1.46.1", features = ["macros"] }
