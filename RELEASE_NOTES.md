@@ -1,10 +1,24 @@
 ## Release notes
 
-### Unreleased
+### 6.1.0
 
-The `avro` feature re-exports `apache_avro`, like the proto features re-export `prost_reflect`. Use
-`schema_registry_converter::apache_avro` to get the version the Avro decoders and encoders use,
-instead of depending on a matching version of `apache-avro`.
+Upgrades apache-avro from 0.22 to 0.23, see #214 and #217. Note that `apache_avro` types, like
+`Schema` and `types::Value`, are part of the public API, so projects using the `avro` feature
+together with their own apache-avro dependency need to move to apache-avro 0.23 as well. See the
+[apache-avro release notes](https://github.com/apache/avro-rs/releases) for what changed there.
+
+The `avro` feature now re-exports `apache_avro`, like the proto features re-export
+`prost_reflect`, see #215 and #216. Use `schema_registry_converter::apache_avro` to get the
+version the Avro decoders and encoders use, instead of depending on a matching version of
+`apache-avro`.
+
+apache-avro 0.23 needs Rust 1.89, so the minimum supported Rust version, `rust-version` in
+`Cargo.toml`, goes from 1.88 to 1.89.
+
+Other dependency updates:
+
+- `jsonschema` from 0.61 to 0.63.
+- `rdkafka`, only used for the integration tests, from 0.39 to 0.40.
 
 ### 6.0.0
 
@@ -470,6 +484,7 @@ instead of the `encode` function on the encoder.
 - [@marioloko](https://github.com/marioloko)
 - [@naamancurtis](https://github.com/naamancurtis)
 - [@PookieBuns](https://github.com/PookieBuns)
+- [@rconnol](https://github.com/rconnol)
 - [@rodonile](https://github.com/rodonile)
 - [@saiharshavellanki](https://github.com/saiharshavellanki)
 - [@SergeStrashko](https://github.com/SergeStrashko)
